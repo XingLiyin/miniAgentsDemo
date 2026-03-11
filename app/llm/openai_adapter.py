@@ -91,7 +91,7 @@ def _map_openai_tools(tools: list[LLMTool]) -> list[dict]:
             raise ValueError(f'OpenAI 仅支持 function 工具，当前: {tool.type}')
         fn: dict = {
             'name': tool.name,
-            'parameters': tool.input_schema,
+            'parameters': tool.input_schema.to_dict(),
         }
         if tool.description:
             fn['description'] = tool.description

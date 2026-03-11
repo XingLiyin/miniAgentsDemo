@@ -55,9 +55,26 @@ class LLMTool:
 
     name: str
     description: Optional[str] = None
-    input_schema: Dict[str, Any] = field(default_factory=dict)
+    input_schema: 'InputSchema' = field(default_factory=lambda: InputSchema())
     output_schema: Optional[Dict[str, Any]] = None
     type: str = 'function'
+
+
+@dataclass
+class InputSchema:
+    """统一的输入 Schema（OpenAI/Anthropic 共同支持的子集）。"""
+
+    type: str = 'object'
+    properties: Dict[str, Any] = field(default_factory=dict)
+    require: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为 dict 结构以适配不同 provider。"""
+        return {
+            'type': self.type,
+            'properties': self.properties,
+            'required': self.require,
+        }
 
 
 class Transport(Protocol):

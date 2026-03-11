@@ -96,7 +96,7 @@ def _map_anthropic_tools(tools: list[LLMTool]) -> list[dict]:
             raise ValueError(f'Anthropic 仅支持 function 工具，当前: {tool.type}')
         item: dict = {
             'name': tool.name,
-            'input_schema': tool.input_schema,
+            'input_schema': tool.input_schema.to_dict(),
         }
         if tool.description:
             item['description'] = tool.description
