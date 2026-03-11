@@ -94,6 +94,24 @@
   - `fact`：结构化事实
 - **ArtifactStore**: 外部知识库
 
+**Agent 核心职责**（面向“某段上下文”的管理与执行）：
+- **Memory 管理**：读写消息、摘要与 facts；控制上下文长度与预算  
+- **Skill 管理**：匹配/加载技能；从技能生成可执行计划  
+- **Tool 管理**：工具白名单/权限校验；统一调用与审计  
+- **外部知识管理**：检索 Artifact/知识库并注入上下文  
+- **Prompt 组织**：系统提示 + 任务目标 + 记忆 + 外部知识的拼装  
+- **LLM 调用**：统一请求结构、模型选择与超时控制  
+- **Response 解析**：解析模型输出，识别工具调用/结构化结果  
+- **Tool 调用编排**：触发工具、回写结果、更新 memory/blackboard
+
+**Agent 主要接口（建议）**：
+- `build_context(session_id, task_id)`: 组装 prompt 上下文  
+- `select_skills(context)`: 技能匹配  
+- `plan(context)`: 输出执行计划/任务列表  
+- `call_llm(request)`: 调用 LLM  
+- `parse_response(response)`: 解析 LLM 返回  
+- `run_tools(calls)`: 执行工具并回写结果  
+
 
 ### 3.3 Session
 

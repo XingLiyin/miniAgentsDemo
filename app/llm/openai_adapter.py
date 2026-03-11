@@ -2,9 +2,21 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, Optional
 
-from app.llm.llm_base import BaseAdapter, LLMMessage, LLMRequest, LLMResponse, LLMTool, LLMUsage, Transport
+from app.llm.llm_base import (
+    BaseAdapter,
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    LLMTool,
+    LLMUsage,
+    ParsedResponse,
+    TextBlock,
+    ToolCallBlock,
+    Transport,
+)
 
 
 class OpenAIAdapter(BaseAdapter):
@@ -48,6 +60,23 @@ class OpenAIAdapter(BaseAdapter):
         usage = _extract_openai_usage(resp)
         return LLMResponse(text=text, raw=resp, usage=usage)
 
+    def parse_response(self, response: LLMResponse) -> ParsedResponse:
+        """解析 OpenAI 响应为统一内容块。"""
+        raw = response.raw or {}
+        message = _extract_openai_message(raw)
+        blocks: list = []
+        tool_calls: list[ToolCallBlock] = []
+
+        for text in _extract_openai_text_parts(message):
+            blocks.append(TextBlock(type='text', text=text))
+
+        for call in _extract_openai_tool_calls(message):
+            blocks.append(call)
+            tool_calls.append(call)
+
+        text = '\n'.join([b.text for b in blocks if isinstance(b, TextBlock)]).strip()
+        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, raw=raw, usage=response.usage)
+
 
 def _extract_openai_text(resp: Dict[str, Any]) -> str:
     """从 OpenAI 响应中提取文本。"""
@@ -68,6 +97,53 @@ def _extract_openai_usage(resp: Dict[str, Any]) -> Optional[LLMUsage]:
         completion_tokens=usage.get('completion_tokens'),
         total_tokens=usage.get('total_tokens'),
     )
+
+
+def _extract_openai_message(resp: Dict[str, Any]) -> Dict[str, Any]:
+    """获取 OpenAI 的 message 结构。"""
+    choices = resp.get('choices') or []
+    if not choices:
+        return {}
+    return choices[0].get('message') or {}
+
+
+def _extract_openai_text_parts(message: Dict[str, Any]) -> list[str]:
+    """提取 OpenAI 文本内容（兼容字符串或分块格式）。"""
+    content = message.get('content')
+    if isinstance(content, str):
+        return [content] if content else []
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if item.get('type') == 'text':
+                parts.append(item.get('text') or '')
+        return [p for p in parts if p]
+    return []
+
+
+def _extract_openai_tool_calls(message: Dict[str, Any]) -> list[ToolCallBlock]:
+    """提取 OpenAI tool_calls 并转为 ToolCallBlock。"""
+    calls = message.get('tool_calls') or []
+    blocks: list[ToolCallBlock] = []
+    for call in calls:
+        tool_type = call.get('type') or 'function'
+        fn = call.get('function') or {}
+        args_raw = fn.get('arguments') or ''
+        try:
+            args = json.loads(args_raw) if args_raw else {}
+        except json.JSONDecodeError:
+            args = {'_raw_arguments': args_raw}
+        blocks.append(
+            ToolCallBlock(
+                type='tool_call',
+                id=call.get('id') or '',
+                name=fn.get('name') or '',
+                input=args,
+                tool_type=tool_type,
+                raw=call,
+            )
+        )
+    return blocks
 
 
 def _merge_system_prompt(req: LLMRequest) -> list[LLMMessage]:

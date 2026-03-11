@@ -61,6 +61,42 @@ class LLMTool:
 
 
 @dataclass
+class LLMContentBlock:
+    """统一的内容块基类。"""
+
+    type: str
+
+
+@dataclass
+class TextBlock(LLMContentBlock):
+    """文本内容块。"""
+
+    text: str
+
+
+@dataclass
+class ToolCallBlock(LLMContentBlock):
+    """工具调用内容块。"""
+
+    id: str
+    name: str
+    input: Dict[str, Any]
+    tool_type: str = 'function'
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ParsedResponse:
+    """统一的解析后响应。"""
+
+    text: str
+    blocks: List[LLMContentBlock]
+    tool_calls: List[ToolCallBlock]
+    raw: Dict[str, Any] = field(default_factory=dict)
+    usage: Optional[LLMUsage] = None
+
+
+@dataclass
 class InputSchema:
     """统一的输入 Schema（OpenAI/Anthropic 共同支持的子集）。"""
 
@@ -92,3 +128,48 @@ class BaseAdapter(ABC):
     def complete(self, req: LLMRequest) -> LLMResponse:
         """执行一次补全并返回统一响应。"""
         raise NotImplementedError
+
+    @abstractmethod
+    def parse_response(self, response: LLMResponse) -> ParsedResponse:
+        """解析响应为统一的内容块结构。"""
+        raise NotImplementedError
+
+
+class LLMClient:
+    """统一的 LLM 调用客户端。"""
+
+    def __init__(self, adapter: BaseAdapter, model: str) -> None:
+        """创建 LLM 客户端。"""
+        self._adapter = adapter
+        self._model = model
+
+    def send_message(
+        self,
+        messages: List[LLMMessage],
+        system_prompt: Optional[str] = None,
+        tools: Optional[List[LLMTool]] = None,
+        skills: Optional[List[Dict[str, Any]]] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        top_p: Optional[float] = None,
+        stop: Optional[List[str]] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> LLMResponse:
+        """统一发送消息并返回响应。"""
+        req = LLMRequest(
+            model=self._model,
+            messages=messages,
+            system_prompt=system_prompt,
+            tools=tools,
+            skills=skills,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stop=stop,
+            metadata=metadata or {},
+        )
+        return self._adapter.complete(req)
+
+    def parse_response(self, response: LLMResponse) -> ParsedResponse:
+        """统一解析 LLM 响应。"""
+        return self._adapter.parse_response(response)

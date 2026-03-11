@@ -4,7 +4,17 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional
 
-from app.llm.llm_base import BaseAdapter, LLMRequest, LLMResponse, LLMTool, LLMUsage, Transport
+from app.llm.llm_base import (
+    BaseAdapter,
+    LLMRequest,
+    LLMResponse,
+    LLMTool,
+    LLMUsage,
+    ParsedResponse,
+    TextBlock,
+    ToolCallBlock,
+    Transport,
+)
 
 
 class AnthropicAdapter(BaseAdapter):
@@ -53,6 +63,35 @@ class AnthropicAdapter(BaseAdapter):
         text = _extract_anthropic_text(resp)
         usage = _extract_anthropic_usage(resp)
         return LLMResponse(text=text, raw=resp, usage=usage)
+
+    def parse_response(self, response: LLMResponse) -> ParsedResponse:
+        """解析 Anthropic 响应为统一内容块。"""
+        raw = response.raw or {}
+        blocks: list = []
+        tool_calls: list[ToolCallBlock] = []
+        text_parts: list[str] = []
+
+        for block in raw.get('content') or []:
+            block_type = block.get('type')
+            if block_type == 'text':
+                text = block.get('text') or ''
+                if text:
+                    text_parts.append(text)
+                    blocks.append(TextBlock(type='text', text=text))
+            elif block_type == 'tool_use':
+                tool_block = ToolCallBlock(
+                    type='tool_call',
+                    id=block.get('id') or '',
+                    name=block.get('name') or '',
+                    input=block.get('input') or {},
+                    tool_type=block_type,
+                    raw=block,
+                )
+                blocks.append(tool_block)
+                tool_calls.append(tool_block)
+
+        text = '\n'.join(text_parts).strip()
+        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, raw=raw, usage=response.usage)
 
 
 def _extract_anthropic_text(resp: Dict[str, Any]) -> str:
