@@ -1,16 +1,31 @@
-﻿"""Session API Schema 定义。"""
+"""Session API Schema 定义。"""
 
-from typing import Optional
+from __future__ import annotations
 
+from typing import Any, Optional
 from pydantic import BaseModel
 
 
-class SessionObject(BaseModel):
-    """会话对象的 API Schema。"""
+class CreateSessionRequest(BaseModel):
+    goal: str
+    template_id: Optional[str] = None
+    token_budget: Optional[int] = None
+    root_max_turns: Optional[int] = None
 
+
+class SessionResponse(BaseModel):
     id: str
-    task_id: str
+    goal: str
     status: str
-    goal: Optional[str] = None
-    priority: Optional[int] = None
-    deadline_at: Optional[str] = None
+    template_id: Optional[str] = None
+    root_agent_id: Optional[str] = None
+    token_budget: int
+    token_used: int
+    root_max_turns: int
+    failure_counter: int
+    created_at: str
+    updated_at: str
+
+
+# Keep backward compat alias
+SessionObject = SessionResponse

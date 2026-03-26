@@ -1,23 +1,26 @@
-﻿"""Task API Schema 定义。"""
+"""Task API Schema 定义。"""
 
-from typing import Any, Dict, Optional
+from __future__ import annotations
 
+from typing import Any, Optional
 from pydantic import BaseModel
 
 
-class TaskObject(BaseModel):
-    """任务对象的 API Schema。"""
-
+class TaskResponse(BaseModel):
     id: str
+    session_id: str
+    agent_id: str
+    type: str
     title: str
     status: str
-    description: Optional[str] = None
-    type: Optional[str] = None
-    assigned_agent_id: Optional[str] = None
-    executor_type: Optional[str] = None
-    inputs: Optional[Dict[str, Any]] = None
-    outputs: Optional[Dict[str, Any]] = None
-    result: Optional[Any] = None
+    description: str = ""
+    inputs: dict[str, Any] = {}
+    result: Optional[str] = None
+    outputs: dict[str, Any] = {}
     error: Optional[str] = None
-    priority: Optional[int] = None
-    metadata: Optional[Dict[str, Any]] = None
+    created_at: str
+    updated_at: str
+
+
+# Keep backward compat alias
+TaskObject = TaskResponse

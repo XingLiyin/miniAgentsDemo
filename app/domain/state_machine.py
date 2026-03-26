@@ -1,0 +1,59 @@
+"""状态机：校验 Session / Task / Agent 合法状态转换。"""
+
+from __future__ import annotations
+
+from app.common.errors import AppError
+
+# 合法的状态转换表
+_SESSION_TRANSITIONS: dict[str, set[str]] = {
+    "QUEUED":    {"RUNNING", "CANCELED"},
+    "RUNNING":   {"SUCCEEDED", "FAILED", "CANCELED"},
+    "SUCCEEDED": set(),
+    "FAILED":    set(),
+    "CANCELED":  set(),
+}
+
+_TASK_TRANSITIONS: dict[str, set[str]] = {
+    "PENDING":  {"ACTIVE", "CANCELED"},
+    "ACTIVE":   {"FINISHED", "FAILED", "CANCELED"},
+    "FINISHED": set(),
+    "FAILED":   set(),
+    "CANCELED": set(),
+}
+
+_AGENT_TRANSITIONS: dict[str, set[str]] = {
+    "IDLE":     {"RUNNING"},
+    "RUNNING":  {"FINISHED", "FAILED"},
+    "FINISHED": set(),
+    "FAILED":   set(),
+}
+
+
+class SessionStateMachine:
+    def validate_session(self, from_status: str, to_status: str) -> None:
+        allowed = _SESSION_TRANSITIONS.get(from_status, set())
+        if to_status not in allowed:
+            raise AppError(
+                "INVALID_STATE_TRANSITION",
+                f"Session: {from_status} → {to_status} is not allowed",
+            )
+
+
+class TaskStateMachine:
+    def validate_task(self, from_status: str, to_status: str) -> None:
+        allowed = _TASK_TRANSITIONS.get(from_status, set())
+        if to_status not in allowed:
+            raise AppError(
+                "INVALID_STATE_TRANSITION",
+                f"Task: {from_status} → {to_status} is not allowed",
+            )
+
+
+class AgentStateMachine:
+    def validate_agent(self, from_status: str, to_status: str) -> None:
+        allowed = _AGENT_TRANSITIONS.get(from_status, set())
+        if to_status not in allowed:
+            raise AppError(
+                "INVALID_STATE_TRANSITION",
+                f"Agent: {from_status} → {to_status} is not allowed",
+            )

@@ -1,9 +1,9 @@
-﻿"""OpenAI 适配器实现。"""
+"""OpenAI 适配器实现（非流式 + SSE 流式）。"""
 
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from app.llm.llm_base import (
     BaseAdapter,
@@ -13,6 +13,8 @@ from app.llm.llm_base import (
     LLMTool,
     LLMUsage,
     ParsedResponse,
+    StreamChunk,
+    StreamTransport,
     TextBlock,
     ToolCallBlock,
     Transport,
@@ -23,42 +25,23 @@ class OpenAIAdapter(BaseAdapter):
     """OpenAI LLM 适配器。"""
 
     def __init__(self, api_key: str, base_url: str, transport: Transport, timeout_sec: int = 60) -> None:
-        """创建 OpenAI 适配器。
-
-        约束：transport 负责实际 HTTP 调用；本类仅组装/解析协议。
-        """
         self._api_key = api_key
         self._base_url = base_url.rstrip('/')
         self._transport = transport
         self._timeout_sec = timeout_sec
 
+    # ── 非流式 ────────────────────────────────────────────────────────────
+
     def complete(self, req: LLMRequest) -> LLMResponse:
         """统一补全接口（OpenAI Chat Completions 风格）。"""
+        payload = self._build_payload(req, stream=False)
         url = f"{self._base_url}/v1/chat/completions"
-        headers = {
-            'Authorization': f"Bearer {self._api_key}",
-            'Content-Type': 'application/json',
-        }
-        messages = _merge_system_prompt(req)
-        payload: Dict[str, Any] = {
-            'model': req.model,
-            'messages': [{'role': m.role, 'content': m.content} for m in messages],
-        }
-        if req.tools is not None:
-            payload['tools'] = _map_openai_tools(req.tools)
-        if req.temperature is not None:
-            payload['temperature'] = req.temperature
-        if req.max_tokens is not None:
-            payload['max_tokens'] = req.max_tokens
-        if req.top_p is not None:
-            payload['top_p'] = req.top_p
-        if req.stop is not None:
-            payload['stop'] = req.stop
-
-        resp = self._transport.post(url, headers=headers, json=payload, timeout=self._timeout_sec)
-        text = _extract_openai_text(resp)
-        usage = _extract_openai_usage(resp)
-        return LLMResponse(text=text, raw=resp, usage=usage)
+        resp = self._transport.post(url, headers=self._headers(), json=payload, timeout=self._timeout_sec)
+        return LLMResponse(
+            text=_extract_openai_text(resp),
+            raw=resp,
+            usage=_extract_openai_usage(resp),
+        )
 
     def parse_response(self, response: LLMResponse) -> ParsedResponse:
         """解析 OpenAI 响应为统一内容块。"""
@@ -74,12 +57,112 @@ class OpenAIAdapter(BaseAdapter):
             blocks.append(call)
             tool_calls.append(call)
 
-        text = '\n'.join([b.text for b in blocks if isinstance(b, TextBlock)]).strip()
+        text = '\n'.join(b.text for b in blocks if isinstance(b, TextBlock)).strip()
         return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, raw=raw, usage=response.usage)
+
+    # ── 流式 ──────────────────────────────────────────────────────────────
+
+    def stream(self, req: LLMRequest) -> Iterator[StreamChunk]:
+        """SSE 流式补全，逐 token 产出 StreamChunk。
+
+        要求 transport 实现 StreamTransport 协议（如 HttpxTransport）。
+        """
+        if not isinstance(self._transport, StreamTransport):
+            yield from super().stream(req)
+            return
+
+        payload = self._build_payload(req, stream=True)
+        url = f"{self._base_url}/v1/chat/completions"
+
+        # 聚合 tool_call 增量（按 index）
+        tool_call_buffers: dict[int, dict[str, Any]] = {}
+
+        for raw_line in self._transport.stream_post(url, self._headers(), payload, self._timeout_sec):
+            try:
+                data = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+
+            choices = data.get('choices') or []
+            if not choices:
+                # 最后一个 chunk 可能只含 usage
+                usage_data = data.get('usage')
+                if usage_data:
+                    yield StreamChunk(is_done=True, usage=_parse_usage(usage_data))
+                continue
+
+            choice = choices[0]
+            delta = choice.get('delta') or {}
+            finish_reason = choice.get('finish_reason')
+
+            # 文本增量
+            text_delta = delta.get('content') or ''
+            if text_delta:
+                yield StreamChunk(text_delta=text_delta)
+
+            # tool_call 增量
+            for tc_delta in delta.get('tool_calls') or []:
+                idx = tc_delta.get('index', 0)
+                buf = tool_call_buffers.setdefault(idx, {'id': '', 'name': '', 'arguments': ''})
+                if tc_delta.get('id'):
+                    buf['id'] = tc_delta['id']
+                fn = tc_delta.get('function') or {}
+                if fn.get('name'):
+                    buf['name'] += fn['name']
+                if fn.get('arguments'):
+                    buf['arguments'] += fn['arguments']
+                yield StreamChunk(tool_call_delta={'index': idx, **buf})
+
+            if finish_reason:
+                usage_data = data.get('usage')
+                yield StreamChunk(
+                    is_done=True,
+                    usage=_parse_usage(usage_data) if usage_data else None,
+                )
+                return
+
+    # ── 内部工具 ──────────────────────────────────────────────────────────
+
+    def _headers(self) -> Dict[str, str]:
+        return {
+            'Authorization': f"Bearer {self._api_key}",
+            'Content-Type': 'application/json',
+        }
+
+    def _build_payload(self, req: LLMRequest, stream: bool) -> Dict[str, Any]:
+        messages = _merge_system_prompt(req)
+        payload: Dict[str, Any] = {
+            'model': req.model,
+            'messages': [{'role': m.role, 'content': m.content} for m in messages],
+            'stream': stream,
+        }
+        if stream:
+            # 请求服务端在结束 chunk 中携带 usage
+            payload['stream_options'] = {'include_usage': True}
+        if req.tools is not None:
+            payload['tools'] = _map_openai_tools(req.tools)
+        if req.temperature is not None:
+            payload['temperature'] = req.temperature
+        if req.max_tokens is not None:
+            payload['max_tokens'] = req.max_tokens
+        if req.top_p is not None:
+            payload['top_p'] = req.top_p
+        if req.stop is not None:
+            payload['stop'] = req.stop
+        return payload
+
+
+# ── 私有解析函数 ──────────────────────────────────────────────────────────
+
+def _parse_usage(usage: Dict[str, Any]) -> LLMUsage:
+    return LLMUsage(
+        prompt_tokens=usage.get('prompt_tokens'),
+        completion_tokens=usage.get('completion_tokens'),
+        total_tokens=usage.get('total_tokens'),
+    )
 
 
 def _extract_openai_text(resp: Dict[str, Any]) -> str:
-    """从 OpenAI 响应中提取文本。"""
     choices = resp.get('choices') or []
     if not choices:
         return ''
@@ -88,19 +171,11 @@ def _extract_openai_text(resp: Dict[str, Any]) -> str:
 
 
 def _extract_openai_usage(resp: Dict[str, Any]) -> Optional[LLMUsage]:
-    """从 OpenAI 响应中提取 usage。"""
     usage = resp.get('usage') or {}
-    if not usage:
-        return None
-    return LLMUsage(
-        prompt_tokens=usage.get('prompt_tokens'),
-        completion_tokens=usage.get('completion_tokens'),
-        total_tokens=usage.get('total_tokens'),
-    )
+    return _parse_usage(usage) if usage else None
 
 
 def _extract_openai_message(resp: Dict[str, Any]) -> Dict[str, Any]:
-    """获取 OpenAI 的 message 结构。"""
     choices = resp.get('choices') or []
     if not choices:
         return {}
@@ -108,67 +183,51 @@ def _extract_openai_message(resp: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _extract_openai_text_parts(message: Dict[str, Any]) -> list[str]:
-    """提取 OpenAI 文本内容（兼容字符串或分块格式）。"""
     content = message.get('content')
     if isinstance(content, str):
         return [content] if content else []
     if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if item.get('type') == 'text':
-                parts.append(item.get('text') or '')
-        return [p for p in parts if p]
+        return [item.get('text') or '' for item in content if item.get('type') == 'text' and item.get('text')]
     return []
 
 
 def _extract_openai_tool_calls(message: Dict[str, Any]) -> list[ToolCallBlock]:
-    """提取 OpenAI tool_calls 并转为 ToolCallBlock。"""
-    calls = message.get('tool_calls') or []
     blocks: list[ToolCallBlock] = []
-    for call in calls:
-        tool_type = call.get('type') or 'function'
+    for call in message.get('tool_calls') or []:
         fn = call.get('function') or {}
         args_raw = fn.get('arguments') or ''
         try:
             args = json.loads(args_raw) if args_raw else {}
         except json.JSONDecodeError:
             args = {'_raw_arguments': args_raw}
-        blocks.append(
-            ToolCallBlock(
-                type='tool_call',
-                id=call.get('id') or '',
-                name=fn.get('name') or '',
-                input=args,
-                tool_type=tool_type,
-                raw=call,
-            )
-        )
+        blocks.append(ToolCallBlock(
+            type='tool_call',
+            id=call.get('id') or '',
+            name=fn.get('name') or '',
+            input=args,
+            tool_type=call.get('type') or 'function',
+            raw=call,
+        ))
     return blocks
 
 
 def _merge_system_prompt(req: LLMRequest) -> list[LLMMessage]:
-    """将 system_prompt 合并到消息列表。"""
     messages = list(req.messages)
     if not req.system_prompt:
         return messages
     for i, m in enumerate(messages):
         if m.role == 'system':
-            merged = f"{req.system_prompt}\n{m.content}".strip()
-            messages[i] = LLMMessage(role='system', content=merged)
+            messages[i] = LLMMessage(role='system', content=f"{req.system_prompt}\n{m.content}".strip())
             return messages
     return [LLMMessage(role='system', content=req.system_prompt)] + messages
 
 
 def _map_openai_tools(tools: list[LLMTool]) -> list[dict]:
-    """将统一工具结构映射为 OpenAI tools 结构。"""
     mapped: list[dict] = []
     for tool in tools:
         if tool.type != 'function':
             raise ValueError(f'OpenAI 仅支持 function 工具，当前: {tool.type}')
-        fn: dict = {
-            'name': tool.name,
-            'parameters': tool.input_schema.to_dict(),
-        }
+        fn: dict = {'name': tool.name, 'parameters': tool.input_schema.to_dict()}
         if tool.description:
             fn['description'] = tool.description
         mapped.append({'type': 'function', 'function': fn})

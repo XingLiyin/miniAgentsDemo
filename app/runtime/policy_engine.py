@@ -1,10 +1,31 @@
-﻿"""权限策略引擎。"""
+"""工具白名单校验（Phase 1）。"""
+
+from __future__ import annotations
+
+from app.common.errors import AppError
+from app.domain.models.agent import Agent
+from app.tools.registry import ToolRegistry
 
 
 class PolicyEngine:
-    """工具调用权限策略。"""
+    """基于 ToolRegistry + Agent.tool_list 的双层白名单校验。"""
 
-    def authorize(self, tool_name: str, context: dict) -> bool:
-        """判断是否允许调用工具（TODO：基于 role/type/tool 规则）。"""
-        # TODO: 读取策略并做决策。
-        raise NotImplementedError('PolicyEngine.authorize 未实现')
+    def __init__(self, tool_registry: ToolRegistry) -> None:
+        self._registry = tool_registry
+
+    def authorize(self, agent: Agent, tool_name: str) -> None:
+        """校验 agent 是否有权限调用 tool_name。
+
+        第一层：tool_name 必须在 ToolRegistry 中已注册（工具存在性）
+        第二层：tool_name 必须在 agent.tool_list 中（模板级授权）
+        """
+        if not self._registry.is_registered(tool_name):
+            raise AppError(
+                "TOOL_NOT_FOUND",
+                f"Tool '{tool_name}' is not a registered tool",
+            )
+        if tool_name not in agent.tool_list:
+            raise AppError(
+                "TOOL_NOT_AUTHORIZED",
+                f"Agent '{agent.id}' is not authorized to use tool '{tool_name}'",
+            )

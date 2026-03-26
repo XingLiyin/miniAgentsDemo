@@ -1,11 +1,5 @@
-﻿"""状态机抽象。"""
+"""Orchestrator state_machine 模块，重新导出 domain 层状态机（保持向后兼容）。"""
 
+from app.domain.state_machine import SessionStateMachine, TaskStateMachine, AgentStateMachine
 
-class StateMachine:
-    """会话/任务状态机。"""
-
-    def transition(self, entity_id: str, to_state: str) -> None:
-        """状态迁移（TODO：校验合法转移并记录事件）。"""
-        # TODO: 校验状态转移合法性。
-        # TODO: 写入 session_events。
-        raise NotImplementedError('StateMachine.transition 未实现')
+__all__ = ["SessionStateMachine", "TaskStateMachine", "AgentStateMachine"]

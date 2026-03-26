@@ -1,98 +1,77 @@
-"""Agent 领域模型。"""
+"""Agent 领域模型（Phase 1）。"""
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
-class MemoryConfig:
-    """Agent 记忆配置。"""
+class LoopGuard:
+    """Agent Loop Guard 运行时计数。"""
+    turns_used: int = 0
+    max_turns: int = 20
 
-    recent_message_window: int = 20
-    summary_threshold: int = 20
-    retrieval_top_k: int = 8
+    def to_dict(self) -> dict[str, Any]:
+        return {"turns_used": self.turns_used, "max_turns": self.max_turns}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "LoopGuard":
+        return cls(turns_used=d.get("turns_used", 0), max_turns=d.get("max_turns", 20))
 
 
+@dataclass
 class Agent:
-    """Agent 领域对象。"""
+    """Agent 运行时实例。
 
-    def __init__(
-        self,
-        agent_id: str,
-        name: str,
-        model: Optional[str] = None,
-        system_prompt: Optional[str] = None,
-        memory_item: Optional[Dict[str, Any]] = None,
-        tool_list: Optional[List[str]] = None,
-        skill_list: Optional[List[str]] = None,
-        active_task: Optional[str] = None,
-        session_id: Optional[str] = None,
-        memory_config: Optional[MemoryConfig] = None,
-        memory_service: Optional[Any] = None,
-        blackboard_service: Optional[Any] = None,
-        artifact_store: Optional[Any] = None,
-        skill_router: Optional[Any] = None,
-        tool_gateway: Optional[Any] = None,
-        policy_engine: Optional[Any] = None,
-        llm_client: Optional[Any] = None,
-        task_manager: Optional[Any] = None,
-        event_bus: Optional[Any] = None,
-        audit_logger: Optional[Any] = None,
-    ) -> None:
-        """创建 Agent 对象。"""
-        self.id = agent_id
-        self.name = name
-        self.model = model
-        self.system_prompt = system_prompt
-        self.memory_item = memory_item
-        self.tool_list = tool_list or []
-        self.skill_list = skill_list or []
-        self.active_task = active_task
-        self.session_id = session_id
-        self.memory_config = memory_config or MemoryConfig()
-        self.memory_service = memory_service
-        self.blackboard_service = blackboard_service
-        self.artifact_store = artifact_store
-        self.skill_router = skill_router
-        self.tool_gateway = tool_gateway
-        self.policy_engine = policy_engine
-        self.llm_client = llm_client
-        self.task_manager = task_manager
-        self.event_bus = event_bus
-        self.audit_logger = audit_logger
+    状态流转：IDLE → RUNNING → FINISHED / FAILED
+    """
+    id: str
+    session_id: str
+    template_id: str | None
+    name: str
+    status: str                                 # IDLE | RUNNING | FINISHED | FAILED
 
-    def build_context(self, session_id: str, task_id: str) -> Dict[str, Any]:
-        """组装 prompt 上下文（TODO：读取 memory/blackboard/artifact）。"""
-        raise NotImplementedError('Agent.build_context 未实现')
+    system_prompt: str = ""
+    tool_list: list[str] = field(default_factory=list)
+    skill_list: list[str] = field(default_factory=list)
+    loop_guard: LoopGuard = field(default_factory=LoopGuard)
 
-    def select_skills(self, context: Dict[str, Any]) -> List[str]:
-        """基于上下文匹配技能（TODO：接入 SkillRouter）。"""
-        raise NotImplementedError('Agent.select_skills 未实现')
+    # LLM 配置（继承自 template 或 session 创建时指定）
+    llm_name: str = ""
 
-    def plan(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """输出执行计划/任务列表（TODO：接入 LLM）。"""
-        raise NotImplementedError('Agent.plan 未实现')
+    created_at: str = ""
+    updated_at: str = ""
 
-    def call_llm(self, request: Any) -> Any:
-        """调用 LLM 并返回响应（TODO：接入 LLMClient）。"""
-        raise NotImplementedError('Agent.call_llm 未实现')
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "template_id": self.template_id,
+            "name": self.name,
+            "status": self.status,
+            "system_prompt": self.system_prompt,
+            "tool_list": self.tool_list,
+            "skill_list": self.skill_list,
+            "loop_guard": self.loop_guard.to_dict(),
+            "llm_name": self.llm_name,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
 
-    def parse_response(self, response: Any) -> Dict[str, Any]:
-        """解析 LLM 返回（TODO：解析 tool_calls/结构化结果）。"""
-        raise NotImplementedError('Agent.parse_response 未实现')
-
-    def run_tools(self, calls: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """执行工具调用（TODO：权限校验与审计）。"""
-        raise NotImplementedError('Agent.run_tools 未实现')
-
-    def write_back(self, result: Dict[str, Any]) -> None:
-        """回写结果到 memory/blackboard/events（TODO：落库与事件）。"""
-        raise NotImplementedError('Agent.write_back 未实现')
-
-    def run_once(self, session_id: str, task_id: str) -> None:
-        """执行一次 Agent Loop（TODO：完整流程编排）。"""
-        raise NotImplementedError('Agent.run_once 未实现')
-
-    def run_until_done(self, session_id: str, task_id: str) -> None:
-        """执行直到会话完成（TODO：循环与退出条件）。"""
-        raise NotImplementedError('Agent.run_until_done 未实现')
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Agent":
+        return cls(
+            id=d["id"],
+            session_id=d["session_id"],
+            template_id=d.get("template_id"),
+            name=d["name"],
+            status=d["status"],
+            system_prompt=d.get("system_prompt", ""),
+            tool_list=d.get("tool_list", []),
+            skill_list=d.get("skill_list", []),
+            loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),
+            llm_name=d.get("llm_name", ""),
+            created_at=d.get("created_at", ""),
+            updated_at=d.get("updated_at", ""),
+        )

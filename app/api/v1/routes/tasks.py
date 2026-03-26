@@ -1,23 +1,23 @@
-﻿"""任务相关路由。"""
+"""Task 相关路由（Phase 1）。"""
 
-from fastapi import APIRouter
+from __future__ import annotations
 
-from app.api.v1.schemas.task import TaskObject
+from fastapi import APIRouter, HTTPException
+
+from app.api.v1.deps import get_task_service
+from app.api.v1.schemas.task import TaskResponse
+from app.common.errors import AppError
 
 router = APIRouter()
 
 
-@router.post('', response_model=TaskObject)
-def create_task() -> TaskObject:
-    """创建任务（TODO：接入 TaskService 并校验入参）。"""
-    # TODO: 校验标题/优先级/类型/assigned_agent_id。
-    # TODO: 调用 TaskService.create_task 并返回 TaskObject。
-    raise NotImplementedError('create_task 未实现')
-
-
-@router.get('/{task_id}', response_model=TaskObject)
-def get_task(task_id: str) -> TaskObject:
-    """获取任务详情（TODO：接入 TaskRepo）。"""
-    # TODO: 校验 task_id 格式。
-    # TODO: 调用 TaskRepo.get，未找到返回 404。
-    raise NotImplementedError('get_task 未实现')
+@router.get("/{task_id}", response_model=TaskResponse)
+def get_task(task_id: str) -> TaskResponse:
+    """获取任务详情。"""
+    try:
+        svc = get_task_service()
+        task = svc.get(task_id)
+        return TaskResponse(**task.to_dict())
+    except AppError as e:
+        status = 404 if e.code == "TASK_NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
