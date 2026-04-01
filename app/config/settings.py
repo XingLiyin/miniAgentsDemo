@@ -2,11 +2,17 @@
 
 import os
 from pathlib import Path
-from pydantic import BaseModel
+from typing import Any
+from pydantic import BaseModel, field_validator
+
+# 直接使用 agent-framework 官方实现：repr 自动屏蔽，str() 返回原值
+from agent_framework._settings import SecretString
 
 
 class Settings(BaseModel):
     """应用配置模型（带默认值，可通过环境变量覆盖）。"""
+
+    model_config = {"arbitrary_types_allowed": True}
 
     # 应用基本信息
     app_name: str = "miniAgents"
@@ -15,12 +21,18 @@ class Settings(BaseModel):
     # 数据目录
     data_dir: Path = Path("data")
     skills_dir: Path = Path("data/skills")
+    agents_dir: Path = Path("data/agents")
 
     # LLM 配置
-    llm_openai_api_key: str = ""
+    llm_openai_api_key: SecretString = SecretString("")
     llm_openai_base_url: str = "https://api.openai.com"
-    llm_anthropic_api_key: str = ""
+    llm_anthropic_api_key: SecretString = SecretString("")
     llm_anthropic_base_url: str = "https://api.anthropic.com"
+
+    @field_validator("llm_openai_api_key", "llm_anthropic_api_key", mode="before")
+    @classmethod
+    def _to_secret(cls, v: Any) -> "SecretString":
+        return v if isinstance(v, SecretString) else SecretString(str(v))
     llm_default_model: str = "gpt-4.1-mini"
     default_llm_timeout_sec: int = 60
 
@@ -43,9 +55,19 @@ class Settings(BaseModel):
     # 日志
     log_level: str = "INFO"
 
+    # 外部存储（工具 + Skill 语义召回后端，共用同一服务）
+    store_base_url: str = ""        # 空 = 禁用，所有同步操作为 no-op
+    store_timeout_sec: int = 10
+
 
 def _load_settings() -> Settings:
-    """从环境变量构建 Settings（前缀 MINIAGENTS_）。"""
+    """从 .env 文件和环境变量构建 Settings（前缀 MINIAGENTS_）。
+
+    加载优先级（高 → 低）：系统环境变量 > .env 文件 > 代码默认值。
+    """
+    from dotenv import load_dotenv
+    load_dotenv()  # 读取项目根目录下的 .env，已有系统变量不覆盖
+
     prefix = "MINIAGENTS_"
     overrides = {}
     for field_name in Settings.model_fields:

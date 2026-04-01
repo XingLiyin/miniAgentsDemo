@@ -8,7 +8,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))
 
-from app.llm.llm_base import LLMMessage
+from app.llm.types import LLMMessage
 from app.llm.registry import LLMProviderConfig, get_llm_registry, get_llm_registry_client
 
 
@@ -39,8 +39,7 @@ def main() -> None:
         temperature=0.2,
         max_tokens=64,
     )
-    parsed = client.parse_response(resp)
-    print(parsed.text)
+    print(resp.text)
 
 
 if __name__ == '__main__':

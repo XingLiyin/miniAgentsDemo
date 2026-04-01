@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 from app.llm.anthropic_adapter import AnthropicAdapter
-from app.llm.llm_base import BaseAdapter, Transport
+from app.llm.base import BaseAdapter, Transport
 from app.llm.openai_adapter import OpenAIAdapter
 
 

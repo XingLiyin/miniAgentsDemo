@@ -5,18 +5,16 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterator, Optional
 
-from app.llm.llm_base import (
-    BaseAdapter,
+from app.llm.base import BaseAdapter, StreamTransport, Transport
+from app.llm.types import (
     LLMRequest,
     LLMResponse,
     LLMTool,
     LLMUsage,
     ParsedResponse,
     StreamChunk,
-    StreamTransport,
     TextBlock,
-    ToolCallBlock,
-    Transport,
+    ToolCallBlock
 )
 
 

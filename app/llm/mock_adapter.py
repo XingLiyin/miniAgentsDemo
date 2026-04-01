@@ -4,15 +4,10 @@ from __future__ import annotations
 
 from typing import Iterator
 
-from app.llm.llm_base import (
-    BaseAdapter,
-    LLMRequest,
-    LLMResponse,
-    LLMUsage,
-    ParsedResponse,
-    StreamChunk,
-    TextBlock,
+from app.llm.base import (
+    BaseAdapter
 )
+from app.llm.types import LLMRequest, LLMResponse, LLMUsage, ParsedResponse, StreamChunk, TextBlock
 
 
 class MockAdapter(BaseAdapter):

@@ -11,13 +11,22 @@ class LoopGuard:
     """Agent Loop Guard 运行时计数。"""
     turns_used: int = 0
     max_turns: int = 20
+    actor_max_tool_rounds: int = 5      # 单个 atomic task 内最多工具调用轮次
 
     def to_dict(self) -> dict[str, Any]:
-        return {"turns_used": self.turns_used, "max_turns": self.max_turns}
+        return {
+            "turns_used": self.turns_used,
+            "max_turns": self.max_turns,
+            "actor_max_tool_rounds": self.actor_max_tool_rounds,
+        }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "LoopGuard":
-        return cls(turns_used=d.get("turns_used", 0), max_turns=d.get("max_turns", 20))
+        return cls(
+            turns_used=d.get("turns_used", 0),
+            max_turns=d.get("max_turns", 20),
+            actor_max_tool_rounds=d.get("actor_max_tool_rounds", 5),
+        )
 
 
 @dataclass
@@ -35,6 +44,7 @@ class Agent:
     system_prompt: str = ""
     tool_list: list[str] = field(default_factory=list)
     skill_list: list[str] = field(default_factory=list)
+    soul_path: str | None = None
     loop_guard: LoopGuard = field(default_factory=LoopGuard)
 
     # LLM 配置（继承自 template 或 session 创建时指定）
@@ -53,6 +63,7 @@ class Agent:
             "system_prompt": self.system_prompt,
             "tool_list": self.tool_list,
             "skill_list": self.skill_list,
+            "soul_path": self.soul_path,
             "loop_guard": self.loop_guard.to_dict(),
             "llm_name": self.llm_name,
             "created_at": self.created_at,
@@ -70,6 +81,7 @@ class Agent:
             system_prompt=d.get("system_prompt", ""),
             tool_list=d.get("tool_list", []),
             skill_list=d.get("skill_list", []),
+            soul_path=d.get("soul_path"),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),
             llm_name=d.get("llm_name", ""),
             created_at=d.get("created_at", ""),

@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.api.v1.schemas.llm import LLMRegisterRequest, LLMRegisterResponse
+from app.llm.registry import SUPPORTED_LLM_STYLES
 from app.llm.registry import LLMProviderConfig, get_llm_registry
 
 router = APIRouter()
@@ -16,18 +17,21 @@ def register_llm(req: LLMRegisterRequest) -> LLMRegisterResponse:
     registry = get_llm_registry()
     if registry.is_registered(req.name):
         raise HTTPException(status_code=409, detail={"code": "LLM_ALREADY_EXISTS", "message": f"LLM '{req.name}' already registered"})
+    if req.style not in SUPPORTED_LLM_STYLES:
+        raise HTTPException(status_code=400, detail={"code": "INVALID_LLM_STYLE", "message": f"Unsupported LLM style: {req.style}"})
+    timeout_sec = req.timeout_sec or 60
     config = LLMProviderConfig(
         name=req.name,
         style=req.style,
         api_key=req.api_key,
         base_url=req.base_url,
         model=req.model,
-        timeout_sec=req.timeout_sec or 60,
+        timeout_sec=timeout_sec,
     )
     try:
         registry.register(config)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_LLM_STYLE", "message": str(e)})
+    except KeyError as e:
+        raise HTTPException(status_code=409, detail={"code": "LLM_ALREADY_EXISTS", "message": str(e)})
     return LLMRegisterResponse(
         name=config.name,
         style=config.style,

@@ -15,7 +15,7 @@ class Task:
     id: str
     session_id: str
     agent_id: str
-    type: str                          # reasoning | tool-call
+    type: str                          # atomic | user_input
     title: str
     status: str                        # PENDING | ACTIVE | FINISHED | FAILED | CANCELED
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
-from app.llm.llm_base import InputSchema, LLMTool
+from app.llm.types import InputSchema, LLMTool
 
 # 工具处理器签名：接收 arguments 字典，返回 ToolResult
 ToolHandler = Callable[[dict[str, Any]], "ToolResult"]

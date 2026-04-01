@@ -22,11 +22,24 @@ class SkillRegistry:
         """注册单个 SkillMetadata（重复注册会覆盖）。"""
         self._skills[metadata.name] = metadata
         logger.debug("SkillRegistry: registered skill '%s'", metadata.name)
+        self._sync_added([metadata])
+
+    def unregister(self, name: str) -> None:
+        """注销指定 Skill 并同步到外部 DB。"""
+        if name in self._skills:
+            del self._skills[name]
+            self._sync_removed([name])
+            logger.debug("SkillRegistry: unregistered skill '%s'", name)
 
     def load_from_dir(self, skills_dir: Path) -> None:
-        """扫描目录，批量注册所有发现的 Skill。"""
+        """扫描目录，批量注册所有发现的 Skill（一次性批量同步到外部 DB）。"""
+        newly_registered: list[SkillMetadata] = []
         for metadata in self._loader.scan(skills_dir):
-            self.register(metadata)
+            self._skills[metadata.name] = metadata
+            newly_registered.append(metadata)
+            logger.debug("SkillRegistry: registered skill '%s'", metadata.name)
+        if newly_registered:
+            self._sync_added(newly_registered)
         logger.info(
             "SkillRegistry: loaded %d skill(s) from '%s'",
             len(self._skills), skills_dir,
@@ -39,23 +52,34 @@ class SkillRegistry:
         return list(self._skills.values())
 
     def get_metadata_block(self) -> str:
-        """生成注入 plan system prompt 的 Available Skills 文本块（Level 1 内容）。
+        """生成 Available Skills 文本块（Level 1 内容）。
 
         格式：
-          Available Skills:
+          ## Available Skills (assign to tasks where appropriate)
           - code-review: 审查代码质量...
-          ...
-          To use a skill, create a task with "type": "skill" and "skill_name": "<name>".
         """
         if not self._skills:
             return ""
-        lines = ["Available Skills:"]
+        lines = ["## Available Skills (assign to tasks where appropriate)"]
         for m in self._skills.values():
             lines.append(f"- {m.name}: {m.description}")
-        lines.append(
-            '\nTo use a skill, create a task with "type": "skill" and "skill_name": "<name>".'
-        )
         return "\n".join(lines)
+
+    # ── 内部同步 helpers ──────────────────────────────────────────────────
+
+    def _sync_added(self, metadatas: list[SkillMetadata]) -> None:
+        try:
+            from app.skills.skill_sync import get_skill_sync_service
+            get_skill_sync_service().on_skills_added(metadatas)
+        except Exception:
+            logger.warning("SkillRegistry: sync-added failed", exc_info=True)
+
+    def _sync_removed(self, names: list[str]) -> None:
+        try:
+            from app.skills.skill_sync import get_skill_sync_service
+            get_skill_sync_service().on_skills_removed(names)
+        except Exception:
+            logger.warning("SkillRegistry: sync-removed failed for %s", names, exc_info=True)
 
     def load_definition(self, name: str) -> SkillDefinition | None:
         """加载 Level 2 内容（SKILL.md 主体）。"""

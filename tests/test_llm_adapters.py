@@ -1,58 +1,121 @@
-﻿"""LLM 适配器单元测试。"""
+"""LLM client compatibility tests."""
 
-from typing import Any, Dict
+from __future__ import annotations
 
-from app.llm.anthropic_adapter import AnthropicAdapter
-from app.llm.llm_base import LLMMessage, LLMRequest, Transport
-from app.llm.openai_adapter import OpenAIAdapter
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from agent_framework import BaseChatClient as AFBaseChatClient
+from agent_framework import ChatResponse, Content, Message
+
+from app.llm.base import LLMClient
+from app.llm.types import InputSchema, LLMMessage, LLMTool
 
 
-class DummyTransport(Transport):
-    """测试用 Transport，返回固定响应。"""
+class DummyAFClient(AFBaseChatClient):
+    """Minimal AF chat client used to validate the compatibility wrapper."""
 
-    def __init__(self, response: Dict[str, Any]) -> None:
+    def __init__(self, response: ChatResponse) -> None:
+        super().__init__()
         self._response = response
-        self.last_request: Dict[str, Any] = {}
+        self.last_messages: Sequence[Message] = []
+        self.last_options: Mapping[str, Any] | None = None
 
-    def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any], timeout: int) -> Dict[str, Any]:
-        self.last_request = {
-            'url': url,
-            'headers': headers,
-            'json': json,
-            'timeout': timeout,
-        }
-        return self._response
+    def get_response(
+        self,
+        messages: Sequence[Message],
+        *,
+        stream: bool = False,
+        options: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ):
+        self.last_messages = list(messages)
+        self.last_options = options
+
+        async def _response() -> ChatResponse:
+            return self._response
+
+        return _response()
+
+    def _inner_get_response(
+        self,
+        *,
+        messages: Sequence[Message],
+        stream: bool,
+        options: Mapping[str, Any],
+        **kwargs: Any,
+    ):
+        return self.get_response(messages=messages, stream=stream, options=options, **kwargs)
 
 
-def test_openai_adapter_extract_text() -> None:
-    """OpenAI 响应提取文本。"""
-    transport = DummyTransport({
-        'choices': [{'message': {'content': 'ok'}}],
-        'usage': {'prompt_tokens': 1, 'completion_tokens': 2, 'total_tokens': 3},
-    })
-    adapter = OpenAIAdapter('k', 'https://api.openai.com', transport)
-    req = LLMRequest(model='gpt-4.1-mini', messages=[LLMMessage(role='user', content='hi')])
-    resp = adapter.complete(req)
-    assert resp.text == 'ok'
+def test_llm_client_send_message_bridges_messages_and_tools() -> None:
+    provider = DummyAFClient(
+        ChatResponse(
+            messages=[Message(role="assistant", contents=["ok"])],
+            usage_details={
+                "input_token_count": 1,
+                "output_token_count": 2,
+                "total_token_count": 3,
+            },
+        )
+    )
+    client = LLMClient(provider)
+
+    resp = client.send_message(
+        messages=[LLMMessage(role="user", content="hi")],
+        system_prompt="You are helpful.",
+        tools=[
+            LLMTool(
+                name="read_file",
+                description="Read a file.",
+                input_schema=InputSchema(
+                    properties={"path": {"type": "string"}},
+                    require=["path"],
+                ),
+            )
+        ],
+        temperature=0.2,
+        max_tokens=64,
+    )
+
+    assert resp.text == "ok"
     assert resp.usage is not None
     assert resp.usage.total_tokens == 3
+    assert list(provider.last_messages)[0].role == "user"
+    assert list(provider.last_messages)[0].text == "hi"
+    assert provider.last_options is not None
+    assert provider.last_options["instructions"] == "You are helpful."
+    assert provider.last_options["temperature"] == 0.2
+    assert provider.last_options["max_tokens"] == 64
+    assert len(provider.last_options["tools"]) == 1
+    assert provider.last_options["tools"][0].name == "read_file"
 
 
-def test_anthropic_adapter_extract_text() -> None:
-    """Anthropic 响应提取文本。"""
-    transport = DummyTransport({
-        'content': [{'text': 'ok'}],
-        'usage': {'input_tokens': 2, 'output_tokens': 3},
-    })
-    adapter = AnthropicAdapter('k', 'https://api.anthropic.com', transport)
-    req = LLMRequest(model='claude-3-5-sonnet', messages=[
-        LLMMessage(role='system', content='you are a helper'),
-        LLMMessage(role='user', content='hi'),
-    ])
-    resp = adapter.complete(req)
-    assert resp.text == 'ok'
-    assert resp.usage is not None
-    assert resp.usage.prompt_tokens == 2
-    assert resp.usage.completion_tokens == 3
-    assert transport.last_request['json'].get('system') == 'you are a helper'
-    assert transport.last_request['json']['messages'][0]['role'] == 'user'
+def test_llm_client_parse_response_extracts_tool_calls() -> None:
+    provider = DummyAFClient(
+        ChatResponse(
+            messages=[
+                Message(
+                    role="assistant",
+                    contents=[
+                        Content.from_text("let me check"),
+                        Content.from_function_call(
+                            call_id="call-1",
+                            name="search_web",
+                            arguments='{"query":"agent framework"}',
+                        ),
+                    ],
+                )
+            ]
+        )
+    )
+    client = LLMClient(provider)
+
+    resp = client.send_message([LLMMessage(role="user", content="search it")])
+    parsed = client.parse_response(resp)
+
+    assert parsed.text == "let me check"
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].id == "call-1"
+    assert parsed.tool_calls[0].name == "search_web"
+    assert parsed.tool_calls[0].input == {"query": "agent framework"}

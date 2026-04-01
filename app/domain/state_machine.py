@@ -6,11 +6,12 @@ from app.common.errors import AppError
 
 # 合法的状态转换表
 _SESSION_TRANSITIONS: dict[str, set[str]] = {
-    "QUEUED":    {"RUNNING", "CANCELED"},
-    "RUNNING":   {"SUCCEEDED", "FAILED", "CANCELED"},
-    "SUCCEEDED": set(),
-    "FAILED":    set(),
-    "CANCELED":  set(),
+    "QUEUED":         {"RUNNING", "CANCELED"},
+    "RUNNING":        {"SUCCEEDED", "FAILED", "CANCELED", "WAITING_INPUT"},
+    "WAITING_INPUT":  {"RUNNING", "QUEUED", "CANCELED"},  # QUEUED: answer received → restart loop
+    "SUCCEEDED":      {"QUEUED"},   # user sends follow-up message → continue
+    "FAILED":         {"QUEUED"},   # user retries after failure
+    "CANCELED":       set(),
 }
 
 _TASK_TRANSITIONS: dict[str, set[str]] = {

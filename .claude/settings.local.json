@@ -2,7 +2,21 @@
   "permissions": {
     "allow": [
       "WebFetch(domain:raw.githubusercontent.com)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(uv run python -c \":*)",
+      "Bash(uv pip:*)",
+      "Bash(uv run:*)",
+      "Bash(python -c \"f=open\\(''tests/test_phase_implementations.py'',''rb''\\).read\\(\\); print\\(f[6000:6300]\\)\")",
+      "Bash(python -m pytest tests/test_llm_adapters.py -q)",
+      "Bash(python -m pytest tests/ -v --tb=short)",
+      "Bash(python -c \":*)",
+      "Bash(npm create:*)",
+      "Bash(cp -r frontend-new/. frontend/)",
+      "Bash(rm -rf frontend-new)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(python -m pytest tests/test_phase_implementations.py -x -q)",
+      "Bash(python -m pytest tests/ -q)"
     ]
   }
 }

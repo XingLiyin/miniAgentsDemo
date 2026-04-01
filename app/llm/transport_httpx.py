@@ -6,7 +6,7 @@ from typing import Any, Dict, Iterator
 
 import httpx
 
-from app.llm.llm_base import Transport, StreamTransport
+from app.llm.base import Transport, StreamTransport
 
 
 class HttpxTransport(Transport, StreamTransport):

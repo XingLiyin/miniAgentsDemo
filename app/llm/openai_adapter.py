@@ -5,20 +5,12 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, Iterator, Optional
 
-from app.llm.llm_base import (
+from app.llm.base import (
     BaseAdapter,
-    LLMMessage,
-    LLMRequest,
-    LLMResponse,
-    LLMTool,
-    LLMUsage,
-    ParsedResponse,
-    StreamChunk,
     StreamTransport,
-    TextBlock,
-    ToolCallBlock,
-    Transport,
+    Transport
 )
+from app.llm.types import LLMMessage, LLMRequest, LLMResponse, LLMTool, LLMUsage, ParsedResponse, StreamChunk, TextBlock, ToolCallBlock
 
 
 class OpenAIAdapter(BaseAdapter):

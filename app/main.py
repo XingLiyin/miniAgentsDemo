@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
@@ -9,6 +11,26 @@ from app.api.v1.router import api_router
 from app.common.errors import AppError
 from app.config.settings import get_settings
 from app.observability.logging import init_logging
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # Capture the main event loop so worker threads can schedule AF coroutines
+    # on it (instead of creating a new loop that breaks httpx async clients).
+    import asyncio as _asyncio
+    from app.common.async_utils import set_main_loop
+    set_main_loop(_asyncio.get_running_loop())
+
+    # 应用启动时从持久化配置恢复 MCP Server
+    from app.tools.mcp_service import get_mcp_service
+    get_mcp_service().restore_all()
+    # 扫描 agents_dir，自动加载 Agent 定义文件
+    from app.api.v1.deps import get_agent_template_registry
+    get_agent_template_registry()
+    yield
+    # 应用关闭时停止所有 MCP Provider
+    from app.tools.registry import get_tool_registry
+    get_tool_registry().shutdown()
 
 
 def create_app() -> FastAPI:
@@ -20,6 +42,7 @@ def create_app() -> FastAPI:
         title=settings.app_name,
         version=settings.app_version,
         description="miniAgents Phase 1 — Single Agent Loop with file-based storage",
+        lifespan=_lifespan,
     )
 
     # 全局错误处理

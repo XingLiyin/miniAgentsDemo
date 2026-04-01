@@ -1,7 +1,4 @@
-"""AgentTemplate 领域模型（Phase 1）。
-
-AgentTemplate 是静态配置模板，与运行时 Agent 实例分离。
-"""
+"""AgentTemplate domain model."""
 
 from __future__ import annotations
 
@@ -11,15 +8,28 @@ from typing import Any
 
 @dataclass
 class AgentTemplate:
-    """Agent 模板（静态配置，不含运行时状态）。"""
+    """Static agent template used to initialize runtime agents."""
+
     id: str
     name: str
-    system_prompt: str
-    tool_list: list[str] = field(default_factory=list)    # 允许使用的工具名称列表
-    has_spawn_permission: bool = False                     # Phase 2：是否允许 spawn 子 Agent
+
+    # Legacy fallback field used when the four markdown fields are empty.
+    system_prompt: str = ""
+
+    soul_md: str = ""
+    role_md: str = ""
+    tools_md: str = ""
+    style_md: str = ""
+
+    version: str = "1.0.0"
+    tool_list: list[str] = field(default_factory=list)
+    tool_list_ready: bool = False
+    skill_list: list[str] = field(default_factory=list)
+    source_dir: str = ""
+    inject_style: bool = False
+    has_spawn_permission: bool = False
     description: str = ""
 
-    # Memory 配置
     summary_threshold: int = 20
     short_window_size: int = 20
 
@@ -31,7 +41,16 @@ class AgentTemplate:
             "id": self.id,
             "name": self.name,
             "system_prompt": self.system_prompt,
+            "soul_md": self.soul_md,
+            "role_md": self.role_md,
+            "tools_md": self.tools_md,
+            "style_md": self.style_md,
+            "version": self.version,
             "tool_list": self.tool_list,
+            "tool_list_ready": self.tool_list_ready,
+            "skill_list": self.skill_list,
+            "source_dir": self.source_dir,
+            "inject_style": self.inject_style,
             "has_spawn_permission": self.has_spawn_permission,
             "description": self.description,
             "summary_threshold": self.summary_threshold,
@@ -45,8 +64,17 @@ class AgentTemplate:
         return cls(
             id=d["id"],
             name=d["name"],
-            system_prompt=d["system_prompt"],
+            system_prompt=d.get("system_prompt", ""),
+            soul_md=d.get("soul_md", ""),
+            role_md=d.get("role_md", ""),
+            tools_md=d.get("tools_md", ""),
+            style_md=d.get("style_md", ""),
+            version=d.get("version", "1.0.0"),
             tool_list=d.get("tool_list", []),
+            tool_list_ready=d.get("tool_list_ready", False),
+            skill_list=d.get("skill_list", []),
+            source_dir=d.get("source_dir", ""),
+            inject_style=d.get("inject_style", False),
             has_spawn_permission=d.get("has_spawn_permission", False),
             description=d.get("description", ""),
             summary_threshold=d.get("summary_threshold", 20),

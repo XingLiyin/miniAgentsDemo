@@ -6,9 +6,13 @@ import logging
 from dataclasses import asdict, dataclass
 from typing import Optional
 
-from app.llm.llm_base import LLMClient
+from app.llm.base import BaseChatClient
 from app.llm.provider_registry import ProviderRegistry
 from app.llm.transport_httpx import HttpxTransport
+from app.storage.file.llm_config_store import LLMConfigStore
+
+SUPPORTED_LLM_STYLES = {"openai", "anthropic"}
+_DISABLE_FUNCTION_INVOCATION = {"enabled": False}
 
 logger = logging.getLogger(__name__)
 
@@ -81,13 +85,13 @@ class LLMRegistry:
 
     # ── 查询 ──────────────────────────────────────────────────────────────
 
-    def get_client(self, name: str) -> LLMClient:
+    def get_client(self, name: str) -> BaseChatClient:
         """获取 LLMClient。"""
         if name not in self._configs:
             raise KeyError(f"未注册 LLM: {name}")
         cfg = self._configs[name]
         adapter = self._provider_registry.get(name)
-        return LLMClient(adapter=adapter, model=cfg.model)
+        return BaseChatClient(adapter=adapter, model=cfg.model)
 
     def get_config(self, name: str) -> LLMProviderConfig:
         """获取 LLM 配置（含 api_key，注意不要直接暴露给外部）。"""
@@ -159,6 +163,6 @@ def get_llm_registry() -> LLMRegistry:
     return _registry
 
 
-def get_llm_registry_client(name: str) -> LLMClient:
-    """使用单例注册表获取 LLMClient。"""
+def get_llm_registry_client(name: str) -> BaseChatClient:
+    """使用单例注册表获取 BaseChatClient"""
     return get_llm_registry().get_client(name)

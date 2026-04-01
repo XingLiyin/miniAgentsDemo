@@ -1,9 +1,9 @@
-"""内置工具实现：bash_exec、http_request。
+"""内置工具实现：bash_exec、http_request、search_tools。
 
 新增内置工具步骤：
-1. 实现 handler 函数（接收 dict，返回 ToolResult）
-2. 在 _make_*_definition() 中声明 name / description / input_schema
-3. 在 get_builtin_provider() 的列表中追加新定义
+1. 用 @tool_result 装饰函数，参数用 Annotated[type, "描述"] 声明
+2. 函数返回 ToolResult（或 str，自动包装）
+3. 在 get_builtin_provider() 的列表中追加
 """
 
 from __future__ import annotations
@@ -11,15 +11,15 @@ from __future__ import annotations
 import logging
 import re
 import subprocess
-from typing import Any
+from typing import Annotated
 
 import httpx
 
 from app.common.errors import AppError
 from app.config.settings import get_settings
-from app.llm.llm_base import InputSchema
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.definition import ToolResult
 from app.tools.provider import BuiltinToolProvider
+from app.tools.tool_decorator import tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -39,11 +39,11 @@ _BASH_BLACKLIST = [
 ]
 
 
-def _bash_exec_handler(arguments: dict[str, Any]) -> ToolResult:
-    command: str = arguments.get("command", "")
-    if not command:
-        raise AppError("INVALID_ARGUMENT", "bash_exec: 'command' is required")
-
+@tool_result
+def bash_exec(
+    command: Annotated[str, "Shell command to execute"],
+) -> ToolResult:
+    """Execute a shell command in a restricted environment. Returns stdout+stderr. Non-zero exit code sets is_error=true."""
     for pattern in _BASH_BLACKLIST:
         if re.search(pattern, command):
             raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
@@ -71,31 +71,6 @@ def _bash_exec_handler(arguments: dict[str, Any]) -> ToolResult:
         raise AppError("TOOL_TIMEOUT", f"bash_exec timed out after {timeout_sec}s")
 
 
-def _make_bash_exec_definition() -> ToolDefinition:
-    return ToolDefinition(
-        name="bash_exec",
-        description=(
-            "Execute a shell command in a restricted environment. "
-            "Returns stdout+stderr. Non-zero exit code sets is_error=true."
-        ),
-        input_schema=InputSchema(
-            type="object",
-            properties={
-                "command": {
-                    "type": "string",
-                    "description": "Shell command to execute",
-                },
-                "timeout_ms": {
-                    "type": "integer",
-                    "description": "Execution timeout in milliseconds (default 30000)",
-                },
-            },
-            require=["command"],
-        ),
-        handler=_bash_exec_handler,
-    )
-
-
 # ── http_request ──────────────────────────────────────────────────────────
 
 _SSRF_BLOCKED = re.compile(
@@ -105,15 +80,14 @@ _SSRF_BLOCKED = re.compile(
 )
 
 
-def _http_request_handler(arguments: dict[str, Any]) -> ToolResult:
-    url: str = arguments.get("url", "")
-    method: str = arguments.get("method", "GET").upper()
-    headers: dict = arguments.get("headers", {})
-    body: str | None = arguments.get("body")
-
-    if not url:
-        raise AppError("INVALID_ARGUMENT", "http_request: 'url' is required")
-
+@tool_result
+def http_request(
+    url: Annotated[str, "Target URL (must be a public address)"],
+    method: Annotated[str, "HTTP method: GET, POST, PUT, DELETE, PATCH"] = "GET",
+    headers: Annotated[dict | None, "Optional HTTP headers as key-value pairs"] = None,
+    body: Annotated[str | None, "Optional request body (string)"] = None,
+) -> ToolResult:
+    """Make an HTTP request to an external URL. Private/localhost addresses are blocked."""
     try:
         host = url.split("/")[2].split(":")[0]
     except IndexError:
@@ -128,7 +102,9 @@ def _http_request_handler(arguments: dict[str, Any]) -> ToolResult:
     try:
         with httpx.Client(timeout=timeout_sec) as client:
             resp = client.request(
-                method=method, url=url, headers=headers,
+                method=method.upper(),
+                url=url,
+                headers=headers or {},
                 content=body.encode() if body else None,
             )
         content = resp.text
@@ -149,45 +125,54 @@ def _http_request_handler(arguments: dict[str, Any]) -> ToolResult:
         raise AppError("HTTP_REQUEST_ERROR", str(e))
 
 
-def _make_http_request_definition() -> ToolDefinition:
-    return ToolDefinition(
-        name="http_request",
-        description=(
-            "Make an HTTP request to an external URL. "
-            "Private/localhost addresses are blocked."
-        ),
-        input_schema=InputSchema(
-            type="object",
-            properties={
-                "url": {
-                    "type": "string",
-                    "description": "Target URL (must be a public address)",
-                },
-                "method": {
-                    "type": "string",
-                    "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"],
-                    "description": "HTTP method (default GET)",
-                },
-                "headers": {
-                    "type": "object",
-                    "description": "Optional HTTP headers as key-value pairs",
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Optional request body (string)",
-                },
-            },
-            require=["url"],
-        ),
-        handler=_http_request_handler,
+# ── search_tools ──────────────────────────────────────────────────────────
+
+@tool_result
+def search_tools(
+    query: Annotated[str, "Natural language description of what you want to accomplish"],
+    top_k: Annotated[int, "Maximum number of tools to return (default 5)"] = 5,
+) -> ToolResult:
+    """Search registered tools by semantic relevance using the external tool store.
+    Returns a JSON list of matching tools with name, description, and relevance score.
+    Requires MINIAGENTS_TOOL_STORE_BASE_URL to be configured."""
+    from app.tools.tool_store_client import get_tool_store_client
+
+    client = get_tool_store_client()
+    if not client.enabled:
+        return ToolResult(
+            content="Tool store is not configured. Set MINIAGENTS_TOOL_STORE_BASE_URL to enable semantic search.",
+            is_error=True,
+            error_code="TOOL_STORE_NOT_CONFIGURED",
+        )
+
+    results = client.search(query, top_k=top_k)
+    if not results:
+        return ToolResult(content="[]")
+
+    import json
+    output = json.dumps(
+        [{"name": r.name, "description": r.description, "score": round(r.score, 4)} for r in results],
+        ensure_ascii=False,
+        indent=2,
     )
+    return ToolResult(content=output)
+
+
+# ── request_human_input ───────────────────────────────────────────────────
+# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
+
+@tool_result
+def request_human_input(
+    prompt: Annotated[str, "The question or instruction to show the user"],
+    context: Annotated[str, "Optional background context for the user"] = "",
+) -> ToolResult:
+    """Pause execution and request input from the human user.
+    Use when you need information or a decision that only the user can provide."""
+    return ToolResult(content="")   # 触发信号，Actor 特殊处理，函数体不执行
 
 
 # ── Provider 入口 ─────────────────────────────────────────────────────────
 
 def get_builtin_provider() -> BuiltinToolProvider:
     """返回包含所有内置工具的 Provider 实例。"""
-    return BuiltinToolProvider([
-        _make_bash_exec_definition(),
-        _make_http_request_definition(),
-    ])
+    return BuiltinToolProvider([bash_exec, http_request, search_tools])

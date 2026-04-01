@@ -109,13 +109,13 @@ miniAgents/
       cache/                     # Phase 2 占位，当前不使用
 
     llm/                         # ✅ 已完成
-      llm_base.py                # LLMRequest / ParsedResponse / BaseAdapter / LLMClient
-      provider_registry.py       # ProviderRegistry
+      __init__.py                # LLM 模块导出
+      client.py                  # LLMClient 兼容层
+      contracts.py               # BaseChatClient 合约
+      factory.py                 # Provider client / runtime client 工厂
       registry.py                # LLMRegistry 全局单例
-      openai_adapter.py          # OpenAI Chat Completions 适配
-      anthropic_adapter.py       # Anthropic Messages 适配
-      mock_adapter.py            # 测试用 Mock
-      transport_httpx.py         # httpx HTTP 传输层
+      mock_client.py             # 测试用 MockChatClient
+      types.py                   # ParsedResponse / LLMMessage 类型
 
     observability/
       logging.py                 # 结构化 JSON 日志初始化（Phase 1 只做日志）

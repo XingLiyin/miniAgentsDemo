@@ -1,0 +1,1968 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>NetCowork</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg0:#f0f4fa; --bg1:#ffffff; --bg2:#f5f8fe; --bg3:#eaf0fb;
+  --border:#dde6f3; --border2:#c6d5eb;
+  --blue:#2563eb; --blue-dim:rgba(37,99,235,.09); --blue-glow:rgba(37,99,235,.2);
+  --teal:#0891b2; --amber:#d97706; --red:#dc2626; --green:#16a34a; --purple:#7c3aed;
+  --t1:#0f1f3d; --t2:#3d5a80; --t3:#8aa3bf;
+  --shadow:0 1px 4px rgba(15,31,61,.07);
+  --shadow2:0 4px 16px rgba(15,31,61,.1);
+  --font-ui:'DM Sans',system-ui,sans-serif;
+  --font-head:'Syne',system-ui,sans-serif;
+  --font-mono:'JetBrains Mono',monospace;
+  --r:8px; --r2:12px; --r3:16px;
+  --titlebar-h:40px; --nav-h:50px;
+  --sidebar-w:268px; --right-w:380px;
+  --tr:.15s ease;
+}
+html,body{height:100%;overflow:hidden}
+body{font-family:var(--font-ui);background:var(--bg0);color:var(--t1);font-size:14px;line-height:1.5;user-select:none}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:2px}
+input,textarea,select{user-select:text;font-family:var(--font-ui)}
+
+/* ── Splash ───────────────────────────────────────────────────── */
+#splash{position:fixed;inset:0;z-index:9999;background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;transition:opacity .5s ease,visibility .5s ease}
+#splash.hidden{opacity:0;visibility:hidden;pointer-events:none}
+.sp-logo{width:68px;height:68px;border-radius:16px;background:linear-gradient(135deg,var(--blue) 0%,var(--teal) 100%);display:grid;place-items:center;font-family:var(--font-head);font-size:30px;font-weight:800;color:#fff;margin-bottom:20px;box-shadow:0 8px 32px var(--blue-glow);animation:sp-in .6s cubic-bezier(.16,1,.3,1) both}
+@keyframes sp-in{from{opacity:0;transform:scale(.7) translateY(10px)}to{opacity:1;transform:none}}
+.sp-name{font-family:var(--font-head);font-size:24px;font-weight:800;color:var(--t1);letter-spacing:-.3px;margin-bottom:4px;animation:sp-in .6s .12s cubic-bezier(.16,1,.3,1) both}
+.sp-sub{font-size:11.5px;color:var(--t3);letter-spacing:1.5px;text-transform:uppercase;margin-bottom:32px;animation:sp-in .6s .22s both}
+.sp-bar-wrap{width:200px;height:2px;background:var(--border);border-radius:2px;overflow:hidden;animation:sp-in .4s .3s both}
+.sp-bar{height:100%;width:0;background:linear-gradient(90deg,var(--blue),var(--teal));border-radius:2px;transition:width .35s ease}
+.sp-msg{margin-top:12px;font-size:11px;color:var(--t3);font-family:var(--font-mono);animation:sp-in .4s .3s both;min-height:16px}
+
+/* ── Modal system ─────────────────────────────────────────────── */
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,31,61,.35);backdrop-filter:blur(4px);z-index:500;display:none;align-items:center;justify-content:center}
+.modal-backdrop.open{display:flex}
+.modal{background:var(--bg1);border-radius:var(--r3);box-shadow:0 24px 80px rgba(15,31,61,.18);width:560px;max-height:82vh;overflow:hidden;display:flex;flex-direction:column;animation:m-in .2s ease both}
+.modal.wide{width:700px}
+@keyframes m-in{from{opacity:0;transform:scale(.96) translateY(8px)}to{opacity:1;transform:none}}
+.modal-hdr{padding:20px 22px 0;display:flex;align-items:center;gap:10px}
+.modal-title{font-family:var(--font-head);font-size:16px;font-weight:700;color:var(--t1)}
+.modal-close{margin-left:auto;width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:transparent;color:var(--t3);cursor:pointer;display:grid;place-items:center;font-size:14px;transition:var(--tr)}
+.modal-close:hover{background:var(--bg3);color:var(--t1)}
+.modal-body{padding:18px 22px;overflow-y:auto;flex:1}
+.modal-footer{padding:14px 22px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+
+/* Form elements */
+.form-group{margin-bottom:16px}
+.form-label{font-size:12px;font-weight:600;color:var(--t2);display:block;margin-bottom:6px}
+.form-input{width:100%;padding:8px 11px;border:1px solid var(--border);border-radius:var(--r);background:var(--bg2);color:var(--t1);font-size:13.5px;outline:none;transition:var(--tr)}
+.form-input:focus{border-color:var(--blue);background:#fff;box-shadow:0 0 0 3px var(--blue-dim)}
+.form-textarea{resize:none;min-height:72px;line-height:1.6}
+.domain-pills-row{display:flex;flex-wrap:wrap;gap:6px}
+.d-pill{padding:5px 13px;border-radius:20px;border:1px solid var(--border);background:var(--bg2);color:var(--t2);font-size:12.5px;font-weight:500;cursor:pointer;transition:var(--tr);user-select:none}
+.d-pill:hover{border-color:var(--border2);background:var(--bg3)}
+.d-pill.sel{background:var(--blue-dim);border-color:var(--blue);color:var(--blue)}
+
+/* Skill recommendation list */
+.skill-rec-section{border:1px solid var(--border);border-radius:var(--r2);overflow:hidden}
+.skill-rec-hdr{padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:11px;color:var(--t3);font-weight:600;letter-spacing:.8px;text-transform:uppercase}
+.skill-rec-list{max-height:220px;overflow-y:auto}
+.skill-rec-item{display:flex;align-items:center;gap:10px;padding:9px 12px;border-bottom:1px solid var(--border);transition:var(--tr)}
+.skill-rec-item:last-child{border-bottom:none}
+.skill-rec-item:hover{background:var(--bg2)}
+.sri-check{width:16px;height:16px;border-radius:4px;border:1px solid var(--border2);background:#fff;cursor:pointer;display:grid;place-items:center;flex-shrink:0;transition:var(--tr)}
+.sri-check.checked{background:var(--blue);border-color:var(--blue)}
+.sri-check.checked::after{content:'✓';color:#fff;font-size:10px}
+.sri-icon{font-size:15px;flex-shrink:0}
+.sri-info{flex:1;min-width:0}
+.sri-name{font-size:12.5px;font-weight:500;color:var(--t1)}
+.sri-desc{font-size:11px;color:var(--t3)}
+.sri-ver{font-size:10.5px;font-family:var(--font-mono);color:var(--t3);background:var(--bg3);padding:1px 5px;border-radius:3px}
+.sri-domain-badge{font-size:9.5px;padding:1px 6px;border-radius:3px;font-weight:600}
+
+/* Buttons */
+.btn{padding:7px 16px;border-radius:var(--r);font-size:13px;font-weight:500;cursor:pointer;transition:var(--tr);font-family:var(--font-ui)}
+.btn-primary{background:var(--blue);border:none;color:#fff}
+.btn-primary:hover{background:#1d4ed8}
+.btn-secondary{background:var(--bg2);border:1px solid var(--border);color:var(--t2)}
+.btn-secondary:hover{background:var(--bg3);border-color:var(--border2);color:var(--t1)}
+.btn-danger{background:#fef2f2;border:1px solid #fca5a5;color:var(--red)}
+.btn-danger:hover{background:#fee2e2}
+
+/* Project detail tabs */
+.modal-tabs{display:flex;border-bottom:1px solid var(--border);padding:0 22px;flex-shrink:0;margin-top:14px}
+.mtab{padding:0 2px;height:38px;display:flex;align-items:center;font-size:13px;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;margin-right:20px;transition:var(--tr);background:none;border-left:none;border-right:none;border-top:none;font-family:var(--font-ui)}
+.mtab:hover{color:var(--t2)}
+.mtab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:500}
+.mpane{display:none;flex-direction:column;gap:0}
+.mpane.active{display:flex}
+
+/* Task row in project detail */
+.detail-task-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--r);border:1px solid var(--border);margin-bottom:5px}
+.dtr-type{font-size:10px;padding:2px 6px;border-radius:3px;font-weight:600}
+.dtr-name{flex:1;font-size:13px;color:var(--t1)}
+.dtr-status{font-size:11px;padding:2px 8px;border-radius:10px}
+.st-design{background:rgba(37,99,235,.1);color:var(--blue)}
+.st-pending{background:rgba(217,119,6,.1);color:var(--amber)}
+.st-done{background:rgba(22,163,74,.1);color:var(--green)}
+.st-verify{background:rgba(8,145,178,.1);color:var(--teal)}
+
+/* Linked skill in project detail */
+.detail-skill-card{border:1px solid var(--border);border-radius:var(--r2);padding:10px 12px;margin-bottom:7px;display:flex;align-items:center;gap:10px}
+.dsc-icon{font-size:18px}
+.dsc-info{flex:1}
+.dsc-name{font-size:13px;font-weight:500;color:var(--t1)}
+.dsc-meta{font-size:11px;color:var(--t3)}
+.dsc-ver{font-family:var(--font-mono);font-size:10.5px;background:var(--bg3);padding:1px 5px;border-radius:3px;color:var(--t3)}
+
+/* ── App shell ────────────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh}
+
+/* ── Titlebar ─────────────────────────────────────────────────── */
+#titlebar{height:var(--titlebar-h);background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;-webkit-app-region:drag;flex-shrink:0;z-index:200}
+.tb-left{display:flex;align-items:center;gap:8px;padding:0 14px;-webkit-app-region:no-drag}
+.tb-icon{width:22px;height:22px;border-radius:5px;background:linear-gradient(135deg,var(--blue),var(--teal));display:grid;place-items:center;font-size:11px;font-weight:800;color:#fff}
+.tb-name{font-family:var(--font-head);font-size:13px;font-weight:700;color:var(--t1)}
+.tb-ver{font-size:10px;color:var(--t3);font-family:var(--font-mono)}
+.tb-drag{flex:1}
+.tb-right{display:flex;align-items:center;-webkit-app-region:no-drag}
+.wc-btn{width:46px;height:var(--titlebar-h);background:transparent;border:none;color:var(--t3);font-size:12px;cursor:pointer;display:grid;place-items:center;transition:background .12s,color .12s}
+.wc-btn:hover{background:var(--bg3);color:var(--t1)}
+.wc-btn.close:hover{background:#c42b1c;color:#fff}
+.wc-btn svg{width:10px;height:10px;fill:none;stroke:currentColor;stroke-width:1.3}
+
+/* ── Navbar ───────────────────────────────────────────────────── */
+#navbar{height:var(--nav-h);background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 14px;gap:9px;flex-shrink:0;box-shadow:var(--shadow)}
+.domain-strip{display:flex;gap:3px}
+.dp{padding:3px 10px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--t3);font-size:11.5px;font-weight:500;cursor:pointer;transition:var(--tr);font-family:var(--font-ui)}
+.dp:hover{border-color:var(--border2);color:var(--t2);background:var(--bg3)}
+.dp.active{background:var(--blue-dim);border-color:var(--blue);color:var(--blue)}
+.nav-div{width:1px;height:18px;background:var(--border);flex-shrink:0}
+.proj-sel{display:flex;align-items:center;gap:6px;padding:4px 10px;background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);cursor:pointer;transition:var(--tr);max-width:210px}
+.proj-sel:hover{border-color:var(--border2);background:var(--bg3)}
+.ps-lbl{font-size:10px;color:var(--t3);flex-shrink:0}
+.ps-nm{font-size:12.5px;color:var(--t1);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ps-arrow{color:var(--t3);font-size:9px;margin-left:auto;flex-shrink:0}
+.nav-spacer{flex:1}
+.task-status-nav{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;background:var(--bg2);border:1px solid var(--border)}
+.sdot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.sdot.design{background:var(--blue);animation:pdot 2s infinite}
+.sdot.done{background:var(--green)}
+.sdot.pending{background:var(--amber)}
+.sdot.new{background:var(--t3)}
+@keyframes pdot{0%,100%{opacity:1}50%{opacity:.3}}
+.nav-btn{width:30px;height:30px;border-radius:var(--r);border:1px solid var(--border);background:transparent;color:var(--t2);cursor:pointer;display:grid;place-items:center;transition:var(--tr);font-size:14px}
+.nav-btn:hover{background:var(--bg3);border-color:var(--border2);color:var(--t1)}
+
+/* ── Body ─────────────────────────────────────────────────────── */
+#body{display:flex;flex:1;overflow:hidden}
+
+/* ── Sidebar ──────────────────────────────────────────────────── */
+#sidebar{width:var(--sidebar-w);background:var(--bg1);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s ease;overflow:hidden}
+#sidebar.collapsed{width:0;border-right:none}
+.ss{padding:12px 12px 8px;border-bottom:1px solid var(--border)}
+.ss:last-child{border-bottom:none;flex:1;overflow-y:auto;padding-bottom:10px}
+.sh{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.sh-title{font-size:10px;font-weight:600;color:var(--t3);letter-spacing:1.2px;text-transform:uppercase}
+.sh-act{width:18px;height:18px;border-radius:4px;border:none;background:transparent;color:var(--t3);cursor:pointer;font-size:14px;display:grid;place-items:center;transition:var(--tr)}
+.sh-act:hover{background:var(--bg3);color:var(--t2)}
+
+.proj-item{display:flex;align-items:center;gap:7px;padding:6px 7px;border-radius:var(--r);cursor:pointer;transition:var(--tr);margin-bottom:2px}
+.proj-item:hover{background:var(--bg3)}
+.proj-item.active{background:var(--blue-dim)}
+.pi-icon{width:22px;height:22px;border-radius:5px;display:grid;place-items:center;font-size:11px;flex-shrink:0;font-weight:700}
+.pi-name{font-size:12.5px;color:var(--t1);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.pi-badge{font-size:10px;padding:1px 5px;border-radius:8px;background:var(--bg3);color:var(--t3)}
+
+.task-item{padding:7px 9px;border-radius:var(--r);cursor:pointer;transition:var(--tr);margin-bottom:3px;border:1px solid transparent}
+.task-item:hover{background:var(--bg3)}
+.task-item.active{background:var(--bg3);border-color:var(--border2)}
+.ti-head{display:flex;align-items:center;gap:5px;margin-bottom:3px}
+.ti-name{font-size:12.5px;color:var(--t1);font-weight:500;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.type-tag{font-size:9.5px;padding:1px 5px;border-radius:3px;font-weight:600}
+.tag-hld{background:rgba(37,99,235,.1);color:var(--blue)}
+.tag-lld{background:rgba(124,58,237,.1);color:var(--purple)}
+.tag-mop{background:rgba(8,145,178,.1);color:var(--teal)}
+.tag-verify{background:rgba(217,119,6,.1);color:var(--amber)}
+.tag-skill{background:rgba(220,38,38,.08);color:var(--red)}
+.ti-meta{display:flex;align-items:center;gap:5px}
+.ti-st{font-size:10px;color:var(--t3);display:flex;align-items:center;gap:3px}
+.ti-st::before{content:'';width:4px;height:4px;border-radius:50%;background:currentColor;display:inline-block}
+.ti-st.s-d{color:var(--blue)} .ti-st.s-p{color:var(--amber)} .ti-st.s-ok{color:var(--green)} .ti-st.s-v{color:var(--teal)}
+.ti-time{font-size:10px;color:var(--t3);margin-left:auto}
+
+.tpl-item{display:flex;align-items:center;gap:7px;padding:5px 7px;border-radius:var(--r);cursor:pointer;transition:var(--tr);margin-bottom:2px}
+.tpl-item:hover{background:var(--bg3)}
+.tpl-icon{font-size:12px;width:18px;text-align:center}
+.tpl-name{font-size:12.5px;color:var(--t2)}
+
+/* ── Chat area ────────────────────────────────────────────────── */
+#chat-area{flex:1;display:flex;flex-direction:column;background:var(--bg0);overflow:hidden}
+.status-flow{display:flex;align-items:center;padding:7px 18px;border-bottom:1px solid var(--border);background:var(--bg1);overflow-x:auto;flex-shrink:0;gap:0}
+.sf-step{display:flex;align-items:center;flex-shrink:0}
+.sf-node{padding:3px 9px;border-radius:10px;font-size:10.5px;border:1px solid var(--border);white-space:nowrap}
+.sf-node.done{color:var(--green);border-color:rgba(22,163,74,.3);background:rgba(22,163,74,.07)}
+.sf-node.active{color:var(--blue);border-color:rgba(37,99,235,.3);background:var(--blue-dim);font-weight:600}
+.sf-node.pending{color:var(--t3);border-color:var(--border)}
+.sf-arrow{color:var(--t3);font-size:10px;padding:0 5px}
+#messages{flex:1;overflow-y:auto;padding:20px 0;display:flex;flex-direction:column;gap:0}
+.msg-row{display:flex;padding:9px 18px;animation:fade-up .25s ease both;transition:background .1s}
+.msg-row:hover{background:rgba(37,99,235,.02)}
+@keyframes fade-up{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.msg-av{width:30px;height:30px;border-radius:8px;flex-shrink:0;margin-right:11px;margin-top:2px;display:grid;place-items:center;font-size:12px}
+.msg-av.user{background:var(--bg3);border:1px solid var(--border);color:var(--t2);font-weight:700;font-size:10px}
+.msg-av.ai{background:linear-gradient(135deg,var(--blue),var(--teal));color:#fff}
+.msg-body{flex:1;min-width:0}
+.msg-hdr{display:flex;align-items:baseline;gap:7px;margin-bottom:4px}
+.msg-name{font-size:12.5px;font-weight:600;color:var(--t1)}
+.msg-time{font-size:10.5px;color:var(--t3)}
+.msg-text{font-size:13.5px;color:var(--t2);line-height:1.65}
+.msg-text p{margin-bottom:6px}
+.msg-text p:last-child{margin-bottom:0}
+.msg-text code{font-family:var(--font-mono);font-size:11.5px;background:var(--bg3);border:1px solid var(--border);padding:1px 4px;border-radius:4px;color:var(--blue)}
+.msg-text strong{color:var(--t1);font-weight:600}
+.tool-card{margin-top:7px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;box-shadow:var(--shadow)}
+.tc-hdr{padding:7px 11px;display:flex;align-items:center;gap:7px;cursor:pointer;background:var(--bg2)}
+.tc-hdr:hover{background:var(--bg3)}
+.tc-icon{width:20px;height:20px;border-radius:4px;display:grid;place-items:center;font-size:10px;background:var(--blue-dim);color:var(--blue);flex-shrink:0}
+.tc-name{font-size:11.5px;color:var(--t2);font-weight:500;font-family:var(--font-mono)}
+.tc-status{margin-left:auto;font-size:10.5px;display:flex;align-items:center;gap:3px}
+.tc-status.done{color:var(--green)}.tc-status.running{color:var(--blue)}.tc-status.error{color:var(--red)}
+.tc-arrow{font-size:9px;color:var(--t3)}
+.tc-body{padding:9px 11px;font-family:var(--font-mono);font-size:11px;color:var(--t2);line-height:1.6;background:var(--bg2);border-top:1px solid var(--border)}
+.artifact{margin-top:8px;background:var(--bg1);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;box-shadow:var(--shadow)}
+.art-hdr{padding:7px 11px;display:flex;align-items:center;gap:7px;background:var(--bg2);border-bottom:1px solid var(--border)}
+.art-tag{font-size:9.5px;padding:2px 6px;border-radius:3px;font-weight:600;letter-spacing:.5px;text-transform:uppercase}
+.art-tag.doc{background:rgba(37,99,235,.1);color:var(--blue)}
+.art-tag.topo{background:rgba(8,145,178,.1);color:var(--teal)}
+.art-name{font-size:12px;color:var(--t1);font-weight:500}
+.art-open{margin-left:auto;font-size:10.5px;color:var(--blue);background:none;border:none;cursor:pointer;padding:0;font-family:var(--font-ui)}
+.art-open:hover{text-decoration:underline}
+.art-body{padding:10px 11px;font-family:var(--font-mono);font-size:11px;color:var(--t2);line-height:1.65;max-height:90px;overflow:hidden;-webkit-mask:linear-gradient(to bottom,#000 40%,transparent)}
+.thinking-row{padding:9px 18px;display:flex;align-items:center;gap:11px;animation:fade-up .25s ease both}
+.thinking-av{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--teal));display:grid;place-items:center;color:#fff;font-size:12px;flex-shrink:0}
+.t-dots{display:flex;gap:4px}
+.t-dots span{width:5px;height:5px;border-radius:50%;background:var(--t3);animation:bounce 1.4s infinite}
+.t-dots span:nth-child(2){animation-delay:.2s}
+.t-dots span:nth-child(3){animation-delay:.4s}
+@keyframes bounce{0%,80%,100%{transform:scale(.7);opacity:.4}40%{transform:scale(1.1);opacity:1}}
+
+/* ── Input ────────────────────────────────────────────────────── */
+.chat-input-area{padding:10px 18px 14px;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.input-wrap{background:#fff;border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;transition:border-color .15s;box-shadow:var(--shadow)}
+.input-wrap:focus-within{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-dim)}
+.input-toolbar{padding:7px 9px 0;display:flex;gap:3px}
+.itool{padding:3px 8px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--t3);font-size:11px;cursor:pointer;transition:var(--tr);font-family:var(--font-ui);display:flex;align-items:center;gap:3px}
+.itool:hover{background:var(--bg3);border-color:var(--border2);color:var(--t2)}
+#chat-input{width:100%;padding:9px 11px;background:transparent;border:none;outline:none;color:var(--t1);font-family:var(--font-ui);font-size:13.5px;resize:none;min-height:48px;max-height:150px;line-height:1.6}
+#chat-input::placeholder{color:var(--t3)}
+.input-footer{padding:5px 9px 7px;display:flex;align-items:center;gap:7px}
+.input-hint{font-size:10.5px;color:var(--t3);flex:1}
+.input-hint kbd{background:var(--bg2);border:1px solid var(--border);border-radius:3px;padding:1px 4px;font-size:9.5px;font-family:var(--font-mono)}
+.send-btn{padding:5px 14px;border-radius:7px;background:var(--blue);border:none;color:#fff;font-size:12.5px;font-weight:500;cursor:pointer;font-family:var(--font-ui);transition:var(--tr);display:flex;align-items:center;gap:5px}
+.send-btn:hover{background:#1d4ed8}
+.send-btn:active{transform:scale(.97)}
+.send-btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── Right panel ──────────────────────────────────────────────── */
+#right-panel{width:var(--right-w);background:var(--bg1);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;transition:width .2s ease;overflow:hidden}
+#right-panel.collapsed{width:0;border-left:none}
+.panel-tabs{display:flex;border-bottom:1px solid var(--border);background:var(--bg2);flex-shrink:0}
+.ptab{padding:0 13px;height:40px;display:flex;align-items:center;gap:5px;font-size:12px;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:var(--tr);white-space:nowrap;background:none;border-left:none;border-right:none;border-top:none;font-family:var(--font-ui)}
+.ptab:hover{color:var(--t2)}
+.ptab.active{color:var(--blue);border-bottom-color:var(--blue)}
+.ptab .tbadge{background:var(--bg3);color:var(--t3);border-radius:8px;font-size:9.5px;padding:1px 5px}
+.ptab.active .tbadge{background:var(--blue-dim);color:var(--blue)}
+.panel-content{flex:1;overflow:hidden;display:flex;flex-direction:column}
+.ppane{display:none;flex-direction:column;height:100%}
+.ppane.active{display:flex}
+
+/* Doc panel */
+.doc-tree{padding:9px}
+.doc-item{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:var(--r);cursor:pointer;transition:var(--tr);margin-bottom:2px}
+.doc-item:hover{background:var(--bg3)}
+.doc-item.active{background:var(--blue-dim);border:1px solid rgba(37,99,235,.2)}
+.di-icon{font-size:13px;width:16px;text-align:center}
+.di-name{font-size:12.5px;color:var(--t1);flex:1}
+.di-size{font-size:10px;color:var(--t3)}
+.di-dot{width:5px;height:5px;border-radius:50%;flex-shrink:0}
+.di-dot.mod{background:var(--amber)}.di-dot.done{background:var(--green)}.di-dot.draft{background:var(--t3)}
+.doc-preview{flex:1;border-top:1px solid var(--border);background:var(--bg2);padding:14px 16px;font-size:13px;color:var(--t2);line-height:1.8;overflow-y:auto}
+.doc-preview h3{font-family:var(--font-head);font-size:13.5px;color:var(--t1);margin-bottom:8px;font-weight:700}
+.doc-preview h4{font-size:11px;color:var(--blue);margin:10px 0 5px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.doc-preview p{margin-bottom:6px}
+.doc-preview ul{padding-left:14px}
+.doc-preview li{margin-bottom:3px}
+
+/* Verify panel */
+.verify-summary{padding:12px;border-bottom:1px solid var(--border)}
+.verify-score{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.score-ring{width:52px;height:52px;border-radius:50%;background:conic-gradient(var(--green) 0% 78%,var(--border) 78% 100%);display:grid;place-items:center;flex-shrink:0}
+.score-inner{width:38px;height:38px;border-radius:50%;background:var(--bg1);display:grid;place-items:center;font-size:13.5px;font-weight:700;color:var(--green);font-family:var(--font-head)}
+.sm-title{font-size:12.5px;font-weight:600;color:var(--t1);margin-bottom:2px}
+.sm-sub{font-size:10.5px;color:var(--t3)}
+.vstats{display:flex;gap:7px}
+.vs{flex:1;padding:7px;border-radius:var(--r);background:var(--bg2);border:1px solid var(--border);text-align:center}
+.vs-num{font-size:17px;font-weight:700;font-family:var(--font-head)}
+.vs-lbl{font-size:9.5px;color:var(--t3);margin-top:1px}
+.vs.pass .vs-num{color:var(--green)}.vs.warn .vs-num{color:var(--amber)}.vs.fail .vs-num{color:var(--red)}
+.verify-issues{padding:8px;flex:1;overflow-y:auto}
+.issue-item{padding:7px 9px;border-radius:var(--r);border:1px solid var(--border);margin-bottom:5px;cursor:pointer;transition:var(--tr);background:var(--bg1)}
+.issue-item:hover{border-color:var(--border2);background:var(--bg3)}
+.issue-hdr{display:flex;align-items:center;gap:5px;margin-bottom:3px}
+.issue-lv{font-size:9.5px;padding:1px 5px;border-radius:3px;font-weight:700;text-transform:uppercase}
+.issue-lv.high{background:rgba(220,38,38,.1);color:var(--red)}
+.issue-lv.med{background:rgba(217,119,6,.1);color:var(--amber)}
+.issue-lv.low{background:rgba(37,99,235,.08);color:var(--blue)}
+.issue-title{font-size:12px;color:var(--t1);font-weight:500}
+.issue-desc{font-size:11px;color:var(--t3)}
+.issue-loc{font-size:9.5px;color:var(--t3);font-family:var(--font-mono);margin-top:2px}
+
+/* ── Skill panel ──────────────────────────────────────────────── */
+.skill-panel-wrap{display:flex;flex-direction:column;height:100%;overflow:hidden}
+.skill-hdr{padding:11px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:9px;flex-shrink:0}
+.skill-hdr-title{font-family:var(--font-head);font-size:13px;font-weight:700;color:var(--t1)}
+.skill-hdr-sub{font-size:10.5px;color:var(--t3);margin-top:1px}
+.new-skill-btn{margin-left:auto;padding:4px 9px;border-radius:5px;background:var(--blue-dim);border:1px solid rgba(37,99,235,.25);color:var(--blue);font-size:10.5px;cursor:pointer;font-family:var(--font-ui);transition:var(--tr)}
+.new-skill-btn:hover{background:var(--blue);color:#fff}
+
+.skill-list-section{padding:7px;border-bottom:1px solid var(--border);flex-shrink:0}
+.skill-item{padding:8px 9px;border-radius:var(--r);border:1px solid var(--border);margin-bottom:4px;cursor:pointer;transition:var(--tr);background:var(--bg1)}
+.skill-item:hover{border-color:var(--border2);background:var(--bg3)}
+.skill-item.active{border-color:var(--blue);background:var(--blue-dim)}
+.skill-item-hdr{display:flex;align-items:center;gap:6px;margin-bottom:3px}
+.sk-icon{font-size:13px}
+.sk-name{font-size:12px;color:var(--t1);font-weight:500;flex:1}
+.sk-ver{font-size:10px;font-family:var(--font-mono);color:var(--t3);background:var(--bg3);padding:1px 5px;border-radius:3px}
+.skill-meta-row{display:flex;align-items:center;gap:7px}
+.sk-domain{font-size:10px;color:var(--t3)}
+.sk-badge{font-size:9.5px;padding:1px 6px;border-radius:8px;margin-left:auto}
+.sk-badge.stable{background:rgba(22,163,74,.1);color:var(--green)}
+.sk-badge.tuning{background:rgba(217,119,6,.1);color:var(--amber)}
+.sk-badge.testing{background:rgba(37,99,235,.1);color:var(--blue)}
+
+/* Skill file tree */
+.skill-detail-area{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+.skill-version-bar{padding:8px 12px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-shrink:0}
+.svb-label{font-size:10.5px;color:var(--t3)}
+.svb-ver{font-size:11px;font-family:var(--font-mono);color:var(--t1);font-weight:500}
+.svb-badge{font-size:9.5px;padding:1px 6px;border-radius:3px}
+.svb-badge.base{background:rgba(37,99,235,.1);color:var(--blue)}
+.svb-badge.fork{background:rgba(22,163,74,.1);color:var(--green)}
+.fork-btn{margin-left:auto;padding:4px 10px;border-radius:5px;border:1px solid var(--border2);background:var(--bg1);color:var(--t2);font-size:11px;cursor:pointer;font-family:var(--font-ui);transition:var(--tr);display:flex;align-items:center;gap:4px}
+.fork-btn:hover{background:var(--blue);border-color:var(--blue);color:#fff}
+.fork-btn.forked{background:rgba(22,163,74,.08);border-color:rgba(22,163,74,.3);color:var(--green)}
+
+/* File tree */
+.file-tree{padding:8px}
+.ft-section-lbl{font-size:9.5px;color:var(--t3);font-weight:600;letter-spacing:.8px;text-transform:uppercase;padding:4px 6px;margin-bottom:2px}
+.ft-item{display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;cursor:pointer;transition:var(--tr);margin-bottom:1px}
+.ft-item:hover{background:var(--bg3)}
+.ft-item.active{background:var(--blue-dim)}
+.ft-icon{font-size:12px;width:16px;text-align:center;flex-shrink:0}
+.ft-name{font-size:12px;color:var(--t1);flex:1;font-family:var(--font-mono)}
+.ft-perm{font-size:10px;padding:1px 5px;border-radius:3px;flex-shrink:0}
+.ft-perm.readonly{background:rgba(220,38,38,.08);color:var(--red)}
+.ft-perm.editable{background:rgba(22,163,74,.08);color:var(--green)}
+.ft-perm.noperm{background:var(--bg3);color:var(--t3)}
+.ft-item.locked{opacity:.45;cursor:not-allowed}
+.ft-item.locked:hover{background:transparent}
+
+/* File viewer */
+.file-viewer{flex:1;display:flex;flex-direction:column;border-top:1px solid var(--border);background:var(--bg2)}
+.fv-bar{padding:6px 10px;background:var(--bg1);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:7px}
+.fv-filename{font-size:11.5px;font-family:var(--font-mono);color:var(--t1);font-weight:500}
+.fv-perm-banner{font-size:10.5px;padding:1px 7px;border-radius:3px;display:flex;align-items:center;gap:4px}
+.fv-perm-banner.readonly{background:rgba(220,38,38,.08);color:var(--red);border:1px solid rgba(220,38,38,.15)}
+.fv-perm-banner.editable{background:rgba(22,163,74,.08);color:var(--green);border:1px solid rgba(22,163,74,.15)}
+.fv-content{flex:1;overflow-y:auto;padding:12px;font-family:var(--font-mono);font-size:11.5px;color:var(--t2);line-height:1.75}
+.fv-content.editable-content{background:#fff}
+.fv-textarea{width:100%;height:100%;padding:12px;background:#fff;border:none;outline:none;resize:none;font-family:var(--font-mono);font-size:11.5px;color:var(--t1);line-height:1.75}
+
+/* ── Skill Workspace Drawer ───────────────────────────────────── */
+#skill-workspace{
+  position:fixed;top:0;right:0;bottom:0;
+  width:540px;z-index:600;
+  display:flex;flex-direction:column;
+  background:var(--bg1);
+  border-left:1px solid var(--border);
+  box-shadow:-8px 0 40px rgba(15,31,61,.12);
+  transform:translateX(100%);
+  transition:transform .28s cubic-bezier(.16,1,.3,1);
+  overflow:hidden;
+}
+#skill-workspace.open{transform:translateX(0)}
+.sw-header{
+  padding:0 16px;height:52px;
+  display:flex;align-items:center;gap:10px;
+  background:var(--t1);color:#fff;
+  flex-shrink:0;
+}
+.sw-header-icon{
+  width:28px;height:28px;border-radius:7px;
+  background:linear-gradient(135deg,var(--blue) 0%,var(--teal) 100%);
+  display:grid;place-items:center;font-size:13px;flex-shrink:0;
+}
+.sw-header-info{flex:1;min-width:0}
+.sw-header-title{font-family:var(--font-head);font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-header-sub{font-size:10.5px;color:rgba(255,255,255,.5);margin-top:1px}
+.sw-close{
+  width:28px;height:28px;border-radius:6px;
+  background:rgba(255,255,255,.1);border:none;
+  color:rgba(255,255,255,.7);cursor:pointer;font-size:14px;
+  display:grid;place-items:center;transition:var(--tr);flex-shrink:0;
+}
+.sw-close:hover{background:rgba(255,255,255,.2);color:#fff}
+
+/* Workspace tabs */
+.sw-tabs{
+  display:flex;border-bottom:1px solid var(--border);
+  background:var(--bg2);flex-shrink:0;
+}
+.sw-tab{
+  padding:0 14px;height:38px;display:flex;align-items:center;gap:5px;
+  font-size:12px;color:var(--t3);cursor:pointer;
+  border-bottom:2px solid transparent;transition:var(--tr);
+  background:none;border-left:none;border-right:none;border-top:none;
+  font-family:var(--font-ui);white-space:nowrap;
+}
+.sw-tab:hover{color:var(--t2)}
+.sw-tab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:500}
+
+.sw-pane{display:none;flex-direction:column;flex:1;overflow:hidden;min-height:0}
+.sw-pane.active{display:flex}
+
+/* Chat pane */
+.sw-messages{flex:1;overflow-y:auto;padding:16px 0}
+.sw-msg{display:flex;padding:8px 16px;animation:fade-up .22s ease both}
+.sw-msg:hover{background:rgba(37,99,235,.02)}
+.sw-av{width:26px;height:26px;border-radius:7px;flex-shrink:0;margin-right:9px;margin-top:2px;display:grid;place-items:center;font-size:11px}
+.sw-av.user{background:var(--bg3);border:1px solid var(--border);color:var(--t2);font-weight:700;font-size:9px}
+.sw-av.ai{background:linear-gradient(135deg,var(--blue),var(--teal));color:#fff}
+.sw-msg-body{flex:1;min-width:0}
+.sw-msg-hdr{display:flex;align-items:baseline;gap:6px;margin-bottom:3px}
+.sw-msg-name{font-size:12px;font-weight:600;color:var(--t1)}
+.sw-msg-time{font-size:10px;color:var(--t3)}
+.sw-msg-text{font-size:13px;color:var(--t2);line-height:1.65}
+.sw-msg-text p{margin-bottom:5px}
+.sw-msg-text p:last-child{margin-bottom:0}
+.sw-msg-text strong{color:var(--t1);font-weight:600}
+.sw-msg-text code{font-family:var(--font-mono);font-size:11px;background:var(--bg3);border:1px solid var(--border);padding:1px 4px;border-radius:3px;color:var(--blue)}
+
+/* Diagnostic card inside workspace */
+.diag-card{
+  margin-top:8px;border:1px solid var(--border);
+  border-radius:var(--r2);overflow:hidden;background:var(--bg1);
+}
+.diag-card-hdr{
+  padding:8px 11px;background:var(--bg2);border-bottom:1px solid var(--border);
+  display:flex;align-items:center;gap:7px;
+  font-size:11.5px;font-weight:600;color:var(--t1);
+}
+.diag-card-body{padding:10px 11px;display:flex;flex-direction:column;gap:5px}
+.diag-row{display:flex;align-items:flex-start;gap:7px;font-size:12px;padding:5px 7px;border-radius:5px}
+.diag-row.issue{background:rgba(220,38,38,.06);color:#b91c1c;border:1px solid rgba(220,38,38,.12)}
+.diag-row.suggest{background:rgba(22,163,74,.06);color:#15803d;border:1px solid rgba(22,163,74,.12)}
+.diag-row.neutral{background:var(--bg2);color:var(--t2);border:1px solid var(--border)}
+.diag-row-icon{flex-shrink:0;font-size:13px;margin-top:1px}
+.diag-row-text{flex:1;line-height:1.6}
+
+/* Workspace input */
+.sw-input-area{padding:10px 14px 14px;border-top:1px solid var(--border);background:var(--bg1);flex-shrink:0}
+.sw-input-wrap{background:#fff;border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;transition:border-color .15s;box-shadow:var(--shadow)}
+.sw-input-wrap:focus-within{border-color:var(--blue);box-shadow:0 0 0 3px var(--blue-dim)}
+.sw-input-toolbar{padding:6px 8px 0;display:flex;gap:3px;flex-wrap:wrap}
+.sw-itool{padding:3px 8px;border-radius:5px;border:1px solid var(--border);background:transparent;color:var(--t3);font-size:10.5px;cursor:pointer;transition:var(--tr);font-family:var(--font-ui)}
+.sw-itool:hover{background:var(--bg3);border-color:var(--border2);color:var(--t2)}
+#sw-input{width:100%;padding:8px 10px;background:transparent;border:none;outline:none;color:var(--t1);font-family:var(--font-ui);font-size:13px;resize:none;min-height:44px;max-height:130px;line-height:1.6}
+#sw-input::placeholder{color:var(--t3)}
+.sw-input-footer{padding:4px 8px 6px;display:flex;align-items:center;gap:6px}
+.sw-hint{font-size:10px;color:var(--t3);flex:1}
+.sw-send{padding:5px 12px;border-radius:6px;background:var(--blue);border:none;color:#fff;font-size:12px;font-weight:500;cursor:pointer;font-family:var(--font-ui);transition:var(--tr)}
+.sw-send:hover{background:#1d4ed8}
+.sw-send:active{transform:scale(.97)}
+.sw-send:disabled{opacity:.4;cursor:not-allowed}
+
+/* Diagnosis panel */
+.sw-diag-panel{flex:1;overflow-y:auto;padding:14px}
+.sw-section{margin-bottom:18px}
+.sw-sec-title{font-size:10px;font-weight:600;color:var(--t3);letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.sw-sec-title::after{content:'';flex:1;height:1px;background:var(--border)}
+.action-btn{width:100%;padding:8px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg1);color:var(--t2);font-size:12.5px;cursor:pointer;font-family:var(--font-ui);transition:var(--tr);text-align:left;display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.action-btn:hover{background:var(--bg3);border-color:var(--border2);color:var(--t1)}
+.action-btn .ab-icon{font-size:14px;flex-shrink:0}
+.action-btn .ab-text{flex:1}
+.action-btn .ab-arrow{color:var(--t3);font-size:11px}
+.version-compare{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.ver-col{border:1px solid var(--border);border-radius:var(--r);padding:9px 10px}
+.ver-col.base{background:var(--bg2)}
+.ver-col.fork{background:rgba(22,163,74,.04);border-color:rgba(22,163,74,.2)}
+.ver-col-label{font-size:10px;font-weight:600;color:var(--t3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px}
+.ver-col.fork .ver-col-label{color:var(--green)}
+.ver-col-score{font-size:20px;font-weight:700;font-family:var(--font-head);margin-bottom:2px}
+.ver-col.fork .ver-col-score{color:var(--green)}
+.ver-col-detail{font-size:11px;color:var(--t3)}
+
+/* ── Toast ────────────────────────────────────────────────────── */
+#toast-container{position:fixed;bottom:20px;right:20px;z-index:10000;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toast{background:var(--bg1);border:1px solid var(--border2);border-radius:var(--r2);padding:8px 12px;font-size:12px;color:var(--t1);min-width:200px;max-width:300px;display:flex;align-items:center;gap:8px;animation:t-in .2s ease both;pointer-events:auto;box-shadow:var(--shadow2)}
+.toast.removing{animation:t-out .18s ease both}
+@keyframes t-in{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes t-out{to{opacity:0;transform:translateX(16px)}}
+.toast.success{border-left:3px solid var(--green)}.toast.warning{border-left:3px solid var(--amber)}.toast.info{border-left:3px solid var(--blue)}.toast.error{border-left:3px solid var(--red)}
+
+/* ── Demo Guide ───────────────────────────────────────────────── */
+#demo-guide{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);z-index:700;display:flex;align-items:center;gap:4px;background:var(--bg1);border:1px solid var(--border2);border-radius:40px;padding:5px 10px;box-shadow:0 4px 20px rgba(15,31,61,.13);transition:opacity .2s}
+#demo-guide:hover{opacity:1!important}
+.dg-label{font-size:10px;color:var(--t3);font-weight:600;letter-spacing:.6px;text-transform:uppercase;padding:0 6px;white-space:nowrap}
+.dg-step{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;border:none;background:transparent;cursor:pointer;font-size:11.5px;color:var(--t2);font-family:var(--font-ui);white-space:nowrap;transition:var(--tr)}
+.dg-step:hover{background:var(--bg3);color:var(--t1)}
+.dg-step.active{background:var(--blue-dim);color:var(--blue);font-weight:500}
+.dg-step.done{color:var(--green)}
+.dg-step.done .dg-num{background:var(--green)!important}
+.dg-num{width:16px;height:16px;border-radius:50%;background:var(--border2);color:#fff;font-size:9px;font-weight:700;display:grid;place-items:center;flex-shrink:0}
+.dg-step.active .dg-num{background:var(--blue)}
+.dg-sep{width:1px;height:16px;background:var(--border);flex-shrink:0}
+
+/* ── Archive modal ────────────────────────────────────────────── */
+.archive-checklist{display:flex;flex-direction:column;gap:7px;margin-bottom:16px}
+.ach-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:var(--r);border:1px solid var(--border);background:var(--bg2);font-size:13px}
+.ach-icon{font-size:15px;flex-shrink:0}
+.ach-name{flex:1;color:var(--t1)}
+.ach-status{font-size:11px;padding:2px 8px;border-radius:10px;font-weight:500}
+.ach-ok{background:rgba(22,163,74,.1);color:var(--green)}
+.ach-warn{background:rgba(217,119,6,.1);color:var(--amber)}
+.cloud-dest{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+.cd-item{display:flex;align-items:center;gap:8px;padding:8px 11px;border-radius:var(--r);border:1.5px solid var(--border);background:#fff;cursor:pointer;font-size:12.5px;transition:var(--tr)}
+.cd-item:hover{border-color:var(--blue);background:var(--blue-dim)}
+.cd-item.sel{border-color:var(--blue);background:var(--blue-dim)}
+.cd-radio{width:14px;height:14px;border-radius:50%;border:2px solid var(--border2);flex-shrink:0;transition:var(--tr)}
+.cd-item.sel .cd-radio{border-color:var(--blue);background:var(--blue)}
+.archive-progress{display:none;flex-direction:column;gap:8px}
+.archive-progress.show{display:flex}
+.ap-bar-wrap{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.ap-bar{height:100%;background:linear-gradient(90deg,var(--blue),var(--teal));border-radius:3px;width:0;transition:width .4s ease}
+.ap-log{font-size:11.5px;font-family:var(--font-mono);color:var(--t3);min-height:60px;line-height:1.9}
+
+/* ── Verify tabs ──────────────────────────────────────────────── */
+.verify-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.vtab{flex:1;height:34px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--t3);cursor:pointer;border-bottom:2px solid transparent;transition:var(--tr);background:none;border-left:none;border-right:none;border-top:none;font-family:var(--font-ui)}
+.vtab:hover{color:var(--t2)}
+.vtab.active{color:var(--blue);border-bottom-color:var(--blue);font-weight:500}
+.vpane{display:none;flex-direction:column;overflow-y:auto;flex:1}
+.vpane.active{display:flex}
+
+/* ── Verification rules ───────────────────────────────────────── */
+.vrule-section{padding:10px 11px;border-bottom:1px solid var(--border)}
+.vrule-sec-title{font-size:10px;font-weight:700;color:var(--t3);letter-spacing:.8px;text-transform:uppercase;margin-bottom:8px}
+.vrule-item{display:flex;align-items:flex-start;gap:8px;padding:7px 9px;border-radius:var(--r);border:1px solid var(--border);margin-bottom:5px;background:#fff;font-size:12px}
+.vrule-id{font-family:var(--font-mono);font-size:10px;color:var(--t3);background:var(--bg3);padding:1px 5px;border-radius:3px;white-space:nowrap;flex-shrink:0;margin-top:1px}
+.vrule-text{flex:1;color:var(--t1);line-height:1.6}
+.vrule-result{font-size:10.5px;padding:2px 7px;border-radius:10px;white-space:nowrap;flex-shrink:0}
+.vr-pass{background:rgba(22,163,74,.1);color:var(--green)}
+.vr-fail{background:rgba(220,38,38,.1);color:var(--red)}
+.vr-warn{background:rgba(217,119,6,.1);color:var(--amber)}
+.vr-skip{background:var(--bg3);color:var(--t3)}
+.vrule-gen-bar{padding:9px 11px;background:rgba(37,99,235,.05);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;font-size:12px;color:var(--t2)}
+
+/* ── MOP preview ──────────────────────────────────────────────── */
+.mop-step{margin-bottom:10px;border:1px solid var(--border);border-radius:var(--r);overflow:hidden}
+.mop-step-hdr{display:flex;align-items:center;gap:8px;padding:7px 11px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:12px;font-weight:600;color:var(--t1)}
+.mop-step-num{width:20px;height:20px;border-radius:50%;background:var(--blue);color:#fff;font-size:10px;font-weight:700;display:grid;place-items:center;flex-shrink:0}
+.mop-step-body{padding:8px 11px;font-size:12px;color:var(--t2);line-height:1.75}
+.mop-cmd{font-family:var(--font-mono);background:var(--bg3);padding:4px 8px;border-radius:4px;font-size:11px;margin:3px 0;display:block;color:var(--t1)}
+.mop-risk{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--amber);margin-top:5px}
+</style>
+</head>
+<body>
+
+<!-- ═══ SPLASH ════════════════════════════════════════════════ -->
+<div id="splash">
+  <div class="sp-logo">N</div>
+  <div class="sp-name">NetCowork</div>
+  <div class="sp-sub">网络集成交付智能工作台</div>
+  <div class="sp-bar-wrap"><div class="sp-bar" id="sp-bar"></div></div>
+  <div class="sp-msg" id="sp-msg">正在初始化…</div>
+</div>
+
+<!-- ═══ SKILL WORKSPACE DRAWER ══════════════════════════════ -->
+<div id="skill-workspace">
+  <div class="sw-header">
+    <div class="sw-header-icon">⚙</div>
+    <div class="sw-header-info">
+      <div class="sw-header-title" id="sw-title">Skill 调优工作区</div>
+      <div class="sw-header-sub" id="sw-sub">IP-HLD-Generator v2.3-fork · 本项目定制</div>
+    </div>
+    <button class="sw-close" onclick="closeWorkspace()">✕</button>
+  </div>
+  <div class="sw-tabs">
+    <button class="sw-tab active" id="swt-chat" onclick="switchSWTab('chat')">💬 对话调优</button>
+    <button class="sw-tab" id="swt-diag" onclick="switchSWTab('diag')">⚡ 诊断面板</button>
+    <button class="sw-tab" id="swt-ver" onclick="switchSWTab('ver')">📦 版本对比</button>
+  </div>
+
+  <!-- ── Chat pane ── -->
+  <div class="sw-pane active" id="swp-chat">
+    <div class="sw-messages" id="sw-messages">
+      <div class="sw-msg">
+        <div class="sw-av ai">✦</div>
+        <div class="sw-msg-body">
+          <div class="sw-msg-hdr"><span class="sw-msg-name">NetCowork</span><span class="sw-msg-time">刚刚</span></div>
+          <div class="sw-msg-text">
+            <p>已为本项目创建 <strong>IP-HLD-Generator v2.3-fork</strong>。</p>
+            <p>你可以在这里描述 Skill 的表现问题，例如：</p>
+            <p>· "这个 Skill 在 SRv6 场景下总是漏掉跨域约束"<br>
+               · "生成的 HLD 风格不符合我们部门模板"<br>
+               · "某类 VPN 场景下输出结构不对"</p>
+            <p>我会协助诊断问题根因，并生成调优建议。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="sw-input-area">
+      <div class="sw-input-wrap">
+        <div class="sw-input-toolbar">
+          <button class="sw-itool" onclick="swInsert('bad case: ')">📎 上传 Bad Case</button>
+          <button class="sw-itool" onclick="swInsert('期望输出: ')">✎ 期望输出</button>
+          <button class="sw-itool" onclick="swInsert('场景描述: ')">🔍 场景描述</button>
+          <button class="sw-itool" onclick="switchSWTab('diag')">⚡ 查看诊断</button>
+        </div>
+        <textarea id="sw-input" placeholder="描述 Skill 表现问题，或提出调优需求…" rows="2"
+          onkeydown="handleSWKey(event)"></textarea>
+        <div class="sw-input-footer">
+          <span class="sw-hint">Enter 发送 · Shift+Enter 换行</span>
+          <button class="sw-send" id="sw-send" onclick="sendSWMsg()">发送</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Diagnosis pane ── -->
+  <div class="sw-pane" id="swp-diag">
+    <div class="sw-diag-panel">
+      <div class="sw-section">
+        <div class="sw-sec-title">问题诊断结果</div>
+        <div class="diag-card">
+          <div class="diag-card-hdr">⚡ IP-HLD-Generator v2.3 · 自动诊断</div>
+          <div class="diag-card-body">
+            <div class="diag-row issue"><span class="diag-row-icon">✕</span><div class="diag-row-text"><strong>Reference 不足</strong> — 缺少 SRv6 场景下 VPN 跨域约束模板，导致该场景输出结构不完整</div></div>
+            <div class="diag-row issue"><span class="diag-row-icon">✕</span><div class="diag-row-text"><strong>Prompt 结构问题</strong> — 跨域关系章节生成顺序与部门模板不符（§3 排在 §2 之后）</div></div>
+            <div class="diag-row neutral"><span class="diag-row-icon">○</span><div class="diag-row-text"><strong>Assets 完整</strong> — 已有标准 HLD 模板 v2，无需补充</div></div>
+            <div class="diag-row neutral"><span class="diag-row-icon">○</span><div class="diag-row-text"><strong>流程无异常</strong> — 任务流程调用逻辑正常</div></div>
+          </div>
+        </div>
+      </div>
+      <div class="sw-section">
+        <div class="sw-sec-title">调优建议</div>
+        <button class="action-btn" onclick="applyAction('补充 SRv6-VPN 约束模板到 Reference')">
+          <span class="ab-icon">📎</span><span class="ab-text">补充 SRv6-VPN 约束规范到 Reference</span><span class="ab-arrow">→</span>
+        </button>
+        <button class="action-btn" onclick="applyAction('修正 Prompt 中章节顺序')">
+          <span class="ab-icon">✎</span><span class="ab-text">修正 Prompt 中跨域章节的生成顺序</span><span class="ab-arrow">→</span>
+        </button>
+        <button class="action-btn" onclick="applyAction('添加场景边界说明')">
+          <span class="ab-icon">📋</span><span class="ab-text">为 SRv6 场景添加适用边界说明</span><span class="ab-arrow">→</span>
+        </button>
+      </div>
+      <div class="sw-section">
+        <div class="sw-sec-title">Bad Case 记录</div>
+        <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;font-size:12px;color:var(--t2);line-height:1.7">
+          <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;font-weight:500;color:var(--t1)">
+            <span style="width:6px;height:6px;border-radius:50%;background:var(--red);display:inline-block"></span>
+            Bad Case #1 — SRv6 场景跨域约束漏项
+          </div>
+          输入：SRv6 over OTN 场景，PE-SZ-02 → 云核-SZ-01<br>
+          预期：输出应包含光层带宽约束说明<br>
+          实际：跨域章节无光层带宽内容
+        </div>
+        <button class="action-btn" style="margin-top:6px" onclick="toast('上传 Bad Case 对话框','info')">
+          <span class="ab-icon">＋</span><span class="ab-text">上传新 Bad Case</span><span class="ab-arrow">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Version compare pane ── -->
+  <div class="sw-pane" id="swp-ver">
+    <div class="sw-diag-panel">
+      <div class="sw-section">
+        <div class="sw-sec-title">版本测试对比</div>
+        <div class="version-compare">
+          <div class="ver-col base">
+            <div class="ver-col-label">基线 v2.3</div>
+            <div class="ver-col-score">74%</div>
+            <div class="ver-col-detail">通过率 · 14/19 样例</div>
+          </div>
+          <div class="ver-col fork">
+            <div class="ver-col-label">本项目 fork</div>
+            <div class="ver-col-score">89%</div>
+            <div class="ver-col-detail">通过率 · 17/19 样例</div>
+          </div>
+        </div>
+        <div style="background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.15);border-radius:var(--r);padding:9px 11px;font-size:12px;color:#15803d">
+          ✓ Fork 版本提升 +15%，建议发布为项目生效版本
+        </div>
+      </div>
+      <div class="sw-section">
+        <div class="sw-sec-title">样例集详情</div>
+        <div style="display:flex;flex-direction:column;gap:4px">
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.12);font-size:12px">
+            <span style="color:var(--green);font-weight:600">✓</span><span style="flex:1;color:var(--t1)">SRv6 场景跨域约束提取</span><span style="color:var(--t3);font-size:10.5px">v2.3 失败 → fork 通过</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;background:rgba(22,163,74,.06);border:1px solid rgba(22,163,74,.12);font-size:12px">
+            <span style="color:var(--green);font-weight:600">✓</span><span style="flex:1;color:var(--t1)">HLD 章节顺序验证</span><span style="color:var(--t3);font-size:10.5px">v2.3 失败 → fork 通过</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;background:rgba(22,163,74,.04);border:1px solid var(--border);font-size:12px">
+            <span style="color:var(--green);font-weight:600">✓</span><span style="flex:1;color:var(--t1)">标准 IP HLD 生成</span><span style="color:var(--t3);font-size:10.5px">两版本均通过</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:5px;background:rgba(220,38,38,.04);border:1px solid rgba(220,38,38,.1);font-size:12px">
+            <span style="color:var(--red);font-weight:600">✗</span><span style="flex:1;color:var(--t1)">多域混合场景（云核+光）</span><span style="color:var(--t3);font-size:10.5px">两版本均失败</span>
+          </div>
+        </div>
+      </div>
+      <div class="sw-section">
+        <div class="sw-sec-title">版本操作</div>
+        <button class="action-btn" onclick="publishFork()">
+          <span class="ab-icon">🚀</span><span class="ab-text">发布 Fork 版本为项目生效版</span><span class="ab-arrow" style="color:var(--green)">→</span>
+        </button>
+        <button class="action-btn" onclick="toast('已重置到基线版本','warning')">
+          <span class="ab-icon">↩</span><span class="ab-text">放弃 Fork，回退到基线 v2.3</span><span class="ab-arrow">→</span>
+        </button>
+        <button class="action-btn" onclick="toast('运行完整测试集…','info')">
+          <span class="ab-icon">▶</span><span class="ab-text">重新运行全量测试样例集</span><span class="ab-arrow">→</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ TOAST ════════════════════════════════════════════════ -->
+<div id="toast-container"></div>
+
+
+<!-- ═══ MODAL: 新建项目 ══════════════════════════════════════ -->
+<div class="modal-backdrop" id="bd-new-project">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">新建项目</div>
+      <button class="modal-close" onclick="closeModal('bd-new-project')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">项目名称</label>
+        <input class="form-input" id="np-name" placeholder="例：广东省干 IP 骨干网升级 2025">
+      </div>
+      <div class="form-group">
+        <label class="form-label">项目描述</label>
+        <textarea class="form-input form-textarea" id="np-desc" placeholder="简要描述项目背景、目标、范围…"></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">专业域（可多选，选中后自动推荐 Skill）</label>
+        <div class="domain-pills-row" id="np-domains">
+          <div class="d-pill" onclick="toggleDomain(this,'IP')">IP</div>
+          <div class="d-pill" onclick="toggleDomain(this,'云核')">云核</div>
+          <div class="d-pill" onclick="toggleDomain(this,'机房')">机房</div>
+          <div class="d-pill" onclick="toggleDomain(this,'光')">光</div>
+        </div>
+      </div>
+      <div class="form-group" id="skill-rec-wrap" style="display:none">
+        <label class="form-label">推荐 Skill <span style="color:var(--t3);font-weight:400">— 勾选后加入项目空间</span></label>
+        <div class="skill-rec-section">
+          <div class="skill-rec-hdr">根据专业域匹配的 Skill</div>
+          <div class="skill-rec-list" id="skill-rec-list"></div>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('bd-new-project')">取消</button>
+      <button class="btn btn-primary" onclick="createProject()">创建项目</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: 项目详情 ══════════════════════════════════════ -->
+<div class="modal-backdrop" id="bd-project-detail">
+  <div class="modal wide">
+    <div class="modal-hdr">
+      <div class="modal-title" id="pd-title">项目详情</div>
+      <button class="modal-close" onclick="closeModal('bd-project-detail')">✕</button>
+    </div>
+    <div class="modal-tabs">
+      <button class="mtab active" onclick="switchMTab(this,'pd-overview')">概览</button>
+      <button class="mtab" onclick="switchMTab(this,'pd-tasks')">任务清单</button>
+      <button class="mtab" onclick="switchMTab(this,'pd-skills')">关联 Skill</button>
+    </div>
+    <div class="modal-body" style="padding-top:16px">
+      <!-- Overview tab -->
+      <div class="mpane active" id="pd-overview">
+        <div class="form-group">
+          <label class="form-label">项目名称</label>
+          <input class="form-input" id="pd-name" value="省干 IP 骨干网升级 2025">
+        </div>
+        <div class="form-group">
+          <label class="form-label">项目描述</label>
+          <textarea class="form-input form-textarea" id="pd-desc" style="min-height:80px">本项目围绕省干 IP 骨干网 SR-MPLS 技术转型展开，涵盖核心层设备替换、SRv6 部署、与云核及光层的跨域协同，预计 2025 Q3 完成。</textarea>
+        </div>
+        <div class="form-group">
+          <label class="form-label">专业域</label>
+          <div class="domain-pills-row" id="pd-domains">
+            <div class="d-pill sel">IP</div>
+            <div class="d-pill sel">光</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;font-size:12px;color:var(--t3)">
+          <span>创建时间：2025-01-08</span>
+          <span>最近更新：2025-03-26</span>
+          <span>负责人：张三</span>
+        </div>
+      </div>
+      <!-- Tasks tab -->
+      <div class="mpane" id="pd-tasks">
+        <div class="detail-task-row"><span class="dtr-type tag-hld">HLD</span><span class="dtr-name">总体方案设计</span><span class="dtr-status st-design">设计中</span></div>
+        <div class="detail-task-row"><span class="dtr-type tag-lld">LLD</span><span class="dtr-name">SR-MPLS 参数规划</span><span class="dtr-status st-pending">待补数</span></div>
+        <div class="detail-task-row"><span class="dtr-type tag-verify">验证</span><span class="dtr-name">配置与方案一致性验证</span><span class="dtr-status st-verify">待验证</span></div>
+        <div class="detail-task-row"><span class="dtr-type tag-mop">MOP</span><span class="dtr-name">实施步骤编写</span><span class="dtr-status st-done">已定稿</span></div>
+        <div class="detail-task-row"><span class="dtr-type tag-skill">Skill</span><span class="dtr-name">VPN 场景 Skill 调优</span><span class="dtr-status st-pending">诊断中</span></div>
+      </div>
+      <!-- Skills tab -->
+      <div class="mpane" id="pd-skills">
+        <div class="detail-skill-card">
+          <span class="dsc-icon">📘</span>
+          <div class="dsc-info"><div class="dsc-name">IP-HLD-Generator</div><div class="dsc-meta">IP · HLD 生成</div></div>
+          <span class="dsc-ver">v2.3</span>
+          <span class="sk-badge tuning" style="margin-left:8px">调优中</span>
+        </div>
+        <div class="detail-skill-card">
+          <span class="dsc-icon">🔒</span>
+          <div class="dsc-info"><div class="dsc-name">VPN-Constraint-Extractor</div><div class="dsc-meta">IP · 约束提取</div></div>
+          <span class="dsc-ver">v1.8</span>
+          <span class="sk-badge testing" style="margin-left:8px">测试中</span>
+        </div>
+        <div class="detail-skill-card">
+          <span class="dsc-icon">💡</span>
+          <div class="dsc-info"><div class="dsc-name">OTN-Wave-Planner</div><div class="dsc-meta">光 · 波道规划</div></div>
+          <span class="dsc-ver">v2.2</span>
+          <span class="sk-badge stable" style="margin-left:8px">稳定</span>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="closeModal('bd-project-detail');openModal('bd-archive')">归档云端</button>
+      <div style="flex:1"></div>
+      <button class="btn btn-secondary" onclick="closeModal('bd-project-detail')">取消</button>
+      <button class="btn btn-primary" onclick="saveProject()">保存修改</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: 云端归档 ══════════════════════════════════════ -->
+<div class="modal-backdrop" id="bd-archive">
+  <div class="modal wide">
+    <div class="modal-hdr">
+      <div class="modal-title">📦 云端归档 — 省干 IP 骨干网升级 2025</div>
+      <button class="modal-close" onclick="closeModal('bd-archive')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">归档清单确认</label>
+        <div class="archive-checklist">
+          <div class="ach-row"><span class="ach-icon">📘</span><span class="ach-name">HLD 总体方案 v0.2.docx</span><span class="ach-status ach-ok">✓ 已定稿</span></div>
+          <div class="ach-row"><span class="ach-icon">📗</span><span class="ach-name">LLD SR-MPLS 参数规划 v0.1.docx</span><span class="ach-status ach-warn">⚠ 草稿</span></div>
+          <div class="ach-row"><span class="ach-icon">📙</span><span class="ach-name">MOP SR-MPLS割接 v1.0.docx</span><span class="ach-status ach-ok">✓ 已定稿</span></div>
+          <div class="ach-row"><span class="ach-icon">📋</span><span class="ach-name">verify_rules_MOP_v1.yaml</span><span class="ach-status ach-ok">✓ 已生成</span></div>
+          <div class="ach-row"><span class="ach-icon">⚙</span><span class="ach-name">IP-HLD-Generator v2.3-fork（项目定制版）</span><span class="ach-status ach-ok">✓ 已发布</span></div>
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">归档目标</label>
+        <div class="cloud-dest" id="cd-list">
+          <div class="cd-item sel" onclick="selDest(this)"><span class="cd-radio"></span><span style="font-size:14px">☁</span><div style="flex:1"><div style="font-weight:500;color:var(--t1)">企业知识库 · 省干 IP 专项</div><div style="font-size:11px;color:var(--t3)">知识共享 · 自动关联同类项目</div></div></div>
+          <div class="cd-item" onclick="selDest(this)"><span class="cd-radio"></span><span style="font-size:14px">🏛</span><div style="flex:1"><div style="font-weight:500;color:var(--t1)">项目归档库 · 2025 Q1</div><div style="font-size:11px;color:var(--t3)">长期留存 · 仅归档不共享</div></div></div>
+          <div class="cd-item" onclick="selDest(this)"><span class="cd-radio"></span><span style="font-size:14px">🔗</span><div style="flex:1"><div style="font-weight:500;color:var(--t1)">协同平台 · 项目交付空间</div><div style="font-size:11px;color:var(--t3)">同步到团队协同平台供评审</div></div></div>
+        </div>
+      </div>
+      <div class="archive-progress" id="archive-progress">
+        <div class="ap-bar-wrap"><div class="ap-bar" id="ap-bar"></div></div>
+        <div class="ap-log" id="ap-log"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeModal('bd-archive')">取消</button>
+      <button class="btn btn-primary" id="btn-archive-exec" onclick="execArchive()">🚀 执行归档</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ APP ══════════════════════════════════════════════════ -->
+<div id="app">
+
+  <!-- Titlebar -->
+  <div id="titlebar">
+    <div class="tb-left">
+      <div class="tb-icon">N</div>
+      <span class="tb-name">NetCowork</span>
+      <span class="tb-ver">v1.0</span>
+    </div>
+    <div class="tb-drag"></div>
+    <div class="tb-right">
+      <button class="wc-btn" onclick="winMinimize()" title="最小化">
+        <svg viewBox="0 0 10 1"><line x1="0" y1=".5" x2="10" y2=".5" stroke-width="1.3"/></svg>
+      </button>
+      <button class="wc-btn" id="btn-max" onclick="winMaximize()" title="最大化">
+        <svg viewBox="0 0 10 10"><rect x=".5" y=".5" width="9" height="9"/></svg>
+      </button>
+      <button class="wc-btn close" onclick="winClose()" title="关闭">
+        <svg viewBox="0 0 10 10"><line x1="1" y1="1" x2="9" y2="9"/><line x1="9" y1="1" x2="1" y2="9"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Navbar -->
+  <nav id="navbar">
+    <button class="nav-btn" onclick="toggleLeft()" style="font-size:12px">☰</button>
+    <div class="nav-div"></div>
+    <div class="domain-strip">
+      <button class="dp active" onclick="selDomain(this,'IP')">IP</button>
+      <button class="dp" onclick="selDomain(this,'云核')">云核</button>
+      <button class="dp" onclick="selDomain(this,'机房')">机房</button>
+      <button class="dp" onclick="selDomain(this,'光')">光</button>
+    </div>
+    <div class="nav-div"></div>
+    <div class="proj-sel" onclick="openProjectDetail()">
+      <span class="ps-lbl">项目</span>
+      <span class="ps-nm" id="project-name">省干 IP 骨干网升级 2025</span>
+      <span class="ps-arrow">▾</span>
+    </div>
+    <div class="nav-spacer"></div>
+    <div class="task-status-nav">
+      <div class="sdot design" id="nav-dot"></div>
+      <span id="nav-status" style="font-size:11.5px;color:var(--t2)">设计中</span>
+    </div>
+    <div class="nav-div"></div>
+    <button class="nav-btn" onclick="switchRightTab('verify')" title="验证报告">✓</button>
+    <button class="nav-btn" onclick="switchRightTab('skill')" title="Skill 调优" style="font-size:12px">⚙</button>
+    <button class="nav-btn" onclick="toggleRight()" title="折叠右侧" style="font-size:11px">⊡</button>
+  </nav>
+
+  <div id="body">
+
+    <!-- ·· Sidebar ·········································· -->
+    <aside id="sidebar">
+      <div class="ss">
+        <div class="sh">
+          <span class="sh-title">项目空间</span>
+          <button class="sh-act" onclick="openModal('bd-new-project')" title="新建项目">＋</button>
+        </div>
+        <div class="proj-item active" ondblclick="openProjectDetail()" onclick="selectProj(this)">
+          <div class="pi-icon" style="background:rgba(37,99,235,.1);color:var(--blue)">IP</div>
+          <span class="pi-name">省干 IP 骨干网升级 2025</span>
+          <span class="pi-badge">活跃</span>
+        </div>
+        <div class="proj-item" ondblclick="openProjectDetail2()" onclick="selectProj(this)">
+          <div class="pi-icon" style="background:rgba(124,58,237,.1);color:var(--purple)">云</div>
+          <span class="pi-name">XX 省核心云改造</span>
+          <span class="pi-badge">3</span>
+        </div>
+        <div class="proj-item" ondblclick="openProjectDetail2()" onclick="selectProj(this)">
+          <div class="pi-icon" style="background:rgba(8,145,178,.1);color:var(--teal)">光</div>
+          <span class="pi-name">南部干线 OTN 部署</span>
+          <span class="pi-badge">2</span>
+        </div>
+        <div style="padding:4px 7px;font-size:10.5px;color:var(--t3);margin-top:4px">双击项目查看详情</div>
+      </div>
+      <div class="ss" style="flex:1;overflow-y:auto;padding-bottom:10px">
+        <div class="sh">
+          <span class="sh-title">任务面板</span>
+          <button class="sh-act" onclick="toast('新建任务','info')">＋</button>
+        </div>
+        <div class="task-item active" onclick="selTask(this,'HLD 总体方案设计','hld','设计中')">
+          <div class="ti-head"><span class="ti-name">HLD 总体方案设计</span><span class="type-tag tag-hld">HLD</span></div>
+          <div class="ti-meta"><span class="ti-st s-d">设计中</span><span class="ti-time">今天</span></div>
+        </div>
+        <div class="task-item" onclick="selTask(this,'LLD SR-MPLS 参数规划','lld','待补数')">
+          <div class="ti-head"><span class="ti-name">LLD SR-MPLS 参数规划</span><span class="type-tag tag-lld">LLD</span></div>
+          <div class="ti-meta"><span class="ti-st s-p">待补数</span><span class="ti-time">昨天</span></div>
+        </div>
+        <div class="task-item" onclick="selTask(this,'配置与方案一致性验证','verify','待验证')">
+          <div class="ti-head"><span class="ti-name">配置与方案一致性验证</span><span class="type-tag tag-verify">验证</span></div>
+          <div class="ti-meta"><span class="ti-st s-v">待验证</span><span class="ti-time">3天前</span></div>
+        </div>
+        <div class="task-item" onclick="selTask(this,'MOP 实施步骤编写','mop','已定稿')">
+          <div class="ti-head"><span class="ti-name">MOP 实施步骤编写</span><span class="type-tag tag-mop">MOP</span></div>
+          <div class="ti-meta"><span class="ti-st s-ok">已定稿</span><span class="ti-time">上周</span></div>
+        </div>
+        <div class="task-item" onclick="selTask(this,'VPN 场景 Skill 调优','skill','诊断中')">
+          <div class="ti-head"><span class="ti-name">VPN 场景 Skill 调优</span><span class="type-tag tag-skill">Skill</span></div>
+          <div class="ti-meta"><span class="ti-st s-p">诊断中</span><span class="ti-time">2天前</span></div>
+        </div>
+        <div class="sh" style="margin-top:12px"><span class="sh-title">旅程模板</span></div>
+        <div class="tpl-item" onclick="toast('已应用模板：完整方案','info')"><span class="tpl-icon">📋</span><span class="tpl-name">完整方案模板</span></div>
+        <div class="tpl-item" onclick="toast('已应用模板：局部动网','info')"><span class="tpl-icon">🔧</span><span class="tpl-name">局部动网模板</span></div>
+        <div class="tpl-item" onclick="toast('已应用模板：验证修订','info')"><span class="tpl-icon">✓</span><span class="tpl-name">验证修订模板</span></div>
+        <div class="tpl-item" onclick="toast('已应用模板：Skill调优','info')"><span class="tpl-icon">⚙</span><span class="tpl-name">Skill 调优模板</span></div>
+        <div class="tpl-item" onclick="toast('已应用模板：分段补数','info')"><span class="tpl-icon">📊</span><span class="tpl-name">分段补数模板</span></div>
+      </div>
+    </aside>
+
+    <!-- ·· Chat ············································· -->
+    <main id="chat-area">
+      <div class="status-flow" id="status-flow"></div>
+      <div id="messages">
+        <div class="msg-row">
+          <div class="msg-av ai">✦</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">14:21</span></div>
+            <div class="msg-text">
+              <p>你好，已加载 <strong>省干 IP 骨干网升级 2025</strong> 项目上下文。当前任务：<strong>HLD 总体方案设计</strong>，专业域：<strong>IP</strong>。</p>
+              <p>已接入资产：现网配置快照 · 资源台账 · 历史 HLD 模板。可直接描述需求或上传补充材料。</p>
+            </div>
+            <div class="artifact">
+              <div class="art-hdr"><span class="art-tag doc">DOC</span><span class="art-name">HLD_IP骨干网升级_草稿_v0.1.docx</span><button class="art-open" onclick="switchRightTab('doc')">在面板中打开 →</button></div>
+              <div class="art-body"># 省干 IP 骨干网升级项目 HLD
+## 1. 建设目标
+本次升级围绕 SR-MPLS 技术转型展开，涵盖核心层设备替换...
+## 2. 设计原则
+- 平滑演进，不影响现网业务
+- 优先保障 VPN 业务连续性...</div>
+            </div>
+          </div>
+        </div>
+        <div class="msg-row">
+          <div class="msg-av user">我</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">我</span><span class="msg-time">14:22</span></div>
+            <div class="msg-text"><p>帮我补充 HLD 第三节——跨域关系设计。需要覆盖 IP 与云核之间的业务对接关系，以及和光层的带宽绑定逻辑。</p></div>
+          </div>
+        </div>
+        <div class="msg-row">
+          <div class="msg-av ai">✦</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">14:23</span></div>
+            <div class="msg-text"><p>收到，先从现网数据提取 IP↔云核互联关系，再整合光层带宽分配，然后生成章节。</p></div>
+            <div class="tool-card" id="tc1">
+              <div class="tc-hdr" onclick="toggleTC('tc1')">
+                <div class="tc-icon">⌖</div><span class="tc-name">query_network_data</span>
+                <div class="tc-status done">● 完成</div><span class="tc-arrow" id="tc1-ar">▾</span>
+              </div>
+              <div class="tc-body" id="tc1-bd">params: { domain:"IP", type:"cross_domain_link" }
+────────────────────────────────
+result: 12 条 IP↔云核互联链路，3 个 OTN 波道绑定记录</div>
+            </div>
+            <div class="msg-text" style="margin-top:7px">
+              <p>章节已生成：§3.1 IP 与云核对接 · §3.2 光层带宽绑定 · §3.3 跨域风险边界。⚠️ PE-SZ-02 光层仅 2×10GE，峰值超限，已标注。</p>
+            </div>
+            <div class="artifact">
+              <div class="art-hdr"><span class="art-tag doc">DOC</span><span class="art-name">HLD_IP骨干网升级_草稿_v0.2.docx</span><button class="art-open" onclick="switchRightTab('doc')">查看更新 →</button></div>
+            </div>
+          </div>
+        </div>
+        <!-- ── Stage 3: MOP generation ── -->
+        <div class="msg-row journey-stage" id="stage-mop">
+          <div class="msg-av user">我</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">我</span><span class="msg-time">14:35</span></div>
+            <div class="msg-text"><p>HLD 已确认，现在基于 HLD v0.2 和 LLD 参数规划生成 MOP，需要覆盖 SR-MPLS 割接、SRv6 部署和 PE-SZ-02 扩容三段操作，每步加回退预案。</p></div>
+          </div>
+        </div>
+        <div class="msg-row">
+          <div class="msg-av ai">✦</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">14:35</span></div>
+            <div class="msg-text"><p>调用 <strong>MOP-Writer v3.1</strong>，读取 HLD v0.2、LLD 参数、现网配置快照，生成分段 MOP。</p></div>
+            <div class="tool-card" id="tc-mop1">
+              <div class="tc-hdr" onclick="toggleTC('tc-mop1')">
+                <div class="tc-icon">⌖</div><span class="tc-name">skill_invoke · MOP-Writer</span>
+                <div class="tc-status done">● 完成</div><span class="tc-arrow" id="tc-mop1-ar">▾</span>
+              </div>
+              <div class="tc-body" id="tc-mop1-bd">params: { skill:"MOP-Writer@v3.1", inputs:["HLD_v0.2","LLD_v0.1","config_snapshot_20250326"] }
+────────────────────────────────
+segments: ["SR-MPLS割接","SRv6部署","PE-SZ-02扩容"]
+steps_generated: 24  rollback_plans: 3  risk_flags: 2</div>
+            </div>
+            <div class="tool-card" id="tc-mop2">
+              <div class="tc-hdr" onclick="toggleTC('tc-mop2')">
+                <div class="tc-icon">⌖</div><span class="tc-name">validate_against_config</span>
+                <div class="tc-status done">● 完成</div><span class="tc-arrow" id="tc-mop2-ar">▾</span>
+              </div>
+              <div class="tc-body" id="tc-mop2-bd">params: { doc:"MOP_draft", config_snapshot:"20250326" }
+────────────────────────────────
+consistency_check: 22/24 步骤与现网配置一致
+warnings: ["Step-11 VPN实例名大小写不符","Step-19 PE-SZ-02 端口序号需确认"]</div>
+            </div>
+            <div class="msg-text" style="margin-top:7px">
+              <p>MOP 已生成，共 24 步，含 3 段回退预案。发现 2 处一致性警告已内嵌标注。请在右侧文档面板查看完整内容。</p>
+            </div>
+            <div class="artifact">
+              <div class="art-hdr"><span class="art-tag mop" style="background:rgba(217,119,6,.12);color:var(--amber);border-color:rgba(217,119,6,.2)">MOP</span><span class="art-name">MOP_SR-MPLS割接_v1.0.docx</span><button class="art-open" onclick="switchRightTab('doc');previewMOP()">查看 MOP →</button></div>
+            </div>
+          </div>
+        </div>
+        <!-- ── Stage 4: Verify rules ── -->
+        <div class="msg-row journey-stage" id="stage-verify">
+          <div class="msg-av user">我</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">我</span><span class="msg-time">14:48</span></div>
+            <div class="msg-text"><p>基于这份 MOP 生成核查规则，要能在施工前自动核查配置是否满足操作前置条件，施工后核查是否达到预期。</p></div>
+          </div>
+        </div>
+        <div class="msg-row">
+          <div class="msg-av ai">✦</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">14:49</span></div>
+            <div class="msg-text"><p>解析 MOP 24 步操作，提取前置条件与预期结果，生成结构化核查规则集（YAML + 可执行核查脚本）。</p></div>
+            <div class="tool-card" id="tc-vr1">
+              <div class="tc-hdr" onclick="toggleTC('tc-vr1')">
+                <div class="tc-icon">⌖</div><span class="tc-name">generate_verify_rules</span>
+                <div class="tc-status done">● 完成</div><span class="tc-arrow" id="tc-vr1-ar">▾</span>
+              </div>
+              <div class="tc-body" id="tc-vr1-bd">params: { source:"MOP_SR-MPLS割接_v1.0", rule_types:["pre_check","post_check","rollback_trigger"] }
+────────────────────────────────
+rules_generated: 18  pre_checks: 8  post_checks: 7  rollback_triggers: 3
+format: YAML + bash验证脚本</div>
+            </div>
+            <div class="tool-card" id="tc-vr2">
+              <div class="tc-hdr" onclick="toggleTC('tc-vr2')">
+                <div class="tc-icon">⌖</div><span class="tc-name">run_verify_rules · DRY-RUN</span>
+                <div class="tc-status done">● 完成</div><span class="tc-arrow" id="tc-vr2-ar">▾</span>
+              </div>
+              <div class="tc-body" id="tc-vr2-bd">dry_run_against: config_snapshot_20250326
+────────────────────────────────
+PASS  14/18   WARN  3/18   FAIL  1/18
+FAIL: VR-PRE-06 — PE-SZ-02 端口 GE0/0/3 状态 Unknown（需人工确认）
+WARN: VR-POST-03 — VPN实例名大小写不一致，可能误匹配
+WARN: VR-PRE-08 — SRv6 Locator 地址段台账状态 Pending</div>
+            </div>
+            <div class="msg-text" style="margin-top:7px">
+              <p>核查规则集已生成（18条）并对现网快照做了 Dry-run。结果：<span style="color:var(--green);font-weight:600">14通过</span> / <span style="color:var(--amber);font-weight:600">3警告</span> / <span style="color:var(--red);font-weight:600">1失败</span>。建议施工前先解决 1 个 FAIL 项，3 个 WARN 项可带注释执行。</p>
+            </div>
+            <div class="artifact">
+              <div class="art-hdr"><span class="art-tag" style="background:rgba(8,145,178,.1);color:var(--teal);border:1px solid rgba(8,145,178,.2)">RULES</span><span class="art-name">verify_rules_MOP_v1.yaml</span><button class="art-open" onclick="switchRightTab('verify');switchVerifyTab('rules')">查看规则 →</button></div>
+            </div>
+          </div>
+        </div>
+        <!-- ── Stage 5: Archive ── -->
+        <div class="msg-row journey-stage" id="stage-archive">
+          <div class="msg-av user">我</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">我</span><span class="msg-time">15:02</span></div>
+            <div class="msg-text"><p>MOP 和核查规则都确认了，把这次交付成果打包归档到云端，包括 HLD、LLD、MOP、核查规则和 Skill 定制版。</p></div>
+          </div>
+        </div>
+        <div class="msg-row">
+          <div class="msg-av ai">✦</div>
+          <div class="msg-body">
+            <div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">15:02</span></div>
+            <div class="msg-text"><p>准备归档清单，请在右侧确认归档目标和范围，然后执行云端归档。</p></div>
+            <div class="artifact">
+              <div class="art-hdr"><span class="art-tag" style="background:rgba(124,58,237,.1);color:var(--purple);border:1px solid rgba(124,58,237,.2)">ARCH</span><span class="art-name">归档清单 · 省干IP骨干网升级2025</span><button class="art-open" onclick="openModal('bd-archive')">打开归档面板 →</button></div>
+            </div>
+          </div>
+        </div>
+        <div class="thinking-row" id="thinking-row">
+          <div class="thinking-av">✦</div>
+          <div>
+            <div style="font-size:11.5px;color:var(--t3);margin-bottom:5px">NetCowork 思考中…</div>
+            <div class="t-dots"><span></span><span></span><span></span></div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-input-area">
+        <div class="input-wrap">
+          <div class="input-toolbar">
+            <button class="itool" onclick="toast('文件上传','info')">📎 附件</button>
+            <button class="itool" onclick="ins('[引用数据] ')">⌖ 引用数据</button>
+            <button class="itool" onclick="ins('[引用文档] ')">📄 引用文档</button>
+            <button class="itool" onclick="ins('/skill ')">⚙ 调用 Skill</button>
+          </div>
+          <textarea id="chat-input" placeholder="描述你的任务，或直接提问…" rows="2" onkeydown="handleKey(event)"></textarea>
+          <div class="input-footer">
+            <span class="input-hint"><kbd>Enter</kbd> 发送 &nbsp;·&nbsp; <kbd>Shift+Enter</kbd> 换行</span>
+            <button class="send-btn" id="send-btn" onclick="sendMsg()">发送 <span style="opacity:.55;font-size:11px">⏎</span></button>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ·· Right panel ······································ -->
+    <aside id="right-panel">
+      <div class="panel-tabs">
+        <button class="ptab active" id="tab-doc" onclick="switchRightTab('doc')">📄 文档 <span class="tbadge">4</span></button>
+        <button class="ptab" id="tab-topo" onclick="switchRightTab('topo')">🗺 图表</button>
+        <button class="ptab" id="tab-verify" onclick="switchRightTab('verify')">✓ 验证 <span class="tbadge">4</span></button>
+        <button class="ptab" id="tab-skill" onclick="switchRightTab('skill')">⚙ Skill</button>
+      </div>
+      <div class="panel-content">
+
+        <!-- Doc -->
+        <div class="ppane active" id="pane-doc">
+          <div class="doc-tree">
+            <div style="font-size:9.5px;color:var(--t3);font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:3px 7px;margin-bottom:2px">📁 当前项目文档</div>
+            <div class="doc-item active" onclick="previewDoc(this,'HLD')"><span class="di-icon">📘</span><span class="di-name">HLD 总体方案 v0.2</span><span class="di-size">42KB</span><div class="di-dot mod"></div></div>
+            <div class="doc-item" onclick="previewDoc(this,'LLD')"><span class="di-icon">📗</span><span class="di-name">LLD SR-MPLS参数 v0.1</span><span class="di-size">18KB</span><div class="di-dot draft"></div></div>
+            <div class="doc-item" id="doc-mop" onclick="previewDoc(this,'MOP')"><span class="di-icon">📙</span><span class="di-name">MOP SR-MPLS割接 v1.0</span><span class="di-size">33KB</span><div class="di-dot done"></div></div>
+            <div class="doc-item" onclick="previewDoc(this,'PPT')"><span class="di-icon">📊</span><span class="di-name">方案汇报 PPT v0.1</span><span class="di-size">2.1MB</span><div class="di-dot draft"></div></div>
+          </div>
+          <div class="doc-preview" id="doc-preview">
+            <h3>HLD 总体方案 — §3 跨域关系设计</h3>
+            <h4>3.1 IP 与云核对接关系</h4>
+            <p>涉及 12 条互联链路，采用 SRv6 Policy 承载云业务。各节点通过 BGP-LU 建立 EBGP 邻居，VPN 实例通过 route-policy 引流。</p>
+            <h4>3.2 光层带宽绑定逻辑</h4>
+            <p>IP 层互联绑定至 OTN 100G 波道，GMPLS 信令协同管理。</p>
+            <ul><li>GZ 方向：3×100G，充足</li><li>SZ 方向：2×10G，⚠️ 需扩容</li></ul>
+            <h4>3.3 跨域风险边界</h4>
+            <p>跨域操作需 IP 与光层团队同步协调，MOP 中需明确协调节点及回退联系人。</p>
+          </div>
+        </div>
+
+        <!-- Topo -->
+        <div class="ppane" id="pane-topo">
+          <div style="padding:11px;flex:1;overflow-y:auto">
+            <div style="display:flex;gap:5px;margin-bottom:9px">
+              <button class="itool" style="background:var(--blue-dim);border-color:rgba(37,99,235,.25);color:var(--blue)" onclick="toast('逻辑拓扑','info')">逻辑拓扑</button>
+              <button class="itool" onclick="toast('物理拓扑','info')">物理拓扑</button>
+              <button class="itool" onclick="toast('业务路径','info')">业务路径</button>
+            </div>
+            <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r2);overflow:hidden;margin-bottom:9px">
+              <svg viewBox="0 0 340 200" xmlns="http://www.w3.org/2000/svg">
+                <defs><marker id="arr" markerWidth="6" markerHeight="4" refX="6" refY="2" orient="auto"><polygon points="0 0,6 2,0 4" fill="#2563eb" opacity=".8"/></marker></defs>
+                <rect x="8" y="78" width="66" height="34" rx="5" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+                <text x="41" y="99" text-anchor="middle" fill="#0f1f3d" font-size="9.5" font-family="DM Sans,sans-serif">PE-GZ-01</text>
+                <rect x="136" y="18" width="66" height="34" rx="5" fill="#fff" stroke="#0891b2" stroke-width="1.5"/>
+                <text x="169" y="39" text-anchor="middle" fill="#0f1f3d" font-size="9.5" font-family="DM Sans,sans-serif">云核-GZ-01</text>
+                <rect x="136" y="78" width="66" height="34" rx="5" fill="#fff" stroke="#2563eb" stroke-width="1.5"/>
+                <text x="169" y="99" text-anchor="middle" fill="#0f1f3d" font-size="9.5" font-family="DM Sans,sans-serif">P-HB-01</text>
+                <rect x="136" y="148" width="66" height="34" rx="5" fill="#fff" stroke="#d97706" stroke-width="1.5"/>
+                <text x="169" y="169" text-anchor="middle" fill="#0f1f3d" font-size="9.5" font-family="DM Sans,sans-serif">OTN-GZ</text>
+                <rect x="262" y="78" width="68" height="34" rx="5" fill="#fef2f2" stroke="#dc2626" stroke-width="1.5"/>
+                <text x="296" y="93" text-anchor="middle" fill="#0f1f3d" font-size="9.5" font-family="DM Sans,sans-serif">PE-SZ-02</text>
+                <text x="296" y="106" text-anchor="middle" fill="#dc2626" font-size="8" font-family="DM Sans,sans-serif">⚠ 扩容</text>
+                <line x1="74" y1="92" x2="136" y2="35" stroke="#2563eb" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arr)" opacity=".7"/>
+                <line x1="74" y1="95" x2="136" y2="95" stroke="#2563eb" stroke-width="2" marker-end="url(#arr)"/>
+                <line x1="74" y1="100" x2="136" y2="160" stroke="#d97706" stroke-width="1.5" marker-end="url(#arr)" opacity=".7"/>
+                <line x1="202" y1="95" x2="262" y2="95" stroke="#2563eb" stroke-width="2" marker-end="url(#arr)"/>
+                <path d="M74 84 Q185 44 262 84" stroke="#0891b2" stroke-width="1.8" fill="none" stroke-dasharray="5,3" opacity=".8"/>
+                <text x="165" y="56" fill="#0891b2" font-size="8.5" text-anchor="middle" font-family="DM Sans,sans-serif">VPN路径</text>
+              </svg>
+            </div>
+            <div style="display:flex;gap:12px;font-size:10.5px;color:var(--t3)">
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:14px;height:2px;background:var(--blue);display:inline-block"></span>IP 互联</span>
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:14px;height:2px;background:var(--teal);display:inline-block"></span>VPN 路径</span>
+              <span style="display:flex;align-items:center;gap:4px"><span style="width:14px;height:2px;background:var(--amber);display:inline-block"></span>光层绑定</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Verify -->
+        <div class="ppane" id="pane-verify" style="overflow:hidden">
+          <div class="verify-tabs">
+            <button class="vtab active" id="vtab-schema" onclick="switchVerifyTab('schema')">📐 方案验证</button>
+            <button class="vtab" id="vtab-rules" onclick="switchVerifyTab('rules')">✓ 核查规则</button>
+          </div>
+          <!-- 方案验证 -->
+          <div class="vpane active" id="vpane-schema">
+            <div class="verify-summary">
+              <div class="verify-score">
+                <div class="score-ring"><div class="score-inner">78</div></div>
+                <div><div class="sm-title">方案验证评分</div><div class="sm-sub">今天 13:40 · HLD v0.2</div></div>
+              </div>
+              <div class="vstats">
+                <div class="vs pass"><div class="vs-num">14</div><div class="vs-lbl">通过</div></div>
+                <div class="vs warn"><div class="vs-num">3</div><div class="vs-lbl">警告</div></div>
+                <div class="vs fail"><div class="vs-num">1</div><div class="vs-lbl">失败</div></div>
+              </div>
+            </div>
+            <div class="verify-issues">
+              <div class="issue-item"><div class="issue-hdr"><span class="issue-lv high">高</span><span class="issue-title">PE-SZ-02 光层带宽不足</span></div><div class="issue-desc">SZ 方向绑定 20G，峰值预计 28G，存在溢出风险。</div><div class="issue-loc">§3.2 · 资源台账 Row#47</div></div>
+              <div class="issue-item"><div class="issue-hdr"><span class="issue-lv med">中</span><span class="issue-title">VPN 实例名与现网不一致</span></div><div class="issue-desc">HLD 引用 "vpn_cloud_gz"，现网为 "VPN-CLOUD-GZ01"。</div><div class="issue-loc">§4.3 · PE-GZ-01 L312</div></div>
+              <div class="issue-item"><div class="issue-hdr"><span class="issue-lv med">中</span><span class="issue-title">SRv6 Locator 地址段未分配</span></div><div class="issue-desc">LLD 引用的地址段在资源台账中尚未分配。</div><div class="issue-loc">§LLD-2.1 · 地址资源台账</div></div>
+              <div class="issue-item"><div class="issue-hdr"><span class="issue-lv low">低</span><span class="issue-title">MOP 缺少跨域协调联系人</span></div><div class="issue-desc">MOP §2 跨域操作未定义光层联系人。</div><div class="issue-loc">MOP §2</div></div>
+            </div>
+          </div>
+          <!-- 核查规则 -->
+          <div class="vpane" id="vpane-rules">
+            <div class="vrule-gen-bar">
+              <span style="font-size:13px">📋</span>
+              <span style="flex:1">verify_rules_MOP_v1.yaml &nbsp;·&nbsp; 18 条规则 &nbsp;·&nbsp; 今天 14:49 生成</span>
+              <span style="font-size:11px;background:rgba(22,163,74,.1);color:var(--green);padding:2px 8px;border-radius:10px">14通过 / 3警告 / 1失败</span>
+            </div>
+            <div class="vrule-section">
+              <div class="vrule-sec-title">前置核查（Pre-Check）</div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-01</span><div class="vrule-text">PE-GZ-01 与 P-HB-01 之间 IS-IS 邻居状态应为 Full</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-02</span><div class="vrule-text">SR-MPLS Label Block 100000-200000 段已在 PE-GZ-01 分配且无冲突</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-03</span><div class="vrule-text">VPN 实例 VPN-CLOUD-GZ01 在 PE-GZ-01 已存在且状态 Up</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-04</span><div class="vrule-text">PE-GZ-01 → 云核-GZ-01 互联接口 MTU 统一为 9000</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-05</span><div class="vrule-text">OTN-GZ 波道 CH-42 对应 PE-GZ-01 GE0/0/1 状态 Up</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-06</span><div class="vrule-text">PE-SZ-02 端口 GE0/0/3 状态应为 Up（割接目标端口）</div><span class="vrule-result vr-fail">失败</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-07</span><div class="vrule-text">BGP 对等体 10.1.1.1 在 PE-GZ-01 established，hold-time≥180s</div><span class="vrule-result vr-pass">通过</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-PRE-08</span><div class="vrule-text">SRv6 Locator 2001:db8:100::/48 已在地址资源台账分配</div><span class="vrule-result vr-warn">警告</span></div>
+            </div>
+            <div class="vrule-section">
+              <div class="vrule-sec-title">施工后核查（Post-Check）</div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-01</span><div class="vrule-text">SR-MPLS Segment Routing 全局模式已启用，SR-Policy 下发成功</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-02</span><div class="vrule-text">VPN 业务路由条目在 PE-GZ-01 和 PE-SZ-02 一致，相差≤2条</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-03</span><div class="vrule-text">VPN 实例名 VPN-CLOUD-GZ01 与 HLD 引用 vpn_cloud_gz 映射关系确认</div><span class="vrule-result vr-warn">警告</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-04</span><div class="vrule-text">PE-SZ-02 扩容后 OTN 带宽可用≥40G</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-05</span><div class="vrule-text">SRv6 Policy 路径 End.DT4 转发表项在 PE-GZ-01 和 P-HB-01 一致</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-06</span><div class="vrule-text">跨域协调联系人（光层）已在 MOP §2 中记录</div><span class="vrule-result vr-warn">警告</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-POST-07</span><div class="vrule-text">业务割接后 VPN Ping 时延 GZ→SZ 应≤10ms</div><span class="vrule-result vr-skip">待执行</span></div>
+            </div>
+            <div class="vrule-section">
+              <div class="vrule-sec-title">回退触发条件（Rollback Trigger）</div>
+              <div class="vrule-item"><span class="vrule-id">VR-RB-01</span><div class="vrule-text">割接后 BGP 邻居 Down 超过 30s，触发立即回退</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-RB-02</span><div class="vrule-text">VPN 路由丢失率超过 5%，触发通知光层团队并暂停操作</div><span class="vrule-result vr-skip">待执行</span></div>
+              <div class="vrule-item"><span class="vrule-id">VR-RB-03</span><div class="vrule-text">PE-SZ-02 扩容后 OTN 实测带宽低于 30G，触发回退扩容操作</div><span class="vrule-result vr-skip">待执行</span></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Skill -->
+        <div class="ppane" id="pane-skill">
+          <div class="skill-panel-wrap">
+            <div class="skill-hdr">
+              <div><div class="skill-hdr-title">Skill 调优工作区</div><div class="skill-hdr-sub">反馈 → 诊断 → Fork → 验证 → 发布</div></div>
+              <button class="new-skill-btn" onclick="toast('新建 Skill 反馈','info')">＋ 新反馈</button>
+            </div>
+            <div class="skill-list-section">
+              <div class="skill-item active" id="sk-hld" onclick="selSkill('hld')">
+                <div class="skill-item-hdr"><span class="sk-icon">📘</span><span class="sk-name">IP-HLD-Generator</span><span class="sk-ver">v2.3</span></div>
+                <div class="skill-meta-row"><span class="sk-domain">IP · HLD生成</span><span class="sk-badge tuning">调优中</span></div>
+              </div>
+              <div class="skill-item" id="sk-vpn" onclick="selSkill('vpn')">
+                <div class="skill-item-hdr"><span class="sk-icon">🔒</span><span class="sk-name">VPN-Constraint-Extractor</span><span class="sk-ver">v1.8</span></div>
+                <div class="skill-meta-row"><span class="sk-domain">IP · 约束提取</span><span class="sk-badge testing">测试中</span></div>
+              </div>
+              <div class="skill-item" id="sk-mop" onclick="selSkill('mop')">
+                <div class="skill-item-hdr"><span class="sk-icon">🛠</span><span class="sk-name">MOP-Writer</span><span class="sk-ver">v3.1</span></div>
+                <div class="skill-meta-row"><span class="sk-domain">通用 · MOP生成</span><span class="sk-badge stable">稳定</span></div>
+              </div>
+            </div>
+            <!-- File tree + viewer -->
+            <div class="skill-version-bar">
+              <span class="svb-label">基线版本</span>
+              <span class="svb-ver">IP-HLD-Generator v2.3</span>
+              <span class="svb-badge base">官方下发</span>
+              <button class="fork-btn" id="fork-btn" onclick="forkSkill()">⑂ Fork 到本项目</button>
+            </div>
+            <div style="display:flex;flex:1;overflow:hidden;min-height:0">
+              <!-- File tree -->
+              <div style="width:160px;border-right:1px solid var(--border);overflow-y:auto;flex-shrink:0;background:var(--bg2)">
+                <div class="file-tree">
+                  <div class="ft-section-lbl">基线文件</div>
+                  <div class="ft-item active" id="ft-skillmd" onclick="openFile('skill.md')">
+                    <span class="ft-icon">📄</span><span class="ft-name">skill.md</span>
+                    <span class="ft-perm readonly" id="ft-skillmd-perm">只读</span>
+                  </div>
+                  <div class="ft-item locked" id="ft-promptmd" onclick="openLockedFile()">
+                    <span class="ft-icon">📄</span><span class="ft-name">prompt.md</span>
+                    <span class="ft-perm noperm">无权限</span>
+                  </div>
+                  <div class="ft-item locked" id="ft-constraintsmd" onclick="openLockedFile()">
+                    <span class="ft-icon">📄</span><span class="ft-name">constraints.md</span>
+                    <span class="ft-perm noperm">无权限</span>
+                  </div>
+                  <div class="ft-item locked" id="ft-ref" onclick="openLockedFile()">
+                    <span class="ft-icon">📁</span><span class="ft-name">reference/</span>
+                    <span class="ft-perm noperm">无权限</span>
+                  </div>
+                  <div class="ft-item locked" id="ft-assets" onclick="openLockedFile()">
+                    <span class="ft-icon">📁</span><span class="ft-name">assets/</span>
+                    <span class="ft-perm noperm">无权限</span>
+                  </div>
+                </div>
+              </div>
+              <!-- File viewer -->
+              <div class="file-viewer" id="file-viewer">
+                <div class="fv-bar">
+                  <span class="fv-filename" id="fv-filename">skill.md</span>
+                  <span class="fv-perm-banner readonly" id="fv-banner">🔒 基线主文件 · 只读</span>
+                </div>
+                <div class="fv-content" id="fv-content">
+# IP-HLD-Generator
+
+## Skill 说明
+本 Skill 用于在 IP 专业域下生成高层设计（HLD）文档，覆盖建设目标、设计原则、总体方案、跨域关系、风险边界与高层拓扑。
+
+## 适用场景
+- IP 骨干网升级项目 HLD 生成
+- SR-MPLS / SRv6 方案文档输出
+- IP 与云核、光层跨域协同设计
+
+## 版本
+v2.3 — 官方下发基线版本
+
+## 调用方式
+通过主控 Agent 在 HLD 设计任务中自动调用，或用户通过 /skill 命令手动触发。
+
+---
+*Fork 到本项目后，此文件将变为可编辑。其他子文件通过下方调优面板操作。*
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </aside>
+  </div>
+</div>
+
+<script>
+// ── Electron bridge ──────────────────────────────────────────────
+const eAPI = window.electronAPI || { minimize(){}, maximize(){}, close(){}, onMaximized(){}, onFocus(){} };
+function winMinimize(){ eAPI.minimize() }
+function winMaximize(){ eAPI.maximize() }
+function winClose(){ if(window.electronAPI) eAPI.close(); else toast('在桌面应用中运行时可关闭','info') }
+eAPI.onMaximized(v => {
+  const icon = document.querySelector('#btn-max svg');
+  if(icon) icon.innerHTML = v
+    ? '<rect x="2" y="0" width="8" height="8"/><rect x="0" y="2" width="8" height="8" fill="var(--bg1)"/>'
+    : '<rect x=".5" y=".5" width="9" height="9"/>';
+});
+
+// ── Splash ───────────────────────────────────────────────────────
+const BOOT=['正在加载语言模型上下文…','正在接入 Agent 编排层…','正在连接知识库与资源台账…','正在恢复项目工作区…','准备就绪'];
+let bs=0;
+function bootTick(){
+  document.getElementById('sp-bar').style.width=Math.round(bs/(BOOT.length-1)*100)+'%';
+  document.getElementById('sp-msg').textContent=BOOT[bs];
+  bs++;
+  if(bs<BOOT.length) setTimeout(bootTick, bs===BOOT.length-1?400:480);
+  else setTimeout(()=>{
+    document.getElementById('splash').classList.add('hidden');
+    setTimeout(()=>document.getElementById('splash').remove(),600);
+    toast('工作台已就绪','success');
+  },600);
+}
+setTimeout(bootTick,300);
+
+// ── Status flow ──────────────────────────────────────────────────
+const FLOW_MAIN=['新建','澄清中','设计中','待补数','待验证','待修订','已定稿'];
+const FLOW_SKILL=['新建','诊断中','待挂载','生成候选中','待测试','待发布','已发布'];
+function renderFlow(cur){
+  const sk=['诊断中','待挂载','生成候选中','待测试','待发布','已发布'].includes(cur);
+  const steps=sk?FLOW_SKILL:FLOW_MAIN, idx=steps.indexOf(cur);
+  document.getElementById('status-flow').innerHTML=steps.map((s,i)=>
+    `<div class="sf-step"><div class="sf-node ${i<idx?'done':i===idx?'active':'pending'}">${s}</div>${i<steps.length-1?'<div class="sf-arrow">→</div>':''}</div>`
+  ).join('');
+}
+renderFlow('设计中');
+
+// ── Task select ──────────────────────────────────────────────────
+function selTask(el,name,type,status){
+  document.querySelectorAll('.task-item').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  renderFlow(status);
+  document.getElementById('nav-status').textContent=status;
+  const d=document.getElementById('nav-dot');
+  d.className='sdot';
+  d.classList.add(status==='设计中'?'design':status==='已定稿'?'done':['待补数','待验证','诊断中'].includes(status)?'pending':'new');
+  if(type==='skill') switchRightTab('skill');
+  else if(type==='verify') switchRightTab('verify');
+  toast('切换任务：'+name,'info');
+}
+
+// ── Panel toggles ────────────────────────────────────────────────
+let rCol=false,lCol=false;
+function toggleRight(){rCol=!rCol;document.getElementById('right-panel').classList.toggle('collapsed',rCol)}
+function toggleLeft(){lCol=!lCol;document.getElementById('sidebar').classList.toggle('collapsed',lCol)}
+function switchRightTab(t){
+  if(rCol) toggleRight();
+  document.querySelectorAll('.ptab').forEach(x=>x.classList.remove('active'));
+  document.querySelectorAll('.ppane').forEach(x=>x.classList.remove('active'));
+  const te=document.getElementById('tab-'+t), pe=document.getElementById('pane-'+t);
+  if(te)te.classList.add('active');
+  if(pe)pe.classList.add('active');
+}
+
+// ── Domain (navbar) ──────────────────────────────────────────────
+function selDomain(btn,d){
+  document.querySelectorAll('.dp').forEach(p=>p.classList.remove('active'));
+  btn.classList.add('active');
+  toast('专业域：'+d,'info');
+}
+
+// ── Tool card ────────────────────────────────────────────────────
+function toggleTC(id){
+  const bd=document.getElementById(id+'-bd'), ar=document.getElementById(id+'-ar');
+  if(!bd)return;
+  const h=bd.style.display==='none';
+  bd.style.display=h?'block':'none';
+  ar.textContent=h?'▴':'▾';
+}
+
+// ── Chat ─────────────────────────────────────────────────────────
+let gen=false;
+function handleKey(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendMsg()}}
+function ins(t){const el=document.getElementById('chat-input');el.value+=t;el.focus()}
+function sendMsg(){
+  const el=document.getElementById('chat-input'),text=el.value.trim();
+  if(!text||gen)return; el.value='';
+  const msgs=document.getElementById('messages'), th=document.getElementById('thinking-row');
+  const now=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+  const r=document.createElement('div'); r.className='msg-row';
+  r.innerHTML=`<div class="msg-av user">我</div><div class="msg-body"><div class="msg-hdr"><span class="msg-name">我</span><span class="msg-time">${now}</span></div><div class="msg-text"><p>${esc(text)}</p></div></div>`;
+  msgs.insertBefore(r,th); th.style.display='flex'; msgs.scrollTop=msgs.scrollHeight;
+  gen=true; document.getElementById('send-btn').disabled=true;
+  setTimeout(()=>{
+    th.style.display='none';
+    const nr=document.createElement('div'); nr.className='msg-row';
+    nr.innerHTML=`<div class="msg-av ai">✦</div><div class="msg-body"><div class="msg-hdr"><span class="msg-name">NetCowork</span><span class="msg-time">${now}</span></div><div class="msg-text">${getReply(text)}</div></div>`;
+    msgs.appendChild(nr); msgs.scrollTop=msgs.scrollHeight;
+    gen=false; document.getElementById('send-btn').disabled=false;
+  },600);
+}
+function getReply(t){
+  const l=t.toLowerCase();
+  if(l.includes('拓扑')||l.includes('图'))return`<p>IP→云核跨域拓扑图已生成并更新至<strong>图表面板</strong>，VPN 路径已标注，⚠️ PE-SZ-02 风险高亮。</p>`;
+  if(l.includes('验证')||l.includes('核查'))return`<p>对 HLD v0.2 执行验证，发现 <strong style="color:var(--red)">1 项高风险</strong>、<strong style="color:var(--amber)">3 项警告</strong>，已更新至<strong>验证面板</strong>。</p>`;
+  if(l.includes('skill')||l.includes('调优'))return`<p>Skill 调优工作区已就绪。<strong>IP-HLD-Generator v2.3</strong> 诊断出 Reference 不足 + Prompt 结构问题，可点击右侧面板 Fork 到本项目后编辑。</p>`;
+  if(l.includes('mop')||l.includes('实施'))return`<p>将基于当前 HLD 生成实施步骤，含前置检查、操作步骤、验证动作和回退方案。</p>`;
+  return`<p>好的，已理解需求。如需上传补充材料，点击 <strong>附件</strong> 按钮。</p>`;
+}
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// ── Doc preview ──────────────────────────────────────────────────
+const DOCS={
+  HLD:`<h3>HLD 总体方案 — §3 跨域关系设计</h3><h4>3.1 IP 与云核对接关系</h4><p>涉及 12 条互联链路，采用 SRv6 Policy 承载云业务。各节点通过 BGP-LU 建立 EBGP 邻居，VPN 实例通过 route-policy 引流。</p><h4>3.2 光层带宽绑定逻辑</h4><p>IP 层互联绑定至 OTN 100G 波道，GMPLS 信令协同管理。</p><ul><li>GZ 方向：3×100G，充足</li><li>SZ 方向：2×10G，⚠️ 需扩容至 40G</li></ul><h4>3.3 跨域风险边界</h4><p>跨域操作需 IP 与光层团队同步协调，MOP 中需明确协调节点及回退联系人。</p>`,
+  LLD:`<h3>LLD SR-MPLS 参数规划 v0.1</h3><h4>2.1 SRv6 Locator</h4><p>⚠️ Locator 地址段 <code>2001:db8:100::/48</code> 尚未从台账分配（状态 Pending），需协调后补充。</p><h4>2.2 Node-SID</h4><p>PE-GZ-01: 100 &nbsp;· &nbsp;PE-SZ-02: 101 &nbsp;·&nbsp; P-HB-01: 200</p><h4>2.3 接口参数</h4><p>互联接口 MTU 统一 9000，IS-IS Metric 10，BFD min-tx/min-rx 300ms。</p>`,
+  MOP:`<div style="font-size:12px;color:var(--t3);margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--border)">MOP SR-MPLS割接 v1.0 &nbsp;·&nbsp; 生成时间：2025-03-26 14:35 &nbsp;·&nbsp; Skill: MOP-Writer v3.1</div>
+<div class="mop-step"><div class="mop-step-hdr"><span class="mop-step-num">1</span>前置检查（Pre-Check）</div><div class="mop-step-body">
+  <div>确认维护窗口 02:00–06:00，通知 NOC 及光层联系人张工（18800000001）。</div>
+  <div>备份 PE-GZ-01、PE-SZ-02、P-HB-01 当前配置：</div>
+  <span class="mop-cmd">display current-configuration | redirect ftp://backup/PE-GZ-01-20250327.cfg</span>
+  <div>验证 BGP 邻居状态：</div>
+  <span class="mop-cmd">display bgp peer verbose | include Established</span>
+</div></div>
+<div class="mop-step"><div class="mop-step-hdr"><span class="mop-step-num">2</span>SR-MPLS 割接（PE-GZ-01）</div><div class="mop-step-body">
+  <div>启用 SR-MPLS 全局：</div>
+  <span class="mop-cmd">segment-routing mpls</span>
+  <div>配置 SID 映射：</div>
+  <span class="mop-cmd">prefix-sid absolute 100 ipv4-family</span>
+  <div>验证 SR-Policy 下发：</div>
+  <span class="mop-cmd">display segment-routing mpls forwarding</span>
+  <div class="mop-risk">⚠ 回退：undo segment-routing mpls（如 BGP Down 超 30s）</div>
+</div></div>
+<div class="mop-step"><div class="mop-step-hdr"><span class="mop-step-num">3</span>SRv6 部署（PE-GZ-01 + P-HB-01）</div><div class="mop-step-body">
+  <div>配置 SRv6 Locator（⚠️ 需确认台账地址已分配）：</div>
+  <span class="mop-cmd">segment-routing ipv6&#10; locator BASE ipv6-prefix 2001:db8:100:: 48 static 32</span>
+  <div>配置 End.DT4 功能：</div>
+  <span class="mop-cmd">srv6-segment vpn-color 100 end-dt4 vpn-instance VPN-CLOUD-GZ01</span>
+  <div class="mop-risk">⚠ 注意：VPN 实例名需确认大小写（现网为 VPN-CLOUD-GZ01）</div>
+</div></div>
+<div class="mop-step"><div class="mop-step-hdr"><span class="mop-step-num">4</span>PE-SZ-02 光层扩容</div><div class="mop-step-body">
+  <div>协调光层团队扩容 OTN-SZ 波道至 40G（联系人：光层张工）。</div>
+  <div>扩容完成后验证端口 GE0/0/3 状态：</div>
+  <span class="mop-cmd">display interface GigabitEthernet0/0/3</span>
+  <div>验证带宽可用：</div>
+  <span class="mop-cmd">display interface statistics GigabitEthernet0/0/3 | include bandwidth</span>
+  <div class="mop-risk">⚠ 回退：如实测带宽 &lt; 30G，暂停扩容并通知光层</div>
+</div></div>
+<div class="mop-step"><div class="mop-step-hdr"><span class="mop-step-num">5</span>施工后验证（Post-Check）</div><div class="mop-step-body">
+  <div>运行核查规则集验证（18 条）：</div>
+  <span class="mop-cmd">netcowork verify run verify_rules_MOP_v1.yaml --target live</span>
+  <div>业务 Ping 验证 GZ→SZ 时延 ≤10ms：</div>
+  <span class="mop-cmd">ping -vpn-instance VPN-CLOUD-GZ01 -c 100 -s 1400 10.200.1.1</span>
+</div></div>`,
+  PPT:`<h3>方案汇报 PPT v0.1</h3><p>Slide 1: 建设背景与目标</p><p>Slide 2: 总体方案架构（SR-MPLS + SRv6）</p><p>Slide 3: 跨域关系设计（IP / 云核 / 光）</p><p>Slide 4: PE-SZ-02 扩容方案</p><p>Slide 5: 风险矩阵与应对</p><p>Slide 6: 时间计划（2025 Q3 交付）</p>`
+};
+function previewDoc(el,type){
+  document.querySelectorAll('.doc-item').forEach(d=>d.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('doc-preview').innerHTML=DOCS[type]||'<p>暂无预览</p>';
+}
+
+// ── Project ──────────────────────────────────────────────────────
+function selectProj(el){document.querySelectorAll('.proj-item').forEach(p=>p.classList.remove('active'));el.classList.add('active')}
+function openProjectDetail(){openModal('bd-project-detail')}
+function openProjectDetail2(){
+  document.getElementById('pd-title').textContent='XX 省核心云改造';
+  document.getElementById('pd-name').value='XX 省核心云改造';
+  openModal('bd-project-detail');
+}
+function saveProject(){
+  const name=document.getElementById('pd-name').value;
+  document.getElementById('project-name').textContent=name;
+  closeModal('bd-project-detail');
+  toast('项目信息已保存','success');
+}
+
+// ── New project modal ────────────────────────────────────────────
+const DOMAIN_SKILLS={
+  'IP':[
+    {id:'ip-hld',icon:'📘',name:'IP-HLD-Generator',ver:'v2.3',desc:'IP 层高层设计文档生成',domain:'IP'},
+    {id:'ip-vpn',icon:'🔒',name:'VPN-Constraint-Extractor',ver:'v1.8',desc:'VPN 场景约束提取与验证',domain:'IP'},
+    {id:'ip-sr',icon:'🔵',name:'SR-MPLS-Planner',ver:'v1.2',desc:'SR-MPLS 参数规划与分配',domain:'IP'},
+    {id:'ip-topo',icon:'🗺',name:'IP-Topology-Analyzer',ver:'v2.0',desc:'IP 拓扑分析与图表生成',domain:'IP'},
+  ],
+  '云核':[
+    {id:'cloud-hld',icon:'☁️',name:'CloudCore-HLD-Generator',ver:'v1.5',desc:'云核层高层设计生成',domain:'云核'},
+    {id:'cloud-nfv',icon:'🔷',name:'NFV-Config-Checker',ver:'v1.1',desc:'NFV 配置语法与语义核查',domain:'云核'},
+    {id:'cloud-conn',icon:'🔗',name:'Cloud-Connect-Planner',ver:'v1.3',desc:'云网互联方案规划',domain:'云核'},
+  ],
+  '机房':[
+    {id:'idc-layout',icon:'🏢',name:'IDC-Layout-Generator',ver:'v1.0',desc:'机房布局与走线方案',domain:'机房'},
+    {id:'idc-power',icon:'⚡',name:'Power-Calculator',ver:'v2.1',desc:'机房电力负载计算',domain:'机房'},
+  ],
+  '光':[
+    {id:'otn-wave',icon:'💡',name:'OTN-Wave-Planner',ver:'v2.2',desc:'OTN 波道规划与分配',domain:'光'},
+    {id:'otn-fiber',icon:'🔆',name:'Fiber-Route-Analyzer',ver:'v1.6',desc:'光纤路由分析与保护规划',domain:'光'},
+    {id:'otn-mop',icon:'📋',name:'OTN-MOP-Writer',ver:'v1.9',desc:'OTN 实施步骤文档生成',domain:'光'},
+  ],
+};
+const selectedDomains=new Set(), checkedSkills=new Set();
+function toggleDomain(el,d){
+  el.classList.toggle('sel');
+  selectedDomains.has(d)?selectedDomains.delete(d):selectedDomains.add(d);
+  updateSkillRec();
+}
+function updateSkillRec(){
+  const wrap=document.getElementById('skill-rec-wrap');
+  const list=document.getElementById('skill-rec-list');
+  if(selectedDomains.size===0){wrap.style.display='none';return}
+  wrap.style.display='block';
+  const skills=[];
+  selectedDomains.forEach(d=>{if(DOMAIN_SKILLS[d])skills.push(...DOMAIN_SKILLS[d])});
+  const DBADGE_COLOR={'IP':'rgba(37,99,235,.1);color:var(--blue)','云核':'rgba(8,145,178,.1);color:var(--teal)','机房':'rgba(217,119,6,.1);color:var(--amber)','光':'rgba(22,163,74,.1);color:var(--green)'};
+  list.innerHTML=skills.map(s=>`
+    <div class="skill-rec-item">
+      <div class="sri-check ${checkedSkills.has(s.id)?'checked':''}" onclick="toggleSkillCheck(this,'${s.id}')"></div>
+      <span class="sri-icon">${s.icon}</span>
+      <div class="sri-info"><div class="sri-name">${s.name}</div><div class="sri-desc">${s.desc}</div></div>
+      <span class="sri-ver">${s.ver}</span>
+    </div>`).join('');
+}
+function toggleSkillCheck(el,id){
+  el.classList.toggle('checked');
+  checkedSkills.has(id)?checkedSkills.delete(id):checkedSkills.add(id);
+}
+function createProject(){
+  const name=document.getElementById('np-name').value.trim();
+  if(!name){document.getElementById('np-name').focus();return}
+  closeModal('bd-new-project');
+  // Add to sidebar
+  const list=document.getElementById('project-list')||document.querySelector('.ss');
+  const pi=document.createElement('div');
+  pi.className='proj-item';
+  const domArr=[...selectedDomains];
+  const c=domArr.length?{'IP':'rgba(37,99,235,.1)','云核':'rgba(8,145,178,.1)','机房':'rgba(217,119,6,.1)','光':'rgba(22,163,74,.1)'}[domArr[0]]||'rgba(37,99,235,.1)':'rgba(37,99,235,.1)';
+  const tc=domArr.length?{'IP':'var(--blue)','云核':'var(--teal)','机房':'var(--amber)','光':'var(--green)'}[domArr[0]]||'var(--blue)':'var(--blue)';
+  pi.innerHTML=`<div class="pi-icon" style="background:${c};color:${tc}">${domArr[0]||'新'}</div><span class="pi-name">${name}</span><span class="pi-badge">新建</span>`;
+  pi.onclick=()=>selectProj(pi);
+  pi.ondblclick=()=>{document.getElementById('pd-title').textContent=name;document.getElementById('pd-name').value=name;openModal('bd-project-detail')};
+  document.querySelector('.ss').appendChild(pi);
+  // Reset
+  selectedDomains.clear(); checkedSkills.clear();
+  document.querySelectorAll('#np-domains .d-pill').forEach(p=>p.classList.remove('sel'));
+  document.getElementById('np-name').value='';
+  document.getElementById('np-desc').value='';
+  document.getElementById('skill-rec-wrap').style.display='none';
+  toast(`项目「${name}」已创建，加入了 ${checkedSkills.size} 个 Skill`,'success');
+}
+
+// ── Modal helpers ────────────────────────────────────────────────
+function openModal(id){document.getElementById(id).classList.add('open')}
+function closeModal(id){document.getElementById(id).classList.remove('open')}
+document.querySelectorAll('.modal-backdrop').forEach(bd=>{
+  bd.addEventListener('click',e=>{if(e.target===bd)bd.classList.remove('open')});
+});
+function switchMTab(btn,pane){
+  btn.closest('.modal').querySelectorAll('.mtab').forEach(t=>t.classList.remove('active'));
+  btn.classList.add('active');
+  btn.closest('.modal').querySelectorAll('.mpane').forEach(p=>p.classList.remove('active'));
+  const pe=document.getElementById(pane);
+  if(pe)pe.classList.add('active');
+}
+
+// ── Skill panel ──────────────────────────────────────────────────
+let forked=false;
+function selSkill(id){
+  document.querySelectorAll('.skill-item').forEach(s=>s.classList.remove('active'));
+  document.getElementById('sk-'+id).classList.add('active');
+}
+function forkSkill(){
+  if(forked){toast('已存在项目定制版','info');openWorkspace();return}
+  forked=true;
+  // skill.md: readonly → editable
+  document.getElementById('ft-skillmd-perm').textContent='✏ 编辑';
+  document.getElementById('ft-skillmd-perm').className='ft-perm editable';
+  // Update version bar
+  const vbar=document.querySelector('.skill-version-bar');
+  vbar.innerHTML=`<span class="svb-label">基线</span><span class="svb-ver" style="font-size:10.5px;color:var(--t3)">v2.3</span><span style="color:var(--t3);margin:0 6px">→</span><span class="svb-label">项目定制</span><span class="svb-ver">IP-HLD-Generator v2.3-fork</span><span class="svb-badge fork">本项目</span><button class="fork-btn forked" style="margin-left:auto" onclick="toast('已是项目定制版','info')">✓ 已 Fork</button><button class="fork-btn" style="margin-left:6px;background:var(--blue);border-color:var(--blue);color:#fff" onclick="openWorkspace()">⚙ 打开工作区</button>`;
+  // Refresh viewer to show editable skill.md
+  openFile('skill.md');
+  toast('已 Fork：skill.md 现在可编辑，调优工作区已开启。','success');
+  openWorkspace();
+}
+function openWorkspace(){
+  document.getElementById('skill-workspace').classList.add('open');
+}
+function closeWorkspace(){
+  document.getElementById('skill-workspace').classList.remove('open');
+}
+
+// ── Skill Workspace tabs ──────────────────────────────────────────
+let curSWTab='chat';
+function switchSWTab(t){
+  curSWTab=t;
+  // tab buttons: id swt-chat / swt-diag / swt-ver
+  document.querySelectorAll('.sw-tab').forEach(el=>el.classList.toggle('active',el.id==='swt-'+t));
+  // pane divs:  id swp-chat / swp-diag / swp-ver
+  document.querySelectorAll('.sw-pane').forEach(el=>el.classList.toggle('active',el.id==='swp-'+t));
+}
+
+// ── Workspace chat ────────────────────────────────────────────────
+const SW_REPLIES={
+  default:[
+    '已记录您的调优意见，正在分析 skill.md 的影响范围……',
+    '建议在 prompt 约束段新增输出字段限制，是否需要我生成具体的修改 diff？',
+    '检测到该问题在基线 v2.3 中有已知缺口，已标记候选优化点。',
+    '根据您描述的场景，reference 文件中缺少 SR-MPLS 标准模板，建议补充。',
+    '已生成 3 条候选调整方案，可在「版本对比」标签中查看详情。',
+  ],
+  诊断:['诊断完成：发现 2 个低置信度输出字段，建议在 constraints 中明确格式。','当前 skill 输出稳定性评分 87/100，主要扣分项：跨域关系描述不一致。'],
+  发布:['版本校验通过，项目定制版 v2.3-fork 已发布至本项目空间。','发布失败：存在未保存的 skill.md 修改，请先保存后重试。'],
+};
+let swMsgCount=0;
+function handleSWKey(e){
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendSWMsg();}
+}
+function sendSWMsg(){
+  const inp=document.getElementById('sw-input');
+  const txt=inp.value.trim();
+  if(!txt) return;
+  appendSWMsg(txt,'user');
+  inp.value='';
+  inp.style.height='';
+  setTimeout(()=>{
+    const pool=txt.includes('诊断')?SW_REPLIES.诊断:txt.includes('发布')?SW_REPLIES.发布:SW_REPLIES.default;
+    const reply=pool[swMsgCount%pool.length];
+    swMsgCount++;
+    appendSWMsg(reply,'ai');
+  },700);
+}
+function appendSWMsg(text,role){
+  const log=document.getElementById('sw-messages');
+  const now=new Date().toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'});
+  const div=document.createElement('div');
+  div.className='sw-msg';
+  if(role==='ai'){
+    div.innerHTML=`<div class="sw-av ai">✦</div><div class="sw-msg-body"><div class="sw-msg-hdr"><span class="sw-msg-name">NetCowork</span><span class="sw-msg-time">${now}</span></div><div class="sw-msg-text"><p>${text}</p></div></div>`;
+  } else {
+    div.innerHTML=`<div class="sw-msg-body" style="margin-left:auto;max-width:82%;background:var(--blue-dim);border-radius:var(--r);padding:9px 12px;font-size:13px;color:var(--t1)">${text}</div>`;
+  }
+  log.appendChild(div);
+  log.scrollTop=log.scrollHeight;
+}
+function swInsert(t){
+  const inp=document.getElementById('sw-input');
+  inp.value=t;
+  inp.focus();
+}
+
+// ── Workspace actions ─────────────────────────────────────────────
+function applyAction(action){
+  toast(action+' — 处理中…','info');
+  setTimeout(()=>{
+    toast(action+' — 已完成，结果已更新到版本对比。','success');
+    switchSWTab('ver');
+  },1400);
+}
+function publishFork(){
+  toast('正在校验并发布 v2.3-fork…','info');
+  setTimeout(()=>{
+    toast('项目定制版 v2.3-fork 已发布至本项目 Skill 空间。','success');
+    closeWorkspace();
+  },1800);
+}
+
+// File contents
+const SKILL_MD_CONTENT=`# IP-HLD-Generator\n\n## Skill 说明\n本 Skill 用于在 IP 专业域下生成高层设计（HLD）文档，覆盖建设目标、设计原则、总体方案、跨域关系、风险边界与高层拓扑。\n\n## 适用场景\n- IP 骨干网升级项目 HLD 生成\n- SR-MPLS / SRv6 方案文档输出\n- IP 与云核、光层跨域协同设计\n\n## 版本\nv2.3 — 官方下发基线版本\n\n---\n*Fork 到本项目后，此文件将变为可编辑。其他子文件通过下方调优面板操作。*`;
+
+let curFile='skill.md';
+function openFile(fname){
+  curFile=fname;
+  document.querySelectorAll('.ft-item:not(.locked)').forEach(f=>f.classList.remove('active'));
+  document.getElementById('ft-skillmd').classList.add('active');
+  const isEditable=forked;
+  document.getElementById('fv-filename').textContent='skill.md';
+  const bEl=document.getElementById('fv-banner');
+  if(isEditable){
+    bEl.textContent='✏️ 项目定制版 · 可编辑';
+    bEl.className='fv-perm-banner editable';
+    const cv=document.getElementById('fv-content');
+    cv.className='fv-content';
+    cv.innerHTML=`<textarea class="fv-textarea" spellcheck="false">${SKILL_MD_CONTENT}</textarea>`;
+  } else {
+    bEl.textContent='🔒 基线主文件 · 只读';
+    bEl.className='fv-perm-banner readonly';
+    const cv=document.getElementById('fv-content');
+    cv.className='fv-content';
+    cv.textContent=SKILL_MD_CONTENT;
+  }
+}
+function openLockedFile(){
+  // Show no-permission message in viewer
+  document.getElementById('fv-filename').textContent='— 无权限 —';
+  const bEl=document.getElementById('fv-banner');
+  bEl.textContent='🚫 无访问权限';
+  bEl.className='fv-perm-banner readonly';
+  const cv=document.getElementById('fv-content');
+  cv.className='fv-content';
+  cv.innerHTML=`<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;gap:12px;color:var(--t3);padding:24px;text-align:center">
+    <div style="font-size:28px;opacity:.4">🔒</div>
+    <div style="font-size:13px;font-weight:600;color:var(--t2)">此文件无访问权限</div>
+    <div style="font-size:12px;line-height:1.7">如需调整 prompt、constraints、reference 或 assets，<br>请通过下方<strong>调优面板</strong>提交问题反馈，<br>由系统生成候选调整方案。</div>
+  </div>`;
+}
+
+// ── Toast ────────────────────────────────────────────────────────
+function toast(msg,type='info'){
+  const icons={success:'✓',info:'ℹ',warning:'⚠',error:'✕'};
+  const c=document.getElementById('toast-container');
+  const t=document.createElement('div');
+  t.className=`toast ${type}`;
+  t.innerHTML=`<span style="font-size:13px">${icons[type]||'ℹ'}</span><span>${msg}</span>`;
+  c.appendChild(t);
+  setTimeout(()=>{t.classList.add('removing');setTimeout(()=>t.remove(),200)},2600);
+}
+
+// ── Verify tabs ──────────────────────────────────────────────────
+function switchVerifyTab(t){
+  document.querySelectorAll('.vtab').forEach(el=>el.classList.toggle('active',el.id==='vtab-'+t));
+  document.querySelectorAll('.vpane').forEach(el=>el.classList.toggle('active',el.id==='vpane-'+t));
+}
+
+// ── MOP preview shortcut ─────────────────────────────────────────
+function previewMOP(){
+  document.querySelectorAll('.doc-item').forEach(d=>d.classList.remove('active'));
+  const mopEl=document.getElementById('doc-mop');
+  if(mopEl) mopEl.classList.add('active');
+  document.getElementById('doc-preview').innerHTML=DOCS['MOP'];
+}
+
+// ── Demo journey navigation ───────────────────────────────────────
+const DEMO_STAGES=[
+  {id:1,task:'HLD 总体方案设计',type:'hld',status:'设计中',tab:'doc',scroll:'top'},
+  {id:2,task:'VPN 场景 Skill 调优',type:'skill',status:'诊断中',tab:'skill',scroll:'top'},
+  {id:3,task:'VPN 场景 Skill 调优',type:'skill',status:'诊断中',tab:'skill',scroll:'top',fork:true},
+  {id:4,task:'MOP 实施步骤编写',type:'mop',status:'已定稿',tab:'doc',scroll:'stage-mop'},
+  {id:5,task:'配置与方案一致性验证',type:'verify',status:'待验证',tab:'verify',scroll:'stage-verify'},
+  {id:6,task:'MOP 实施步骤编写',type:'mop',status:'已定稿',tab:'doc',scroll:'stage-archive',archive:true},
+];
+let curDemoStage=3;
+function demoJump(n){
+  curDemoStage=n;
+  // Update guide buttons
+  document.querySelectorAll('.dg-step').forEach((btn,i)=>{
+    const sn=i+1;
+    btn.classList.remove('active','done');
+    if(sn<n) btn.classList.add('done');
+    else if(sn===n) btn.classList.add('active');
+  });
+  const s=DEMO_STAGES[n-1];
+  // Switch right tab
+  switchRightTab(s.tab);
+  // Switch verify sub-tab
+  if(s.tab==='verify') switchVerifyTab(n===5?'rules':'schema');
+  // Update task status
+  renderFlow(s.status);
+  document.getElementById('nav-status').textContent=s.status;
+  const d=document.getElementById('nav-dot');
+  d.className='sdot';
+  d.classList.add(s.status==='设计中'?'design':s.status==='已定稿'?'done':['待补数','待验证','诊断中'].includes(s.status)?'pending':'new');
+  // Scroll chat
+  const msgs=document.getElementById('messages');
+  if(s.scroll==='top') msgs.scrollTop=0;
+  else{
+    const target=document.getElementById(s.scroll);
+    if(target) setTimeout(()=>target.scrollIntoView({behavior:'smooth',block:'start'}),100);
+  }
+  // Side effects
+  if(s.fork&&!forked) toast('演示：进入 Skill Fork 阶段 — 点击右侧面板「Fork 到本项目」','info');
+  if(s.archive) setTimeout(()=>openModal('bd-archive'),400);
+  if(n===4) setTimeout(()=>previewMOP(),300);
+  toast('演示阶段 '+n+'：'+s.task,'info');
+}
+
+// ── Cloud archive ─────────────────────────────────────────────────
+function selDest(el){
+  document.querySelectorAll('.cd-item').forEach(c=>c.classList.remove('sel'));
+  el.classList.add('sel');
+}
+const ARCHIVE_LOG=[
+  '正在打包文档资产…',
+  '上传 HLD 总体方案 v0.2… ✓',
+  '上传 LLD 参数规划 v0.1… ✓',
+  '上传 MOP SR-MPLS割接 v1.0… ✓',
+  '上传 verify_rules_MOP_v1.yaml… ✓',
+  '同步 Skill 定制版 IP-HLD-Generator v2.3-fork… ✓',
+  '生成交付摘要报告…',
+  '归档完成 ✓ — 可在企业知识库「省干IP专项」下查阅',
+];
+let archiving=false;
+function execArchive(){
+  if(archiving) return;
+  archiving=true;
+  document.getElementById('btn-archive-exec').disabled=true;
+  document.getElementById('btn-archive-exec').textContent='归档中…';
+  const prog=document.getElementById('archive-progress');
+  const bar=document.getElementById('ap-bar');
+  const log=document.getElementById('ap-log');
+  prog.classList.add('show');
+  log.textContent='';
+  let step=0;
+  function tick(){
+    if(step>=ARCHIVE_LOG.length){
+      bar.style.width='100%';
+      log.textContent+=ARCHIVE_LOG[ARCHIVE_LOG.length-1]+'\n';
+      setTimeout(()=>{
+        closeModal('bd-archive');
+        archiving=false;
+        document.getElementById('btn-archive-exec').disabled=false;
+        document.getElementById('btn-archive-exec').textContent='🚀 执行归档';
+        prog.classList.remove('show');
+        bar.style.width='0';
+        log.textContent='';
+        toast('交付成果已归档至企业知识库','success');
+        demoUpdateFinal();
+      },800);
+      return;
+    }
+    bar.style.width=Math.round((step+1)/ARCHIVE_LOG.length*100)+'%';
+    log.textContent+=ARCHIVE_LOG[step]+'\n';
+    log.scrollTop=log.scrollHeight;
+    step++;
+    setTimeout(tick, step===ARCHIVE_LOG.length-1?600:420);
+  }
+  tick();
+}
+function demoUpdateFinal(){
+  // Mark all demo steps as done
+  document.querySelectorAll('.dg-step').forEach(btn=>btn.classList.add('done'));
+  document.getElementById('dg6').classList.remove('done');
+  document.getElementById('dg6').classList.add('active');
+  curDemoStage=6;
+}
+
+// ── Keyboard ─────────────────────────────────────────────────────
+document.addEventListener('keydown',e=>{
+  if(e.ctrlKey){
+    if(e.key==='b'){e.preventDefault();toggleLeft()}
+    if(e.key==='j'){e.preventDefault();toggleRight()}
+    if(e.key==='1'){e.preventDefault();switchRightTab('doc')}
+    if(e.key==='2'){e.preventDefault();switchRightTab('topo')}
+    if(e.key==='3'){e.preventDefault();switchRightTab('verify')}
+    if(e.key==='4'){e.preventDefault();switchRightTab('skill')}
+    if(e.key==='n'&&e.shiftKey){e.preventDefault();openModal('bd-new-project')}
+  }
+  if(e.key==='Escape'){
+    document.querySelectorAll('.modal-backdrop.open').forEach(b=>b.classList.remove('open'));
+    closeWorkspace();
+  }
+});
+</script>
+</body>
+</html>

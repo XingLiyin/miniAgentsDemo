@@ -66,7 +66,7 @@
 | `FunctionTool` + `@tool` 装饰器 | `app/tools/definition.py` ToolDefinition + handler | 自动从 Python type hints 生成 JSON Schema，零手写 schema | 中 — ToolGateway 需适配新接口 |
 | `MCPStdioTool` / `MCPStreamableHTTPTool` | ToolProvider protocol 新实现 | 原生支持 MCP 服务器，直接接入外部工具生态 | 低 — 实现新的 ToolProvider 即可 |
 | `load_settings()` + `SecretString` | `app/config/settings.py` 的 `_load_settings()` | API Key 不再出现在 repr/log 里 | 极低 — 10 行改动 |
-| 消息压缩策略（`TruncationStrategy` / `SummarizationStrategy` / `TokenBudgetComposedStrategy`） | AgentLoop 里 `default_summary_threshold` 相关的手动逻辑 | 真正可运行的长上下文管理，不是空设置项 | 中 — 接入 AgentLoop |
+| 消息压缩策略（`TruncationStrategy` / `SummarizationStrategy` / `TokenBudgetComposedStrategy`） | AgentLoop 里 `default_summary_threshold` 相关的手动逻辑 | 真正可运行的长上下文管理，不是空设置项 | 中 — 在自己写的抽象类中使用MAF提供的方法，再接入 AgentLoop，保留miniAgents自行扩展的可能 |
 
 ### 二、部分借鉴（架构参考，按需取舍）
 
@@ -88,40 +88,16 @@
 
 ---
 
-## 推荐执行顺序
-
-```
-阶段 1（低风险，立刻可做）
-  ├─ SecretString 替换 settings.py 里的 api_key 字段
-  └─ MCPStdioTool 作为新 ToolProvider 接入 ToolRegistry
-
-阶段 2（中风险，需测试）
-  ├─ FunctionTool + @tool 替换 ToolDefinition
-  └─ 接入 TruncationStrategy / SummarizationStrategy 到 AgentLoop
-
-阶段 3（高风险，接口改动大）
-  └─ BaseChatClient 替换 BaseAdapter + LLMClient
-     （需同步改 agent_loop.py, task_executor.py, deps.py）
-
-暂不做
-  ├─ WorkflowBuilder（当前架构够用）
-  └─ SkillsProvider（我们的 YAML 方案更声明式）
-```
-
----
-
 ## miniAgents 当前模块与 Agent Framework 对照
 
 | miniAgents 模块 | Agent Framework 对应 | 操作 |
 |---|---|---|
-| `app/llm/llm_base.py` — `BaseAdapter` + `LLMClient` | `BaseChatClient` | 阶段 3 替换 |
-| `app/llm/openai_adapter.py` | `OpenAIChatClient` | 阶段 3 替换 |
-| `app/llm/anthropic_adapter.py` | Anthropic chat client | 阶段 3 替换 |
-| `app/tools/definition.py` — `ToolDefinition` | `FunctionTool` + `@tool` | 阶段 2 替换 |
-| `app/tools/provider.py` — `ToolProvider` | `MCPTool` 系列 | 阶段 1 扩展 |
-| `app/skills/` | `Skill` + `SkillsProvider` | 保留（风格不同） |
-| `app/config/settings.py` | `load_settings()` + `SecretString` | 阶段 1 替换 |
-| `app/runtime/agent_loop.py` | `Agent` + `WorkflowBuilder` | 暂保留 |
+| `app/llm/llm_base.py` — `BaseAdapter` + `LLMClient` | `BaseChatClient` | 替换 |
+| `app/tools/definition.py` — `ToolDefinition` | `FunctionTool` + `@tool` |替换 |
+| `app/tools/provider.py` — `ToolProvider` | `MCPTool` 系列 | 扩展 |
+| `app/skills/` | `Skill` + `SkillsProvider` | 保留miniAgents 模块 |
+| `app/config/settings.py` | `load_settings()` + `SecretString` | 阶段 |
+| `app/runtime/agent_loop.py` | `Agent` + `WorkflowBuilder` | 保留miniAgents 模块 |
 | `app/domain/services/memory_service.py` | `BaseHistoryProvider` | 可选替换 |
 | 无 | `AgentMiddleware` 三层中间件 | 中期新增 |
-| 无 | `TruncationStrategy` / `SummarizationStrategy` | 阶段 2 新增 |
+| 无 | `TruncationStrategy` / `SummarizationStrategy` | 引入，但保留miniAgents自行扩展的可能 |

@@ -16,6 +16,8 @@ class PolicyEngine:
     def authorize(self, agent: Agent, tool_name: str) -> None:
         """校验 agent 是否有权限调用 tool_name。
 
+        后续可添加更复杂的授权逻辑，如基于角色的访问控制（RBAC）。
+
         第一层：tool_name 必须在 ToolRegistry 中已注册（工具存在性）
         第二层：tool_name 必须在 agent.tool_list 中（模板级授权）
         """

@@ -1,4 +1,4 @@
-"""依赖注入：构建并返回 Service 实例（Phase 1 全局单例）。"""
+"""依赖注入：构建并返回 Service 实例（Agent Loop v2）。"""
 
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ from app.domain.state_machine import SessionStateMachine, TaskStateMachine
 from app.llm.registry import get_llm_registry
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
+from app.runtime.actor import Actor
 from app.runtime.agent_loop import AgentLoop
+from app.runtime.observer import Observer
+from app.runtime.planner import Planner
 from app.runtime.policy_engine import PolicyEngine
-from app.runtime.skill_router import SkillRouter
-from app.runtime.task_executor import TaskExecutor
+from app.runtime.reasoner import Reasoner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
 from app.tools.registry import get_tool_registry
@@ -78,52 +80,58 @@ def get_tool_gateway() -> ToolGateway:
     )
 
 
-@lru_cache
-def get_skill_router() -> SkillRouter:
-    return SkillRouter(skill_registry=get_skill_registry())
+def get_agent_template_registry():
+    """获取全局 AgentTemplateRegistry（首次调用时从 settings.agents_dir 扫描）。"""
+    from app.agent_def.registry import get_agent_template_registry as _get
+    return _get()
 
 
-@lru_cache
-def get_task_executor() -> TaskExecutor:
-    registry = get_llm_registry()
+def _get_llm_client():
+    """获取 LLM 客户端，注册表中无匹配时降级为 MockChatClient。"""
     from app.config.settings import get_settings
     llm_name = get_settings().agent_default_llm_name
     try:
-        llm_client = registry.get_client(llm_name)
+        return get_llm_registry().get_client(llm_name)
     except Exception:
-        from app.llm.mock_adapter import MockAdapter
-        from app.llm.llm_base import LLMClient
-        llm_client = LLMClient(adapter=MockAdapter(), model="mock")
-    return TaskExecutor(
-        task_manager=get_task_manager(),
-        tool_gateway=get_tool_gateway(),
-        llm_client=llm_client,
-        skill_router=get_skill_router(),
-    )
+        from app.llm.mock_client import MockChatClient
+        return MockChatClient()
 
 
 @lru_cache
 def get_agent_loop() -> AgentLoop:
-    registry = get_llm_registry()
-    from app.config.settings import get_settings
-    llm_name = get_settings().agent_default_llm_name
-    try:
-        llm_client = registry.get_client(llm_name)
-    except Exception:
-        from app.llm.mock_adapter import MockAdapter
-        from app.llm.llm_base import LLMClient
-        llm_client = LLMClient(adapter=MockAdapter(), model="mock")
-    return AgentLoop(
-        session_svc=get_session_service(),
-        task_svc=get_task_service(),
+    llm_client = _get_llm_client()
+    tool_registry = get_tool_registry()
+    skill_registry = get_skill_registry()
+    session_svc = get_session_service()
+    task_svc = get_task_service()
+
+    reasoner = Reasoner(
         memory_svc=get_memory_service(),
         blackboard_svc=get_blackboard_service(),
-        task_executor=get_task_executor(),
+        tool_registry=tool_registry,
+        skill_registry=skill_registry,
+    )
+    planner = Planner(llm_client=llm_client)
+    actor = Actor(
+        llm_client=llm_client,
+        tool_gateway=get_tool_gateway(),
+        skill_registry=skill_registry,
+        task_svc=task_svc,
+        session_svc=session_svc,
+    )
+    observer = Observer(llm_client=llm_client)
+
+    return AgentLoop(
+        session_svc=session_svc,
+        task_svc=task_svc,
+        memory_svc=get_memory_service(),
+        blackboard_svc=get_blackboard_service(),
         agent_store=AgentStore(),
         llm_client=llm_client,
-        tool_registry=get_tool_registry(),
-        skill_registry=get_skill_registry(),
-        skill_router=get_skill_router(),
+        reasoner=reasoner,
+        planner=planner,
+        actor=actor,
+        observer=observer,
     )
 
 
@@ -134,6 +142,8 @@ def get_session_manager() -> SessionManager:
         template_svc=get_agent_template_service(),
         agent_store=AgentStore(),
         event_bus=get_event_bus(),
+        task_svc=get_task_service(),
+        memory_svc=get_memory_service(),
     )
     mgr.set_agent_loop(get_agent_loop())
     return mgr

@@ -2,17 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Optional
 from pydantic import BaseModel
-
-
-class CreateAgentTemplateRequest(BaseModel):
-    name: str
-    system_prompt: str
-    tool_list: list[str] = []
-    description: str = ""
-    summary_threshold: int = 20
-    short_window_size: int = 20
 
 
 class AgentTemplateResponse(BaseModel):
@@ -21,6 +11,9 @@ class AgentTemplateResponse(BaseModel):
     system_prompt: str
     tool_list: list[str]
     description: str
+    version: str
+    tool_list_ready: bool
+    inject_style: bool
     summary_threshold: int
     short_window_size: int
     has_spawn_permission: bool
