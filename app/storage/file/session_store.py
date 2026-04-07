@@ -23,3 +23,6 @@ class SessionStore:
 
     def list_ids(self) -> list[str]:
         return list_json_ids(get_settings().data_dir / "sessions")
+
+    def delete(self, session_id: str) -> None:
+        self._path(session_id).unlink(missing_ok=True)

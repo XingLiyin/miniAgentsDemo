@@ -15,16 +15,18 @@ _SESSION_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _TASK_TRANSITIONS: dict[str, set[str]] = {
-    "PENDING":  {"ACTIVE", "CANCELED"},
-    "ACTIVE":   {"FINISHED", "FAILED", "CANCELED"},
-    "FINISHED": set(),
-    "FAILED":   set(),
-    "CANCELED": set(),
+    "PENDING":   {"ACTIVE", "CANCELED"},
+    "ACTIVE":    {"FINISHED", "FAILED", "CANCELED", "SUSPENDED"},
+    "SUSPENDED": {"ACTIVE", "FAILED", "CANCELED"},
+    "FINISHED":  set(),
+    "FAILED":    set(),
+    "CANCELED":  set(),
 }
 
 _AGENT_TRANSITIONS: dict[str, set[str]] = {
     "IDLE":     {"RUNNING"},
-    "RUNNING":  {"FINISHED", "FAILED"},
+    "RUNNING":  {"WAITING", "FINISHED", "FAILED"},
+    "WAITING":  {"RUNNING", "FAILED"},
     "FINISHED": set(),
     "FAILED":   set(),
 }

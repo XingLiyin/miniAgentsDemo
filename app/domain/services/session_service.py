@@ -90,3 +90,6 @@ class SessionService:
 
     def list_ids(self) -> list[str]:
         return self._store.list_ids()
+
+    def delete(self, session_id: str) -> None:
+        self._store.delete(session_id)

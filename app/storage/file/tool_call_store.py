@@ -25,3 +25,6 @@ class ToolCallStore:
     def read_all(self, session_id: str) -> list[dict[str, Any]]:
         """读取 session 全部工具调用记录。"""
         return read_jsonl(self._path(session_id))
+
+    def delete(self, session_id: str) -> None:
+        self._path(session_id).unlink(missing_ok=True)

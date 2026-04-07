@@ -16,7 +16,8 @@
       "Bash(npm install:*)",
       "Bash(npm run:*)",
       "Bash(python -m pytest tests/test_phase_implementations.py -x -q)",
-      "Bash(python -m pytest tests/ -q)"
+      "Bash(python -m pytest tests/ -q)",
+      "Bash(python:*)"
     ]
   }
 }

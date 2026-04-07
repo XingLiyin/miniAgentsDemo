@@ -100,3 +100,9 @@ class TaskService:
             if data and data.get("session_id") == session_id:
                 tasks.append(Task.from_dict(data))
         return tasks
+
+    def list_pending(self, session_id: str) -> list[Task]:
+        """返回 session 下所有 PENDING task，按 created_at 升序排列。"""
+        tasks = [t for t in self.list_by_session(session_id) if t.status == "PENDING"]
+        tasks.sort(key=lambda t: t.created_at)
+        return tasks

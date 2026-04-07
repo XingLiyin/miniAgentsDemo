@@ -11,4 +11,5 @@ export const sessionsApi = {
     http.post<Session>(`/sessions/${id}/messages`, { content }),
   answerInput: (id: string, task_id: string, content: string) =>
     http.post<Session>(`/sessions/${id}/input`, { task_id, content }),
+  delete: (id: string) => http.delete<void>(`/sessions/${id}`),
 }

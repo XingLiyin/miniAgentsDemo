@@ -21,8 +21,12 @@ from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.storage.file.agent_store import AgentStore
+from app.storage.file.blackboard_store import BlackboardStore
+from app.storage.file.task_store import TaskStore
+from app.storage.file.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
+    from app.orchestrator.lifecycle_manager import LifecycleManager
     from app.runtime.agent_loop import AgentLoop
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,9 @@ class SessionManager:
         event_bus: EventBus,
         task_svc: TaskService | None = None,
         memory_svc: MemoryService | None = None,
+        task_store: TaskStore | None = None,
+        tool_call_store: ToolCallStore | None = None,
+        blackboard_store: BlackboardStore | None = None,
     ) -> None:
         self._session_svc = session_svc
         self._template_svc = template_svc
@@ -46,11 +53,19 @@ class SessionManager:
         self._bus = event_bus
         self._task_svc = task_svc
         self._memory_svc = memory_svc
+        self._task_store = task_store
+        self._tool_call_store = tool_call_store
+        self._blackboard_store = blackboard_store
         self._agent_loop: "AgentLoop | None" = None
+        self._lifecycle_manager: "LifecycleManager | None" = None
 
     def set_agent_loop(self, loop: "AgentLoop") -> None:
         """注入 AgentLoop（避免循环导入）。"""
         self._agent_loop = loop
+
+    def set_lifecycle_manager(self, lm: "LifecycleManager") -> None:
+        """注入 LifecycleManager（避免循环导入）。"""
+        self._lifecycle_manager = lm
 
     def create_session(
         self,
@@ -99,6 +114,8 @@ class SessionManager:
             soul_path=soul_path,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
             llm_name=settings.agent_default_llm_name,
+            has_spawn_permission=True,   # root agent 默认可以 spawn
+            spawn_depth=0,
             created_at=now,
             updated_at=now,
         )
@@ -109,17 +126,23 @@ class SessionManager:
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 
+        # 初始化 LifecycleManager session 状态
+        if self._lifecycle_manager is not None:
+            self._lifecycle_manager.init_session(session.id)
+
         return session, agent.id
 
     def schedule_loop(self, session_id: str, agent_id: str) -> None:
-        """从异步上下文调用：将 AgentLoop 作为 asyncio task 启动。"""
-        if self._agent_loop is not None:
+        """启动 agent loop。优先交由 LifecycleManager 调度，否则回退到旧的 asyncio 方式。"""
+        if self._lifecycle_manager is not None:
+            self._lifecycle_manager.register_root(session_id, agent_id)
+        elif self._agent_loop is not None:
             asyncio.create_task(self._run_loop_async(session_id, agent_id))
         else:
-            logger.warning("AgentLoop not set, session %s will not run automatically", session_id)
+            logger.warning("Neither LM nor AgentLoop set, session %s will not run", session_id)
 
     async def _run_loop_async(self, session_id: str, agent_id: str) -> None:
-        """在 asyncio task 中运行 AgentLoop。"""
+        """回退路径：在 asyncio task 中直接运行 AgentLoop（无 LM）。"""
         assert self._agent_loop is not None
         try:
             self._session_svc.transition(session_id, "RUNNING")
@@ -190,6 +213,8 @@ class SessionManager:
             soul_path=soul_path,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
             llm_name=settings.agent_default_llm_name,
+            has_spawn_permission=True,
+            spawn_depth=0,
             created_at=now,
             updated_at=now,
         )
@@ -200,6 +225,9 @@ class SessionManager:
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session_id, agent.id)
         self._session_svc.transition(session_id, "QUEUED")
+        # 重新初始化 LM 状态（旧 session 的状态已过期）
+        if self._lifecycle_manager is not None:
+            self._lifecycle_manager.init_session(session_id)
         self.schedule_loop(session_id, agent.id)
 
         return self._session_svc.get(session_id)
@@ -216,10 +244,13 @@ class SessionManager:
         if self._task_svc is None or self._memory_svc is None:
             raise AppError("INTERNAL_ERROR", "SessionManager missing task_svc or memory_svc")
 
+        # Read task before finishing (need inputs.type)
+        task = self._task_svc.get(task_id)
+
         # Write user answer into the task and mark it finished
         self._task_svc.finish(task_id, result=content)
 
-        # Append to memory so the loop sees it in next _observe()
+        # Append to memory so the loop sees it
         self._memory_svc.append_message(
             session_id=session_id,
             agent_id=session.root_agent_id or "user",
@@ -227,7 +258,12 @@ class SessionManager:
             content=content,
         )
 
-        # Transition session → QUEUED and restart the loop
+        # inline HITL（request_human_input / task_completion_confirm）：
+        # actor 线程正在阻塞轮询，它会自己把 session 转回 RUNNING，此处不重启 loop
+        if task.inputs.get("inline"):
+            return self._session_svc.get(session_id)
+
+        # 普通 HITL：重启 loop
         self._session_svc.transition(session_id, "QUEUED")
         if session.root_agent_id:
             self.schedule_loop(session_id, session.root_agent_id)
@@ -237,6 +273,35 @@ class SessionManager:
     def cancel_session(self, session_id: str) -> Session:
         """取消 Session。"""
         return self._session_svc.transition(session_id, "CANCELED")
+
+    def delete_session(self, session_id: str) -> None:
+        """级联删除 Session 及其所有关联数据。运行中的会话直接强制删除。"""
+        session = self._session_svc.get(session_id)
+
+        # 删除该 session 下的所有 Task 文件
+        if self._task_svc is not None and self._task_store is not None:
+            tasks = self._task_svc.list_by_session(session_id)
+            for task in tasks:
+                self._task_store.delete(task.id)
+
+        # 删除工具调用日志（单个 JSONL 文件）
+        if self._tool_call_store is not None:
+            self._tool_call_store.delete(session_id)
+
+        # 删除 memory 目录
+        if self._memory_svc is not None:
+            self._memory_svc.delete_session(session_id)
+
+        # 删除 blackboard 目录
+        if self._blackboard_store is not None:
+            self._blackboard_store.delete_session(session_id)
+
+        # 删除 agent 文件
+        if session.root_agent_id:
+            self._agent_store.delete(session.root_agent_id)
+
+        # 最后删除 session 文件
+        self._session_svc.delete(session_id)
 
     def check_token_budget(self, session: Session) -> None:
         """Guard 硬检查：超出 token_budget 立即抛出 AppError。"""

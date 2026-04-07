@@ -23,3 +23,6 @@ class TaskStore:
 
     def list_ids(self) -> list[str]:
         return list_json_ids(get_settings().data_dir / "tasks")
+
+    def delete(self, task_id: str) -> None:
+        self._path(task_id).unlink(missing_ok=True)

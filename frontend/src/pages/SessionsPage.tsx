@@ -99,15 +99,136 @@ function ChatInput({ sessionId }: { sessionId: string }) {
   )
 }
 
+function TaskCompletionConfirm({
+  session,
+  activeTask,
+}: {
+  session: Session
+  activeTask: Task
+}) {
+  const [rejected, setRejected] = useState(false)
+  const [feedback, setFeedback] = useState('')
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const queryClient = useQueryClient()
+
+  const inputs = activeTask.inputs as Record<string, string>
+  const taskTitle = inputs.task_title || activeTask.description || activeTask.title
+  const taskOutput = inputs.task_output || ''
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ['session', session.id] })
+    queryClient.invalidateQueries({ queryKey: ['session-tasks', session.id] })
+    queryClient.invalidateQueries({ queryKey: ['session-messages', session.id] })
+  }
+
+  const mutation = useMutation({
+    mutationFn: (content: string) => sessionsApi.answerInput(session.id, activeTask.id, content),
+    onSuccess: invalidate,
+  })
+
+  const confirm = () => {
+    if (mutation.isPending) return
+    mutation.mutate('用户已确认任务完成。')
+  }
+
+  const submitRejection = () => {
+    if (mutation.isPending) return
+    const msg = feedback.trim()
+      ? `用户表示任务未完成，请重试。用户补充说明：${feedback.trim()}`
+      : '用户表示任务未完成，请重试。'
+    mutation.mutate(msg)
+  }
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px'
+  }, [feedback])
+
+  return (
+    <div className="border-t border-amber-200 bg-amber-50 p-3">
+      <div className="flex items-start gap-2 mb-2">
+        <MessageCircleQuestion size={15} className="text-amber-600 mt-0.5 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <p className="text-sm text-amber-800 font-medium">
+            Agent 未明确标记完成状态，请确认任务是否已完成
+          </p>
+          <p className="text-xs text-amber-700 mt-0.5 truncate">任务：{taskTitle}</p>
+        </div>
+      </div>
+
+      {taskOutput && (
+        <div className="mb-3 bg-white border border-amber-100 rounded-md px-3 py-2 max-h-28 overflow-y-auto">
+          <pre className="text-xs text-gray-600 whitespace-pre-wrap break-words">{taskOutput}</pre>
+        </div>
+      )}
+
+      {mutation.isError && (
+        <p className="text-xs text-red-500 mb-2">提交失败，请重试</p>
+      )}
+
+      {!rejected ? (
+        <div className="flex gap-2">
+          <button
+            onClick={confirm}
+            disabled={mutation.isPending}
+            className="flex-1 rounded-lg bg-green-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50 transition-colors"
+          >
+            {mutation.isPending ? <Spinner size="sm" /> : '已完成'}
+          </button>
+          <button
+            onClick={() => setRejected(true)}
+            disabled={mutation.isPending}
+            className="flex-1 rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
+          >
+            未完成，需重试
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <textarea
+            ref={textareaRef}
+            value={feedback}
+            onChange={(e) => setFeedback(e.target.value)}
+            placeholder="（可选）补充说明，帮助 Agent 重试… (Enter 提交，Shift+Enter 换行)"
+            rows={1}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                submitRejection()
+              }
+            }}
+            className="resize-none rounded-lg border border-red-200 bg-white px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-1 focus:ring-red-300 leading-5"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => setRejected(false)}
+              disabled={mutation.isPending}
+              className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700 disabled:opacity-50"
+            >
+              返回
+            </button>
+            <button
+              onClick={submitRejection}
+              disabled={mutation.isPending}
+              className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+            >
+              {mutation.isPending ? <Spinner size="sm" /> : <><Send size={12} />提交，让 Agent 重试</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function UserInputPrompt({ session, tasks }: { session: Session; tasks: Task[] }) {
   const [text, setText] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const queryClient = useQueryClient()
 
   const activeTask = tasks.find((t) => t.type === 'user_input' && t.status === 'ACTIVE')
-  const prompt = activeTask
-    ? (activeTask.inputs as Record<string, string>).prompt || activeTask.description || activeTask.title
-    : '请输入您的回复'
 
   const mutation = useMutation({
     mutationFn: (content: string) =>
@@ -119,6 +240,22 @@ function UserInputPrompt({ session, tasks }: { session: Session; tasks: Task[] }
       setText('')
     },
   })
+
+  useEffect(() => {
+    const el = textareaRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+  }, [text])
+
+  // 任务完成确认弹框（所有 hooks 已在上方声明，此处可安全 early return）
+  if (activeTask && (activeTask.inputs as Record<string, string>).type === 'task_completion_confirm') {
+    return <TaskCompletionConfirm session={session} activeTask={activeTask} />
+  }
+
+  const prompt = activeTask
+    ? (activeTask.inputs as Record<string, string>).prompt || activeTask.description || activeTask.title
+    : '请输入您的回复'
 
   const submit = () => {
     const trimmed = text.trim()
@@ -132,13 +269,6 @@ function UserInputPrompt({ session, tasks }: { session: Session; tasks: Task[] }
       submit()
     }
   }
-
-  useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
-  }, [text])
 
   return (
     <div className="border-t border-amber-200 bg-amber-50 p-3">
@@ -332,6 +462,7 @@ export function SessionsPage() {
                 session={s}
                 selected={selectedId === s.id}
                 onClick={() => setSelectedId(s.id)}
+                onDeleted={() => { if (selectedId === s.id) setSelectedId(null) }}
               />
             ))
           )}

@@ -17,7 +17,7 @@ from app.runtime.actor import Actor
 from app.runtime.observer import Observer
 from app.runtime.planner import Planner
 from app.runtime.reasoner import Reasoner
-from app.runtime.types import ActorResult, PlannedTask, ReasoningContext, TaskPlan
+from app.runtime.types import ActorResult, ReasoningContext, TaskPlan
 from app.storage.file.agent_store import AgentStore
 
 if TYPE_CHECKING:
@@ -146,10 +146,6 @@ class AgentLoop:
         results: list[ActorResult] = []
 
         for planned in plan.tasks:
-            if planned.type == "user_input":
-                self._pause_for_user_input(planned, session_id, agent.id)
-                return results, True
-
             # 创建 DB task，skill_name 存入 inputs
             inputs = {"skill_name": planned.skill_name} if planned.skill_name else {}
             db_task = self._task_svc.create(
@@ -175,27 +171,10 @@ class AgentLoop:
                     db_task.id,
                     result.error,
                 )
-                # 继续执行剩余 tasks，由 Observer 统一评判
+                # LLM 明确标记失败（mark_task_complete(success=False)），结束本轮循环
+                break
 
         return results, False
-
-    def _pause_for_user_input(
-        self,
-        planned: PlannedTask,
-        session_id: str,
-        agent_id: str,
-    ) -> None:
-        """Planner 直接输出 user_input 任务时创建并激活对应 task。"""
-        task = self._task_svc.create(
-            session_id=session_id,
-            agent_id=agent_id,
-            task_type="user_input",
-            title=planned.title or "等待用户输入",
-            description=planned.description,
-            inputs={"prompt": planned.prompt},
-        )
-        self._task_svc.transition(task.id, "ACTIVE")
-        self._session_svc.transition(session_id, "WAITING_INPUT")
 
     # ── Shared helpers ────────────────────────────────────────────────────────
 

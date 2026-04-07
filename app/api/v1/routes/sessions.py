@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from pydantic import BaseModel
 
@@ -59,6 +59,18 @@ def get_session(session_id: str) -> SessionResponse:
         svc = get_session_service()
         session = svc.get(session_id)
         return SessionResponse(**session.to_dict())
+    except AppError as e:
+        status = 404 if e.code == "SESSION_NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
+
+
+@router.delete("/{session_id}", status_code=204)
+def delete_session(session_id: str) -> Response:
+    """删除会话及其所有关联数据（任务、记忆、工具调用、Agent 等）。"""
+    try:
+        mgr = get_session_manager()
+        mgr.delete_session(session_id)
+        return Response(status_code=204)
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})

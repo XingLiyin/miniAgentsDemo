@@ -158,6 +158,54 @@ def search_tools(
     return ToolResult(content=output)
 
 
+# ── spawn_agents ──────────────────────────────────────────────────────────
+# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
+# 仅当 agent.has_spawn_permission=True 且 LifecycleManager 已注入时可用。
+
+@tool_result
+def spawn_agents(
+    plan: Annotated[
+        list,
+        (
+            "List of sub-tasks to spawn. Each item must have: "
+            "title (str), description (str), deps (list[str] — titles of tasks this one depends on)."
+        ),
+    ],
+    resume_hint: Annotated[
+        str,
+        "Brief note about what you will do with the sub-task results after they complete.",
+    ] = "",
+) -> ToolResult:
+    """Spawn sub-agents to execute tasks in parallel (with optional DAG dependencies).
+    Blocks until all spawned tasks complete, then returns consolidated results.
+    Use this when a task can be decomposed into independent or sequentially-dependent sub-tasks.
+
+    Example plan:
+      [
+        {"title": "Fetch data",  "description": "...", "deps": []},
+        {"title": "Analyze",     "description": "...", "deps": ["Fetch data"]}
+      ]
+    """
+    import json
+    return ToolResult(content=json.dumps({"plan": plan, "resume_hint": resume_hint}))
+
+
+# ── mark_task_complete ────────────────────────────────────────────────────
+# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
+
+@tool_result
+def mark_task_complete(
+    summary: Annotated[str, "Brief summary of what was accomplished"],
+    success: Annotated[bool, "True if the task succeeded, False if it failed"] = True,
+) -> ToolResult:
+    """Mark the current task as complete. You MUST call this tool once you have finished
+    the task — whether it succeeded or failed. Do not return a plain text response without
+    calling this tool first."""
+    import json
+    output = json.dumps({"summary": summary, "success": success}, ensure_ascii=False)
+    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
+
+
 # ── request_human_input ───────────────────────────────────────────────────
 # 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
 
@@ -168,7 +216,9 @@ def request_human_input(
 ) -> ToolResult:
     """Pause execution and request input from the human user.
     Use when you need information or a decision that only the user can provide."""
-    return ToolResult(content="")   # 触发信号，Actor 特殊处理，函数体不执行
+    import json
+    output = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
+    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
 
 
 # ── Provider 入口 ─────────────────────────────────────────────────────────

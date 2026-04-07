@@ -46,6 +46,13 @@ class Settings(BaseModel):
     default_summary_threshold: int = 20   # 消息条数触发摘要
     default_short_window_size: int = 20   # 上下文消息窗口
 
+    # Lifecycle Manager 并发限制
+    max_concurrent_agents: int = 5       # 单 session 最大并发 agent 数
+    max_concurrent_tasks: int = 10       # 单 session 最大并发 task 数
+    max_spawn_depth: int = 1             # V1 仅支持单层 spawn
+    max_retries: int = 1                 # sub-task 最大重试次数
+    spawn_timeout_sec: float = 3600.0   # spawn_agents 等待超时（秒）
+
     # Tool 约束
     bash_exec_timeout_ms: int = 30_000
     bash_exec_output_limit_bytes: int = 65_536

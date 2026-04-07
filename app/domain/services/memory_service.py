@@ -65,6 +65,9 @@ class MemoryService:
     def save_summary(self, session_id: str, summary: MemorySummary) -> None:
         self._store.save_summary(session_id, summary.to_dict())
 
+    def delete_session(self, session_id: str) -> None:
+        self._store.delete_session(session_id)
+
     def should_summarize(self, session_id: str, threshold: int | None = None) -> bool:
         """判断是否达到摘要阈值。"""
         if threshold is None:

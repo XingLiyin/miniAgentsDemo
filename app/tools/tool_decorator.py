@@ -86,7 +86,18 @@ def tool_result(fn: FunctionTool | Callable) -> ToolDefinition:
 
 def _from_callable(fn: Callable) -> ToolDefinition:
     """从普通函数构建 ToolDefinition：AF @tool 提取 schema，直接调函数执行。"""
+    import sys
     ft = _af_tool(fn)
+
+    # Pydantic V2 forward-reference fix: rebuild the input model with the
+    # function's own module globals so that types like PlannedTask (imported
+    # in the caller module but invisible to agent_framework) are resolvable.
+    if hasattr(ft, "input_model") and ft.input_model is not None:
+        module = sys.modules.get(fn.__module__)
+        if module is not None:
+            ft.input_model.model_rebuild(
+                _types_namespace=vars(module), raise_errors=False
+            )
 
     def handler(arguments: dict) -> ToolResult:
         try:

@@ -11,19 +11,26 @@ class Task:
     """任务领域对象。
 
     状态流转：PENDING → ACTIVE → FINISHED / FAILED / CANCELED
+                       ↕
+                    SUSPENDED  （agent 调用 spawn_agents 后挂起）
     """
     id: str
     session_id: str
     agent_id: str
     type: str                          # atomic | user_input
     title: str
-    status: str                        # PENDING | ACTIVE | FINISHED | FAILED | CANCELED
+    status: str                        # PENDING | ACTIVE | SUSPENDED | FINISHED | FAILED | CANCELED
 
     description: str = ""
     inputs: dict[str, Any] = field(default_factory=dict)
     result: str | None = None          # reasoning 结果文本
     outputs: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+
+    # DAG & spawn 字段（仅 sub-task 填充）
+    dag_deps: list[str] = field(default_factory=list)   # 依赖的 task_id 列表
+    parent_task_id: str | None = None                   # 所属 SUSPENDED 祖先 task
+    retry_count: int = 0
 
     created_at: str = ""
     updated_at: str = ""
@@ -41,6 +48,9 @@ class Task:
             "result": self.result,
             "outputs": self.outputs,
             "error": self.error,
+            "dag_deps": self.dag_deps,
+            "parent_task_id": self.parent_task_id,
+            "retry_count": self.retry_count,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -59,6 +69,9 @@ class Task:
             result=d.get("result"),
             outputs=d.get("outputs", {}),
             error=d.get("error"),
+            dag_deps=d.get("dag_deps", []),
+            parent_task_id=d.get("parent_task_id"),
+            retry_count=d.get("retry_count", 0),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

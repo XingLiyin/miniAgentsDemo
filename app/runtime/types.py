@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from pydantic import BaseModel
+
 
 @dataclass
 class SkillMeta:
@@ -28,14 +30,11 @@ class ReasoningContext:
     token_estimate: int = 0
 
 
-@dataclass
-class PlannedTask:
+class PlannedTask(BaseModel):
     """Planner 输出的单个任务。"""
-    type: Literal["atomic", "user_input"]
     title: str
     description: str
     skill_name: str | None = None       # Planner 指定，None 表示不用 skill
-    prompt: str = ""                    # user_input 专用：展示给用户的问题
 
 
 @dataclass

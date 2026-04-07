@@ -28,19 +28,17 @@ _FALLBACK_SYSTEM_PROMPT = (
 @tool_result
 def submit_plan(
     tasks: Annotated[
-        list,
+        list[PlannedTask],
         (
-            "Ordered list of tasks. Each task is an object with fields: "
-            "{ type: 'atomic' | 'user_input', title: str, description: str, "
-            "  skill_name: str | null, prompt: str }. "
-            "— 'description' describes WHAT to achieve, not HOW (no tool names or arguments). "
-            "— 'skill_name' must be one of the available skills, or null. "
-            "— 'prompt' required only for user_input tasks (shown to the user). "
-            "Empty list means nothing to do this turn."
+            "Ordered list of tasks for this turn. Empty list means the goal is already complete. "
+            "Each task: "
+            "  title: short imperative title; "
+            "  description: WHAT to achieve — not HOW, no tool names or arguments; "
+            "  skill_name: one of the available skills, or null."
         ),
     ],
 ) -> ToolResult:
-    """Submit a decomposed task list. Do NOT specify tool names or arguments."""
+    """Submit the decomposed task plan. Call exactly once per turn."""
     return ToolResult(content="")
 
 
@@ -77,14 +75,9 @@ class Planner:
     # ── 私有辅助 ──────────────────────────────────────────────────────────────
 
     def _build_system_prompt(self, ctx: ReasoningContext, agent: Agent) -> str:
-        base = agent.system_prompt or self._system_prompt
-        parts = [base]
-
-        if ctx.relevant_tools:
-            lines = ["## Available Tools (for awareness only — Actor decides how to use them)"]
-            for tool in ctx.relevant_tools:
-                lines.append(f"- {tool.name}: {tool.description or ''}")
-            parts.append("\n".join(lines))
+        agent_base = agent.system_prompt 
+        planner_soul = self._system_prompt  
+        parts = [agent_base, planner_soul]
 
         if ctx.relevant_skills:
             lines = ["## Available Skills (assign to tasks where appropriate)"]
@@ -94,8 +87,8 @@ class Planner:
 
         parts.append(
             "Your job: decompose the goal into an ordered task list.\n"
-            "- 'description' describes WHAT to achieve, not HOW.\n"
-            "- 'skill_name' should be set if a skill fits the task; otherwise null.\n"
+            "- 'description' describes WHAT to achieve, not HOW. 'description' must clearly and explicitly describe the intended objective of the task, and must not be null.\n"
+            "- 'skill_name' should be set if a skill fits the task; otherwise null. 'skill_name' must be strictly selected from the provided Available Skills list; do not invent or use any names outside of that list.\n"
             "- Do NOT specify tool names, arguments, or message content."
         )
         return "\n\n---\n\n".join(parts)
@@ -120,14 +113,11 @@ class Planner:
     def _parse_task_plan(self, raw: dict) -> TaskPlan:
         tasks: list[PlannedTask] = []
         for spec in raw.get("tasks", []):
-            task_type = spec.get("type", "atomic")
-            if task_type not in ("atomic", "user_input"):
-                task_type = "atomic"
             tasks.append(PlannedTask(
-                type=task_type,
                 title=spec.get("title", ""),
                 description=spec.get("description", ""),
                 skill_name=spec.get("skill_name") or None,
-                prompt=spec.get("prompt", ""),
             ))
         return TaskPlan(tasks=tasks)
+
+

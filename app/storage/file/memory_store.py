@@ -45,3 +45,9 @@ class MemoryStore:
 
     def count_messages(self, session_id: str) -> int:
         return len(self.read_messages(session_id))
+
+    def delete_session(self, session_id: str) -> None:
+        import shutil
+        d = get_settings().data_dir / "memory" / session_id
+        if d.exists():
+            shutil.rmtree(d)

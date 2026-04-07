@@ -23,3 +23,6 @@ class AgentStore:
 
     def list_ids(self) -> list[str]:
         return list_json_ids(get_settings().data_dir / "agents")
+
+    def delete(self, agent_id: str) -> None:
+        self._path(agent_id).unlink(missing_ok=True)

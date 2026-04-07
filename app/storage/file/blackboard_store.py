@@ -39,3 +39,9 @@ class BlackboardStore:
         if not d.exists():
             return []
         return [p.stem for p in d.glob("*.jsonl")]
+
+    def delete_session(self, session_id: str) -> None:
+        import shutil
+        d = get_settings().data_dir / "blackboard" / session_id
+        if d.exists():
+            shutil.rmtree(d)
