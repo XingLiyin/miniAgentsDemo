@@ -9,7 +9,8 @@ from pydantic import BaseModel
 class TaskResponse(BaseModel):
     id: str
     session_id: str
-    agent_id: str
+    creator_agent_id: str
+    assigned_agent_id: str
     type: str
     title: str
     status: str

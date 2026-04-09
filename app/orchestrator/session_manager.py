@@ -6,7 +6,6 @@ Guard 检查也在此处（token_budget）。
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING
 
@@ -27,9 +26,20 @@ from app.storage.file.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
     from app.orchestrator.lifecycle_manager import LifecycleManager
-    from app.runtime.agent_loop import AgentLoop
 
 logger = logging.getLogger(__name__)
+
+
+def _apply_template_to_agent(tpl: "AgentTemplate", agent: Agent) -> None:  # type: ignore[name-defined]
+    """从 AgentTemplate 独立填充 soul_md / role_md / system_prompt，互不污染。
+
+    - soul_md → 驱动 Actor 阶段 system prompt（执行人格）
+    - role_md → 驱动 Observer 阶段 system prompt（评判准则）
+    - system_prompt → legacy fallback（soul_md 为空时由 Actor 使用）
+    """
+    agent.system_prompt = tpl.system_prompt
+    agent.soul_md = getattr(tpl, "soul_md", "")
+    agent.role_md = getattr(tpl, "role_md", "")
 
 
 class SessionManager:
@@ -56,12 +66,7 @@ class SessionManager:
         self._task_store = task_store
         self._tool_call_store = tool_call_store
         self._blackboard_store = blackboard_store
-        self._agent_loop: "AgentLoop | None" = None
         self._lifecycle_manager: "LifecycleManager | None" = None
-
-    def set_agent_loop(self, loop: "AgentLoop") -> None:
-        """注入 AgentLoop（避免循环导入）。"""
-        self._agent_loop = loop
 
     def set_lifecycle_manager(self, lm: "LifecycleManager") -> None:
         """注入 LifecycleManager（避免循环导入）。"""
@@ -91,15 +96,23 @@ class SessionManager:
         tool_list: list[str] = []
         skill_list: list[str] = []
         soul_path: str | None = None
+        tpl = None
         if template_id:
             try:
                 tpl = self._template_svc.get(template_id)
-                tool_list = tpl.tool_list
-                skill_list = tpl.skill_list
-                soul_path = tpl.source_dir or None
             except AppError:
-                logger.warning("Template %s not found, using defaults", template_id)
-                tpl = None
+                logger.warning("Template %s not found, falling back to default", template_id)
+        if tpl is None:
+            tpl = self._template_svc.get_by_name(settings.default_agent_template_name)
+            if tpl is None:
+                logger.warning(
+                    "Default template '%s' not found, using settings fallback",
+                    settings.default_agent_template_name,
+                )
+        if tpl is not None:
+            tool_list = tpl.tool_list
+            skill_list = tpl.skill_list
+            soul_path = tpl.source_dir or None
 
         now = now_iso()
         agent = Agent(
@@ -119,10 +132,8 @@ class SessionManager:
             created_at=now,
             updated_at=now,
         )
-        # 用四个 md 字段拼装 system_prompt（有模板时覆盖默认值）
-        if template_id and tpl is not None:
-            from app.runtime.agent_loop import _build_system_prompt
-            agent.system_prompt = _build_system_prompt(tpl, agent)
+        if tpl is not None:
+            _apply_template_to_agent(tpl, agent)
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 
@@ -130,37 +141,30 @@ class SessionManager:
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session.id)
 
+        # 创建初始 plan task（use_subagent=True：由 plan sub-agent 执行规划）
+        if self._task_svc is not None:
+            self._task_svc.create_plan_task(
+                session_id=session.id,
+                creator_agent_id=agent.id,
+                title=f"Plan: {goal[:80]}",
+                description=goal,
+            )
+
         return session, agent.id
 
     def schedule_loop(self, session_id: str, agent_id: str) -> None:
-        """启动 agent loop。优先交由 LifecycleManager 调度，否则回退到旧的 asyncio 方式。"""
-        if self._lifecycle_manager is not None:
-            self._lifecycle_manager.register_root(session_id, agent_id)
-        elif self._agent_loop is not None:
-            asyncio.create_task(self._run_loop_async(session_id, agent_id))
-        else:
-            logger.warning("Neither LM nor AgentLoop set, session %s will not run", session_id)
-
-    async def _run_loop_async(self, session_id: str, agent_id: str) -> None:
-        """回退路径：在 asyncio task 中直接运行 AgentLoop（无 LM）。"""
-        assert self._agent_loop is not None
-        try:
-            self._session_svc.transition(session_id, "RUNNING")
-            await asyncio.get_event_loop().run_in_executor(
-                None, self._agent_loop.run, session_id, agent_id
-            )
-        except AppError as e:
-            logger.error("Session %s failed: %s %s", session_id, e.code, e.message)
-            try:
-                self._session_svc.transition(session_id, "FAILED")
-            except Exception:
-                pass
-        except Exception:
-            logger.exception("Session %s unexpected error", session_id)
-            try:
-                self._session_svc.transition(session_id, "FAILED")
-            except Exception:
-                pass
+        """找到 session 的第一个 PENDING task，交由 LifecycleManager 启动。"""
+        if self._lifecycle_manager is None:
+            logger.warning("LifecycleManager not set, session %s will not run", session_id)
+            return
+        if self._task_svc is None:
+            logger.error("task_svc not set, cannot schedule session %s", session_id)
+            return
+        tasks = self._task_svc.list_pending(session_id)
+        if not tasks:
+            logger.error("No pending task found for session %s", session_id)
+            return
+        self._lifecycle_manager.schedule_initial_task(session_id, agent_id, tasks[0].id)
 
     def continue_session(self, session_id: str, user_message: str) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
@@ -172,13 +176,13 @@ class SessionManager:
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
 
-        # Append the user message so the agent picks it up on the next observe()
+        # Append the user message to root agent's memory
         mem_svc = MemoryService(store=MemoryStore())
         mem_svc.append_message(
-            session_id=session_id,
             agent_id=session.root_agent_id or "user",
             role="user",
             content=user_message,
+            session_id=session_id,
         )
 
         # Loop still active — message will be picked up automatically
@@ -194,11 +198,19 @@ class SessionManager:
         if session.template_id:
             try:
                 tpl = self._template_svc.get(session.template_id)
-                tool_list = tpl.tool_list
-                skill_list = tpl.skill_list
-                soul_path = tpl.source_dir or None
             except AppError:
-                pass
+                logger.warning("Template %s not found, falling back to default", session.template_id)
+        if tpl is None:
+            tpl = self._template_svc.get_by_name(settings.default_agent_template_name)
+            if tpl is None:
+                logger.warning(
+                    "Default template '%s' not found, using settings fallback",
+                    settings.default_agent_template_name,
+                )
+        if tpl is not None:
+            tool_list = tpl.tool_list
+            skill_list = tpl.skill_list
+            soul_path = tpl.source_dir or None
 
         now = now_iso()
         agent = Agent(
@@ -218,9 +230,8 @@ class SessionManager:
             created_at=now,
             updated_at=now,
         )
-        if session.template_id and tpl is not None:
-            from app.runtime.agent_loop import _build_system_prompt
-            agent.system_prompt = _build_system_prompt(tpl, agent)
+        if tpl is not None:
+            _apply_template_to_agent(tpl, agent)
 
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session_id, agent.id)
@@ -228,6 +239,14 @@ class SessionManager:
         # 重新初始化 LM 状态（旧 session 的状态已过期）
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session_id)
+        # 创建新 plan task（use_subagent=True：由 plan sub-agent 执行规划）
+        if self._task_svc is not None:
+            self._task_svc.create_plan_task(
+                session_id=session_id,
+                creator_agent_id=agent.id,
+                title=f"Plan: {user_message[:80]}",
+                description=user_message,
+            )
         self.schedule_loop(session_id, agent.id)
 
         return self._session_svc.get(session_id)
@@ -244,18 +263,18 @@ class SessionManager:
         if self._task_svc is None or self._memory_svc is None:
             raise AppError("INTERNAL_ERROR", "SessionManager missing task_svc or memory_svc")
 
-        # Read task before finishing (need inputs.type)
+        # Read task before finishing (need inputs.type and agent_id)
         task = self._task_svc.get(task_id)
 
         # Write user answer into the task and mark it finished
         self._task_svc.finish(task_id, result=content)
 
-        # Append to memory so the loop sees it
+        # Append to the memory of the agent that triggered this HITL
         self._memory_svc.append_message(
-            session_id=session_id,
-            agent_id=session.root_agent_id or "user",
+            agent_id=task.assigned_agent_id,
             role="user",
             content=content,
+            session_id=session_id,
         )
 
         # inline HITL（request_human_input / task_completion_confirm）：
@@ -288,9 +307,13 @@ class SessionManager:
         if self._tool_call_store is not None:
             self._tool_call_store.delete(session_id)
 
-        # 删除 memory 目录
+        # 删除该 session 下所有 agent 的记忆（memory 以 agent_id 为 key）
         if self._memory_svc is not None:
-            self._memory_svc.delete_session(session_id)
+            for aid in self._agent_store.list_by_session(session_id):
+                self._memory_svc.delete_agent(aid)
+            # root agent 可能已在上方遍历到，but delete_agent 是幂等的
+            if session.root_agent_id:
+                self._memory_svc.delete_agent(session.root_agent_id)
 
         # 删除 blackboard 目录
         if self._blackboard_store is not None:

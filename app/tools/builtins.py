@@ -158,38 +158,6 @@ def search_tools(
     return ToolResult(content=output)
 
 
-# ── spawn_agents ──────────────────────────────────────────────────────────
-# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
-# 仅当 agent.has_spawn_permission=True 且 LifecycleManager 已注入时可用。
-
-@tool_result
-def spawn_agents(
-    plan: Annotated[
-        list,
-        (
-            "List of sub-tasks to spawn. Each item must have: "
-            "title (str), description (str), deps (list[str] — titles of tasks this one depends on)."
-        ),
-    ],
-    resume_hint: Annotated[
-        str,
-        "Brief note about what you will do with the sub-task results after they complete.",
-    ] = "",
-) -> ToolResult:
-    """Spawn sub-agents to execute tasks in parallel (with optional DAG dependencies).
-    Blocks until all spawned tasks complete, then returns consolidated results.
-    Use this when a task can be decomposed into independent or sequentially-dependent sub-tasks.
-
-    Example plan:
-      [
-        {"title": "Fetch data",  "description": "...", "deps": []},
-        {"title": "Analyze",     "description": "...", "deps": ["Fetch data"]}
-      ]
-    """
-    import json
-    return ToolResult(content=json.dumps({"plan": plan, "resume_hint": resume_hint}))
-
-
 # ── mark_task_complete ────────────────────────────────────────────────────
 # 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
 

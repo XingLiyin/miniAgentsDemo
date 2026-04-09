@@ -24,20 +24,20 @@ class PromptContext:
 
 
 class MemoryService:
-    """消息追加、上下文拼装、触发摘要。"""
+    """消息追加、上下文拼装、触发摘要（以 agent_id 为存储 key）。"""
 
     def __init__(self, store: MemoryStore) -> None:
         self._store = store
 
     def append_message(
         self,
-        session_id: str,
         agent_id: str,
         role: str,
         content: str,
+        session_id: str = "",
         task_id: str | None = None,
     ) -> MemoryItem:
-        """追加一条消息到 messages.jsonl。"""
+        """追加一条消息到该 agent 的 messages.jsonl。"""
         item = MemoryItem(
             id=new_memory_id(),
             session_id=session_id,
@@ -47,39 +47,43 @@ class MemoryService:
             task_id=task_id,
             created_at=now_iso(),
         )
-        self._store.append_message(session_id, item.to_dict())
+        self._store.append_message(agent_id, item.to_dict())
         return item
 
-    def get_window(self, session_id: str, n: int | None = None) -> list[dict[str, Any]]:
-        """读取最近 n 条消息（默认使用配置值）。"""
+    def get_all_messages(self, agent_id: str) -> list[dict[str, Any]]:
+        """读取该 agent 的全量消息记录。"""
+        return self._store.read_messages(agent_id)
+
+    def get_window(self, agent_id: str, n: int | None = None) -> list[dict[str, Any]]:
+        """读取该 agent 最近 n 条消息（默认使用配置值）。"""
         if n is None:
             n = get_settings().default_short_window_size
-        return self._store.read_window(session_id, n)
+        return self._store.read_window(agent_id, n)
 
-    def get_summary(self, session_id: str) -> MemorySummary | None:
-        data = self._store.get_summary(session_id)
+    def get_summary(self, agent_id: str) -> MemorySummary | None:
+        data = self._store.get_summary(agent_id)
         if data is None:
             return None
         return MemorySummary.from_dict(data)
 
-    def save_summary(self, session_id: str, summary: MemorySummary) -> None:
-        self._store.save_summary(session_id, summary.to_dict())
+    def save_summary(self, agent_id: str, summary: MemorySummary) -> None:
+        self._store.save_summary(agent_id, summary.to_dict())
 
-    def delete_session(self, session_id: str) -> None:
-        self._store.delete_session(session_id)
-
-    def should_summarize(self, session_id: str, threshold: int | None = None) -> bool:
-        """判断是否达到摘要阈值。"""
+    def should_summarize(self, agent_id: str, threshold: int | None = None) -> bool:
+        """判断该 agent 是否达到摘要阈值。"""
         if threshold is None:
             threshold = get_settings().default_summary_threshold
-        count = self._store.count_messages(session_id)
-        summary = self.get_summary(session_id)
+        count = self._store.count_messages(agent_id)
+        summary = self.get_summary(agent_id)
         covered = summary.covered_up_to if summary else 0
         return (count - covered) >= threshold
 
+    def delete_agent(self, agent_id: str) -> None:
+        """删除该 agent 的全部记忆文件。"""
+        self._store.delete_agent(agent_id)
+
     def build_prompt_context(
         self,
-        session_id: str,
         agent_id: str,
         system_prompt: str,
         goal: str,
@@ -89,8 +93,8 @@ class MemoryService:
     ) -> PromptContext:
         """拼装完整 Prompt 上下文，按优先级截断。"""
         settings = get_settings()
-        messages = self.get_window(session_id, settings.default_short_window_size)
-        summary = self.get_summary(session_id)
+        messages = self.get_window(agent_id, settings.default_short_window_size)
+        summary = self.get_summary(agent_id)
         summary_text = summary.summary_text if summary else ""
 
         ctx = PromptContext(

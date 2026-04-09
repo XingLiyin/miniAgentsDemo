@@ -136,6 +136,10 @@ class AgentTemplateService:
         )
         return tpl
 
+    def get_by_name(self, name: str) -> "AgentTemplate | None":
+        """按 name 查找模板，未找到返回 None（不抛异常）。"""
+        return self._find_by_name(name)
+
     # ── 内部工具 ──────────────────────────────────────────────────────────
 
     def _find_by_name(self, name: str) -> AgentTemplate | None:

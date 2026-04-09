@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.config.settings import get_settings
 from app.common.errors import AppError
 from app.common.utils import new_task_id, now_iso
 from app.domain.events.event_bus import EventBus
@@ -27,18 +28,23 @@ class TaskService:
     def create(
         self,
         session_id: str,
-        agent_id: str,
+        creator_agent_id: str,
         task_type: str,
         title: str,
         description: str = "",
         inputs: dict | None = None,
+        assigned_agent_id: str | None = None,
     ) -> Task:
-        """创建新 Task，初始状态 PENDING。"""
+        """创建新 Task，初始状态 PENDING。
+
+        assigned_agent_id 默认与 creator_agent_id 相同，auto-spawn 时会被更新。
+        """
         now = now_iso()
         task = Task(
             id=new_task_id(),
             session_id=session_id,
-            agent_id=agent_id,
+            creator_agent_id=creator_agent_id,
+            assigned_agent_id=assigned_agent_id or creator_agent_id,
             type=task_type,
             title=title,
             status="PENDING",
@@ -50,6 +56,30 @@ class TaskService:
         self._store.save(task.to_dict())
         self._bus.publish(TASK_CREATED, {"task_id": task.id, "session_id": session_id})
         return task
+
+    def create_plan_task(
+        self,
+        session_id: str,
+        creator_agent_id: str,
+        title: str,
+        description: str = "",
+        *,
+        inherit_memory: bool = True,
+    ) -> Task:
+        """Create a plan task that is always delegated to the planner sub-agent."""
+        settings = get_settings()
+        return self.create(
+            session_id=session_id,
+            creator_agent_id=creator_agent_id,
+            task_type="plan",
+            title=title,
+            description=description,
+            inputs={
+                "use_subagent": True,
+                "inherit_memory": inherit_memory,
+                "subagent_template": settings.default_planner_template_name,
+            },
+        )
 
     def get(self, task_id: str) -> Task:
         data = self._store.get(task_id)
@@ -100,6 +130,19 @@ class TaskService:
             if data and data.get("session_id") == session_id:
                 tasks.append(Task.from_dict(data))
         return tasks
+
+    def cancel_pending(self, session_id: str) -> int:
+        """取消 session 内所有 PENDING tasks。
+
+        用于 replan：清空当前规划，从新 plan task 重新开始。
+        返回取消数量。
+        """
+        cancelled = 0
+        for task in self.list_by_session(session_id):
+            if task.status == "PENDING":
+                self.transition(task.id, "CANCELED")
+                cancelled += 1
+        return cancelled
 
     def list_pending(self, session_id: str) -> list[Task]:
         """返回 session 下所有 PENDING task，按 created_at 升序排列。"""

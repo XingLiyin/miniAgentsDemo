@@ -1,8 +1,8 @@
 """Memory 文件存储。
 
 布局：
-  data/memory/{session_id}/messages.jsonl   # 追加写
-  data/memory/{session_id}/summaries.json   # 覆盖写（最新摘要）
+  data/memory/{agent_id}/messages.jsonl   # 追加写
+  data/memory/{agent_id}/summaries.json   # 覆盖写（最新摘要）
 """
 
 from __future__ import annotations
@@ -15,39 +15,40 @@ from app.storage.file.base import append_jsonl, read_jsonl, write_json_atomic, r
 
 
 class MemoryStore:
-    """消息流与摘要的文件存储。"""
+    """消息流与摘要的文件存储（以 agent_id 为 key）。"""
 
-    def _messages_path(self, session_id: str) -> Path:
-        return get_settings().data_dir / "memory" / session_id / "messages.jsonl"
+    def _messages_path(self, agent_id: str) -> Path:
+        return get_settings().data_dir / "memory" / agent_id / "messages.jsonl"
 
-    def _summaries_path(self, session_id: str) -> Path:
-        return get_settings().data_dir / "memory" / session_id / "summaries.json"
+    def _summaries_path(self, agent_id: str) -> Path:
+        return get_settings().data_dir / "memory" / agent_id / "summaries.json"
 
-    def append_message(self, session_id: str, record: dict[str, Any]) -> None:
+    def append_message(self, agent_id: str, record: dict[str, Any]) -> None:
         """追加一条消息记录。"""
-        append_jsonl(self._messages_path(session_id), record)
+        append_jsonl(self._messages_path(agent_id), record)
 
-    def read_messages(self, session_id: str) -> list[dict[str, Any]]:
+    def read_messages(self, agent_id: str) -> list[dict[str, Any]]:
         """读取全部消息记录。"""
-        return read_jsonl(self._messages_path(session_id))
+        return read_jsonl(self._messages_path(agent_id))
 
-    def read_window(self, session_id: str, n: int) -> list[dict[str, Any]]:
+    def read_window(self, agent_id: str, n: int) -> list[dict[str, Any]]:
         """读取最近 n 条消息。"""
-        return self.read_messages(session_id)[-n:]
+        return self.read_messages(agent_id)[-n:]
 
-    def save_summary(self, session_id: str, summary: dict[str, Any]) -> None:
+    def save_summary(self, agent_id: str, summary: dict[str, Any]) -> None:
         """覆盖写入最新摘要。"""
-        write_json_atomic(self._summaries_path(session_id), summary)
+        write_json_atomic(self._summaries_path(agent_id), summary)
 
-    def get_summary(self, session_id: str) -> dict[str, Any] | None:
+    def get_summary(self, agent_id: str) -> dict[str, Any] | None:
         """读取最新摘要，不存在返回 None。"""
-        return read_json(self._summaries_path(session_id))
+        return read_json(self._summaries_path(agent_id))
 
-    def count_messages(self, session_id: str) -> int:
-        return len(self.read_messages(session_id))
+    def count_messages(self, agent_id: str) -> int:
+        return len(self.read_messages(agent_id))
 
-    def delete_session(self, session_id: str) -> None:
+    def delete_agent(self, agent_id: str) -> None:
+        """删除该 agent 的全部记忆文件。"""
         import shutil
-        d = get_settings().data_dir / "memory" / session_id
+        d = get_settings().data_dir / "memory" / agent_id
         if d.exists():
             shutil.rmtree(d)

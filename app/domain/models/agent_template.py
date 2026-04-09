@@ -28,6 +28,7 @@ class AgentTemplate:
     source_dir: str = ""
     inject_style: bool = False
     has_spawn_permission: bool = False
+    planner_template_name: str = ""  # 指定 plan sub-agent 使用的模板名；空则用系统默认
     description: str = ""
 
     summary_threshold: int = 20
@@ -52,6 +53,7 @@ class AgentTemplate:
             "source_dir": self.source_dir,
             "inject_style": self.inject_style,
             "has_spawn_permission": self.has_spawn_permission,
+            "planner_template_name": self.planner_template_name,
             "description": self.description,
             "summary_threshold": self.summary_threshold,
             "short_window_size": self.short_window_size,
@@ -76,6 +78,7 @@ class AgentTemplate:
             source_dir=d.get("source_dir", ""),
             inject_style=d.get("inject_style", False),
             has_spawn_permission=d.get("has_spawn_permission", False),
+            planner_template_name=d.get("planner_template_name", ""),
             description=d.get("description", ""),
             summary_threshold=d.get("summary_threshold", 20),
             short_window_size=d.get("short_window_size", 20),

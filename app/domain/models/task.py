@@ -16,7 +16,8 @@ class Task:
     """
     id: str
     session_id: str
-    agent_id: str
+    creator_agent_id: str              # 产生该任务的 agent（不可变）
+    assigned_agent_id: str             # 被分配执行该任务的 agent（auto-spawn 时可更新）
     type: str                          # atomic | user_input
     title: str
     status: str                        # PENDING | ACTIVE | SUSPENDED | FINISHED | FAILED | CANCELED
@@ -39,7 +40,8 @@ class Task:
         return {
             "id": self.id,
             "session_id": self.session_id,
-            "agent_id": self.agent_id,
+            "creator_agent_id": self.creator_agent_id,
+            "assigned_agent_id": self.assigned_agent_id,
             "type": self.type,
             "title": self.title,
             "status": self.status,
@@ -60,7 +62,8 @@ class Task:
         return cls(
             id=d["id"],
             session_id=d["session_id"],
-            agent_id=d["agent_id"],
+            creator_agent_id=d["creator_agent_id"],
+            assigned_agent_id=d["assigned_agent_id"],
             type=d["type"],
             title=d["title"],
             status=d["status"],

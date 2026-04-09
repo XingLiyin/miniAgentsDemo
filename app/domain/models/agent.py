@@ -39,24 +39,26 @@ class Agent:
     """
     id: str
     session_id: str
-    template_id: str | None
+    template_id: str
     name: str
     status: str                                 # IDLE | RUNNING | WAITING | FINISHED | FAILED
 
     system_prompt: str = ""
+    soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
+    role_md: str = ""                           # 驱动 Observer 阶段 system prompt（评判准则）
     tool_list: list[str] = field(default_factory=list)
     skill_list: list[str] = field(default_factory=list)
     soul_path: str | None = None
     loop_guard: LoopGuard = field(default_factory=LoopGuard)
+    inherit_memory: bool = True                 # False = Reasoner 跳过 session 记忆加载
 
     # LLM 配置（继承自 template 或 session 创建时指定）
     llm_name: str = ""
 
     # Spawn 字段
-    has_spawn_permission: bool = False          # 是否允许调用 spawn_agents
+    has_spawn_permission: bool = False          # 是否允许 spawn sub-agent
     spawn_depth: int = 0                        # 嵌套深度（root=0）
     parent_task_id: str | None = None          # 本 agent 正在执行的 Task（sub-agent 填充）
-    spawned_task_ids: list[str] = field(default_factory=list)  # WAITING 时派生的子 task_id
 
     created_at: str = ""
     updated_at: str = ""
@@ -69,15 +71,17 @@ class Agent:
             "name": self.name,
             "status": self.status,
             "system_prompt": self.system_prompt,
+            "soul_md": self.soul_md,
+            "role_md": self.role_md,
             "tool_list": self.tool_list,
             "skill_list": self.skill_list,
             "soul_path": self.soul_path,
             "loop_guard": self.loop_guard.to_dict(),
+            "inherit_memory": self.inherit_memory,
             "llm_name": self.llm_name,
             "has_spawn_permission": self.has_spawn_permission,
             "spawn_depth": self.spawn_depth,
             "parent_task_id": self.parent_task_id,
-            "spawned_task_ids": self.spawned_task_ids,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -91,15 +95,17 @@ class Agent:
             name=d["name"],
             status=d["status"],
             system_prompt=d.get("system_prompt", ""),
+            soul_md=d.get("soul_md", ""),
+            role_md=d.get("role_md", ""),
             tool_list=d.get("tool_list", []),
             skill_list=d.get("skill_list", []),
             soul_path=d.get("soul_path"),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),
+            inherit_memory=d.get("inherit_memory", True),
             llm_name=d.get("llm_name", ""),
             has_spawn_permission=d.get("has_spawn_permission", False),
             spawn_depth=d.get("spawn_depth", 0),
             parent_task_id=d.get("parent_task_id"),
-            spawned_task_ids=d.get("spawned_task_ids", []),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

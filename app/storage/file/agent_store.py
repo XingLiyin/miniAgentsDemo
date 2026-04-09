@@ -24,5 +24,14 @@ class AgentStore:
     def list_ids(self) -> list[str]:
         return list_json_ids(get_settings().data_dir / "agents")
 
+    def list_by_session(self, session_id: str) -> list[str]:
+        """返回属于该 session 的所有 agent_id 列表。"""
+        result = []
+        for aid in self.list_ids():
+            data = self.get(aid)
+            if data and data.get("session_id") == session_id:
+                result.append(aid)
+        return result
+
     def delete(self, agent_id: str) -> None:
         self._path(agent_id).unlink(missing_ok=True)

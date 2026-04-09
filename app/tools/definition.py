@@ -38,3 +38,7 @@ class ToolDefinition:
             input_schema=self.input_schema,
             type="function",
         )
+
+    def to_prompt_text(self) -> str:
+        """生成带参数签名的单行描述，用于 system prompt 的工具感知段。"""
+        return self.to_llm_tool().to_prompt_text()

@@ -20,7 +20,7 @@ import pytest
 from agent_framework import BaseChatClient as AFBaseChatClient
 from agent_framework import ChatResponse, Content, Message
 
-from app.llm.base import BaseChatClient, LLMClient
+from app.llm.base import BaseChatClient
 from app.llm.mock_client import MockChatClient
 from app.llm.types import InputSchema, LLMMessage, LLMResponse, LLMTool, LLMUsage
 
@@ -392,93 +392,134 @@ class _ToolCallMockClient(MockChatClient):
         )
 
 
-class TestPlanner:
-    def _make_ctx(self, goal: str = "Test goal"):
-        from app.runtime.types import ReasoningContext
-        return ReasoningContext(
-            goal=goal,
-            recent_messages=[],
-            summary_text="",
-            blackboard_snippets=[],
-            relevant_tools=[],
-            relevant_skills=[],
-        )
+class _MockTaskSvc:
+    """Minimal TaskService stub that records create() and create_plan_task() calls."""
+
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+        self.plan_tasks: list[dict] = []
+        self._n = 0
+
+    def create(self, **kwargs):
+        self._n += 1
+        task_id = f"mock-t{self._n}"
+        self.created.append({"id": task_id, **kwargs})
+        m = MagicMock()
+        m.id = task_id
+        return m
+
+    def create_plan_task(
+        self,
+        session_id: str,
+        creator_agent_id: str,
+        title: str,
+        description: str = "",
+        *,
+        inherit_memory: bool = True,
+    ):
+        self._n += 1
+        task_id = f"mock-plan-t{self._n}"
+        self.plan_tasks.append({
+            "id": task_id,
+            "session_id": session_id,
+            "creator_agent_id": creator_agent_id,
+            "title": title,
+            "description": description,
+        })
+        m = MagicMock()
+        m.id = task_id
+        return m
+
+    def transition(self, task_id: str, status: str) -> None:
+        pass
+
+    def get(self, task_id: str):
+        pass
+
+
+class _MockSessionSvc:
+    def transition(self, session_id: str, status: str) -> None:
+        pass
+
+
+class TestSubmitPlan:
+    """测试 AgentController._handle_submit_plan（原 Planner 测试）。
+
+    Planner 类已删除，submit_plan 逻辑完全在 AgentController 内，
+    通过 dispatch("submit_plan", args, agent, task) 直接验证。
+    """
 
     def _make_agent(self):
         from app.domain.models.agent import Agent
-        return Agent(
-            id="a1", session_id="s1", template_id=None,
-            name="test", status="RUNNING",
-        )
+        return Agent(id="a1", session_id="s1", template_id=None, name="test", status="RUNNING")
 
-    def test_parse_submit_plan_returns_task_plan(self):
-        from app.runtime.planner import Planner
-        client = _ToolCallMockClient(
-            "submit_plan",
-            {
-                "tasks": [
-                    {
-                        "type": "atomic",
-                        "title": "Do something",
-                        "description": "Accomplish X",
-                        "skill_name": None,
-                        "prompt": "",
-                    }
-                ]
-            },
-        )
-        planner = Planner(llm_client=client)
-        plan = planner.plan(self._make_ctx(), self._make_agent())
-        assert len(plan.tasks) == 1
-        assert plan.tasks[0].title == "Do something"
-        assert plan.tasks[0].type == "atomic"
-        assert plan.tasks[0].skill_name is None
+    def _make_task(self):
+        t = MagicMock()
+        t.id = "plan-t1"
+        t.session_id = "s1"
+        t.assigned_agent_id = "a1"
+        return t
+
+    def _make_controller(self, task_svc=None):
+        from app.runtime.agent_controller import AgentController
+        svc = task_svc or _MockTaskSvc()
+        return AgentController(task_svc=svc, session_svc=_MockSessionSvc()), svc
+
+    def _dispatch(self, args, task_svc=None):
+        controller, svc = self._make_controller(task_svc)
+        ctrl = controller.dispatch("submit_plan", args, self._make_agent(), self._make_task())
+        return ctrl, svc
+
+    def test_submit_plan_creates_tasks_and_returns_task_complete(self):
+        from app.runtime.agent_controller import ControlSignal
+        ctrl, svc = self._dispatch({
+            "tasks": [{"title": "Do something", "description": "Accomplish X", "skill_name": None}]
+        })
+        assert ctrl.signal == ControlSignal.TASK_COMPLETE
+        assert len(ctrl.signal_data["planned_task_ids"]) == 1
+        assert ctrl.signal_data["titles"][0] == "Do something"
 
     def test_skill_name_propagated(self):
-        from app.runtime.planner import Planner
-        client = _ToolCallMockClient(
-            "submit_plan",
+        svc = _MockTaskSvc()
+        self._dispatch(
+            {"tasks": [{"title": "Review code", "description": "Review PR", "skill_name": "code_review"}]},
+            task_svc=svc,
+        )
+        assert svc.created[0]["inputs"].get("skill_name") == "code_review"
+
+    def test_use_subagent_propagated(self):
+        svc = _MockTaskSvc()
+        self._dispatch(
             {
                 "tasks": [
-                    {
-                        "type": "atomic",
-                        "title": "Review code",
-                        "description": "Review PR",
-                        "skill_name": "code_review",
-                        "prompt": "",
-                    }
+                    {"title": "Heavy computation", "description": "Run long analysis", "skill_name": None, "use_subagent": True},
+                    {"title": "Quick summary", "description": "Summarize results", "skill_name": None, "use_subagent": False},
                 ]
             },
+            task_svc=svc,
         )
-        planner = Planner(llm_client=client)
-        plan = planner.plan(self._make_ctx(), self._make_agent())
-        assert plan.tasks[0].skill_name == "code_review"
+        assert svc.created[0]["inputs"].get("use_subagent") is True
+        assert "use_subagent" not in svc.created[1]["inputs"]
 
-    def test_no_tool_call_returns_empty_plan(self):
-        from app.runtime.planner import Planner
-        planner = Planner(llm_client=MockChatClient())
-        plan = planner.plan(self._make_ctx(), self._make_agent())
-        assert plan.tasks == []
-
-    def test_unknown_task_type_defaults_to_atomic(self):
-        from app.runtime.planner import Planner
-        client = _ToolCallMockClient(
-            "submit_plan",
-            {
-                "tasks": [
-                    {
-                        "type": "legacy_reasoning",
-                        "title": "Think",
-                        "description": "Think hard",
-                        "skill_name": None,
-                        "prompt": "",
-                    }
-                ]
-            },
+    def test_use_subagent_defaults_to_false(self):
+        svc = _MockTaskSvc()
+        self._dispatch(
+            {"tasks": [{"title": "Simple step", "description": "Do X", "skill_name": None}]},
+            task_svc=svc,
         )
-        planner = Planner(llm_client=client)
-        plan = planner.plan(self._make_ctx(), self._make_agent())
-        assert plan.tasks[0].type == "atomic"
+        assert "use_subagent" not in svc.created[0]["inputs"]
+
+    def test_empty_tasks_returns_task_complete_with_no_ids(self):
+        from app.runtime.agent_controller import ControlSignal
+        ctrl, _ = self._dispatch({"tasks": []})
+        assert ctrl.signal == ControlSignal.TASK_COMPLETE
+        assert ctrl.signal_data["planned_task_ids"] == []
+
+    def test_task_title_in_signal_data(self):
+        ctrl, _ = self._dispatch({
+            "tasks": [{"title": "Think", "description": "Think hard", "skill_name": None}]
+        })
+        assert ctrl.signal_data["titles"][0] == "Think"
 
 
 # ── Observer ──────────────────────────────────────────────────────────────────
@@ -496,61 +537,124 @@ class TestObserver:
             token_used=token_used,
         )
 
+    def _make_agent(self, role_md=""):
+        from app.domain.models.agent import Agent
+        return Agent(
+            id="a1", session_id="s1", template_id=None,
+            name="test", status="RUNNING", role_md=role_md,
+        )
+
     def _make_ctx(self):
         from app.runtime.types import ReasoningContext
         return ReasoningContext(
+            mode="act",
             goal="Test goal",
             recent_messages=[],
             summary_text="Previous progress done.",
             blackboard_snippets=[],
-            relevant_tools=[],
-            relevant_skills=[],
+            resources=[],
         )
 
     def _make_result(self, success=True, output="done"):
         from app.runtime.types import ActorResult
         return ActorResult(task_id="t1", success=success, output=output)
 
-    def test_llm_done_true(self):
+    def _make_task(self):
+        task = MagicMock()
+        task.id = "t1"
+        task.title = "Test task"
+        task.description = "Do something"
+        task.session_id = "s1"
+        task.assigned_agent_id = "a1"
+        return task
+
+    def _make_observer(self, client, task_svc=None):
+        from app.runtime.agent_controller import AgentController
         from app.runtime.observer import Observer
+        svc = task_svc or _MockTaskSvc()
+        controller = AgentController(task_svc=svc, session_svc=_MockSessionSvc())
+        return Observer(llm_client=client, agent_controller=controller), svc
+
+    def test_llm_done_true(self):
         client = _ToolCallMockClient(
             "submit_observation",
-            {"done": True, "summary": "All done.", "reasoning": "Goal met."},
+            {"task_complete": True, "task_result": "Task done.", "done": True, "summary": "All done.", "reasoning": "Goal met."},
         )
-        obs = Observer(llm_client=client)
-        verdict = obs.observe(self._make_session(), [self._make_result()], self._make_ctx())
+        obs, _ = self._make_observer(client)
+        verdict = obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
         assert verdict.done is True
+        assert verdict.task_success is True
         assert verdict.summary == "All done."
 
     def test_llm_done_false(self):
-        from app.runtime.observer import Observer
         client = _ToolCallMockClient(
             "submit_observation",
-            {"done": False, "summary": "Partial.", "reasoning": "More to do."},
+            {"task_complete": True, "task_result": "Task done.", "done": False, "summary": "Partial.", "reasoning": "More to do."},
         )
-        obs = Observer(llm_client=client)
-        verdict = obs.observe(self._make_session(), [self._make_result()], self._make_ctx())
+        obs, _ = self._make_observer(client)
+        verdict = obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
         assert verdict.done is False
+        assert verdict.task_success is True
+
+    def test_llm_task_failed(self):
+        client = _ToolCallMockClient(
+            "submit_observation",
+            {"task_complete": False, "task_result": "Could not complete.", "done": False, "summary": "Failed.", "reasoning": "Error."},
+        )
+        obs, _ = self._make_observer(client)
+        verdict = obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
+        assert verdict.task_success is False
+        assert verdict.task_result == "Could not complete."
+
+    def test_spawn_planner_creates_plan_task(self):
+        client = _ToolCallMockClient(
+            "submit_observation",
+            {
+                "task_complete": True,
+                "task_result": "Found extra work.",
+                "done": False,
+                "summary": "Task done, more needed.",
+                "reasoning": "Discovered follow-up tasks.",
+                "spawn_planner": True,
+            },
+        )
+        svc = _MockTaskSvc()
+        obs, _ = self._make_observer(client, task_svc=svc)
+        verdict = obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
+        assert len(svc.plan_tasks) == 1
+        assert svc.plan_tasks[0]["title"] == "Re-plan: discover follow-up tasks"
+        assert svc.plan_tasks[0]["session_id"] == "s1"
+
+    def test_spawn_planner_skipped_when_done(self):
+        """spawn_planner=True but done=True → no plan task created."""
+        client = _ToolCallMockClient(
+            "submit_observation",
+            {"task_complete": True, "task_result": "All done.", "done": True, "summary": "Done.", "reasoning": ".", "spawn_planner": True},
+        )
+        svc = _MockTaskSvc()
+        obs, _ = self._make_observer(client, task_svc=svc)
+        obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
+        assert len(svc.plan_tasks) == 0
 
     def test_rule_fallback_on_llm_error(self):
-        from app.runtime.observer import Observer
         bad_client = MagicMock()
         bad_client.send_message.side_effect = RuntimeError("network error")
-        obs = Observer(llm_client=bad_client)
-        verdict = obs.observe(self._make_session(), [self._make_result()], self._make_ctx())
-        # Rule fallback should not raise and should return a verdict
+        obs, _ = self._make_observer(bad_client)
+        verdict = obs.observe(self._make_session(), self._make_result(), self._make_ctx(), self._make_task(), self._make_agent())
         assert isinstance(verdict.done, bool)
+        assert isinstance(verdict.task_success, bool)
         assert verdict.summary != ""
 
     def test_rule_fallback_forces_done_near_budget(self):
-        from app.runtime.observer import Observer
         bad_client = MagicMock()
         bad_client.send_message.side_effect = RuntimeError("fail")
-        obs = Observer(llm_client=bad_client)
-        # token_used = 95%, token_budget = 100
+        obs, _ = self._make_observer(bad_client)
         verdict = obs.observe(
             self._make_session(token_used=95, token_budget=100),
-            [self._make_result()],
+            self._make_result(),
             self._make_ctx(),
+            self._make_task(),
+            self._make_agent(),
         )
         assert verdict.done is True
+        assert verdict.task_success is True

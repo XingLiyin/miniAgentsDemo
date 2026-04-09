@@ -142,3 +142,37 @@ app/tools/builtins.py
     ← Actor 注入 tool result，LLM 继续执行
     → mark_task_complete → 任务完成
 ```
+
+# plan 分支
+
+app/runtime/types.py                                                                                                                            
+  - ReasoningContext 新增：mode（必填首位）、mode_system_prompt（默认 ""）、plan_task（默认 None）、atomic_tasks（默认 []）                     
+  - 用 TYPE_CHECKING 导入 Task，避免循环依赖
+
+  app/runtime/reasoner.py
+  - reason(session, agent) → reason(session, agent, pending_tasks: list[Task])
+  - 内部按 pending_tasks[0].type 分发到 _reason_for_plan / _reason_for_act
+  - 公共数据获取（memory/blackboard/token）提取为 _fetch_base()
+  - _build_plan_prompt() 构建规划模式 prompt（含 skills 列表）
+  - _build_act_prompt() 构建执行模式 prompt（含 tool awareness），取代了原先 Actor 中的相关代码
+
+  app/runtime/agent_loop.py
+  - 主循环：reasoner.reason() 调用前移到分支之前，统一入口
+  - 分支条件从 next_task.type == "plan" 改为 ctx.mode == "plan"
+  - _do_plan(plan_task, session, agent) → _do_plan(ctx, agent)，从 ctx.plan_task 取任务
+  - _do_act(pending, session, agent) → _do_act(ctx, session, agent)，从 ctx.atomic_tasks 取任务，移除内部 reasoner.reason() 调用
+
+  app/runtime/planner.py
+  - _build_system_prompt 简化为两行：agent.system_prompt + ctx.mode_system_prompt（fallback 到原 _FALLBACK_SYSTEM_PROMPT）
+  - 移除了原先 skills 列表拼接和 "Your job..." 指令（均已移到 Reasoner）
+
+  app/runtime/actor.py
+  - _build_system_prompt 改用 ctx.mode_system_prompt 作为 Layer 2
+  - 移除了 tool awareness section（已由 Reasoner 注入 ctx）
+  - 保留 skill instructions（Layer 3，per-task）和 Required Tool Protocol（Layer 4）
+
+  app/runtime/sub_agent_runner.py
+  - _run_sub_safe 中 reason(session, agent) → reason(session, agent, [task])
+
+  tests/test_phase_implementations.py
+  - 两处 _make_ctx() 补充 mode="plan" / mode="act" 参数

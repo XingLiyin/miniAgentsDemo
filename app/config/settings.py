@@ -39,6 +39,8 @@ class Settings(BaseModel):
     # Agent 默认配置
     agent_default_system_prompt: str = "You are a helpful agent."
     agent_default_llm_name: str = "openai-main"
+    default_agent_template_name: str = "default"
+    default_planner_template_name: str = "planner"  # plan sub-agent 使用的默认模板名
 
     # Agent Loop 默认参数
     default_token_budget: int = 200_000
@@ -51,7 +53,6 @@ class Settings(BaseModel):
     max_concurrent_tasks: int = 10       # 单 session 最大并发 task 数
     max_spawn_depth: int = 1             # V1 仅支持单层 spawn
     max_retries: int = 1                 # sub-task 最大重试次数
-    spawn_timeout_sec: float = 3600.0   # spawn_agents 等待超时（秒）
 
     # Tool 约束
     bash_exec_timeout_ms: int = 30_000

@@ -17,12 +17,11 @@ from app.orchestrator.lifecycle_manager import LifecycleManager
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
 from app.runtime.actor import Actor
+from app.runtime.agent_controller import AgentController
 from app.runtime.agent_loop import AgentLoop
 from app.runtime.observer import Observer
-from app.runtime.planner import Planner
 from app.runtime.policy_engine import PolicyEngine
 from app.runtime.reasoner import Reasoner
-from app.runtime.sub_agent_runner import SubAgentRunner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
 from app.tools.registry import get_tool_registry
@@ -105,22 +104,27 @@ def get_reasoner() -> Reasoner:
     return Reasoner(
         memory_svc=get_memory_service(),
         blackboard_svc=get_blackboard_service(),
+        agent_controller=get_agent_controller(),
         tool_registry=get_tool_registry(),
         skill_registry=get_skill_registry(),
     )
 
 
 @lru_cache
-def get_actor() -> Actor:
-    """Actor 不在构造时注入 LM，通过 set_lifecycle_manager 延迟注入，避免循环依赖。"""
-    llm_client = _get_llm_client()
-    return Actor(
-        llm_client=llm_client,
-        tool_gateway=get_tool_gateway(),
-        skill_registry=get_skill_registry(),
+def get_agent_controller() -> AgentController:
+    return AgentController(
         task_svc=get_task_service(),
         session_svc=get_session_service(),
-        # lifecycle_manager 在 get_runtime_bundle() 中统一注入
+    )
+
+
+@lru_cache
+def get_actor() -> Actor:
+    return Actor(
+        llm_client=_get_llm_client(),
+        tool_gateway=get_tool_gateway(),
+        task_svc=get_task_service(),
+        agent_controller=get_agent_controller(),
     )
 
 
@@ -135,25 +139,9 @@ def get_agent_loop() -> AgentLoop:
         agent_store=AgentStore(),
         llm_client=llm_client,
         reasoner=get_reasoner(),
-        planner=Planner(llm_client=llm_client),
         actor=get_actor(),
-        observer=Observer(llm_client=llm_client),
+        observer=Observer(llm_client=llm_client, agent_controller=get_agent_controller()),
     )
-
-
-@lru_cache
-def get_sub_agent_runner() -> SubAgentRunner:
-    runner = SubAgentRunner(
-        actor=get_actor(),
-        reasoner=get_reasoner(),
-        task_svc=get_task_service(),
-        session_svc=get_session_service(),
-        memory_svc=get_memory_service(),
-        agent_store=AgentStore(),
-        event_bus=get_event_bus(),
-    )
-    runner.set_agent_loop(get_agent_loop())
-    return runner
 
 
 @lru_cache
@@ -164,15 +152,15 @@ def get_lifecycle_manager() -> LifecycleManager:
         task_svc=get_task_service(),
         agent_store=AgentStore(),
         event_bus=get_event_bus(),
-        sub_agent_runner=get_sub_agent_runner(),
+        task_manager=get_task_manager(),
         max_concurrent_agents=settings.max_concurrent_agents,
         max_concurrent_tasks=settings.max_concurrent_tasks,
         max_spawn_depth=settings.max_spawn_depth,
         max_retries=settings.max_retries,
-        spawn_timeout_sec=settings.spawn_timeout_sec,
+        template_svc=get_agent_template_service(),
+        memory_svc=get_memory_service(),
     )
-    # 延迟注入：打破 Actor ↔ LM ↔ SubAgentRunner ↔ Actor 的循环依赖
-    get_actor()._lifecycle_manager = lm
+    lm.set_agent_loop(get_agent_loop())
     return lm
 
 
@@ -189,6 +177,5 @@ def get_session_manager() -> SessionManager:
         tool_call_store=ToolCallStore(),
         blackboard_store=BlackboardStore(),
     )
-    mgr.set_agent_loop(get_agent_loop())
     mgr.set_lifecycle_manager(get_lifecycle_manager())
     return mgr

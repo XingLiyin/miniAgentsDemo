@@ -52,6 +52,25 @@ class LLMTool:
     output_schema: Optional[Dict[str, Any]] = None
     type: str = 'function'
 
+    def to_prompt_text(self) -> str:
+        """生成带参数签名的单行描述，用于 system prompt 的工具感知段。
+
+        格式：name(param: type, optional?: type, with_default: type = val) — description
+        """
+        params = []
+        required = set(self.input_schema.require or [])
+        for pname, pinfo in (self.input_schema.properties or {}).items():
+            ptype   = pinfo.get("type", "any")
+            default = pinfo.get("default")
+            if pname in required:
+                params.append(f"{pname}: {ptype}")
+            elif default is not None:
+                params.append(f"{pname}: {ptype} = {default!r}")
+            else:
+                params.append(f"{pname}?: {ptype}")
+        sig = f"{self.name}({', '.join(params)})"
+        return f"{sig} — {self.description}" if self.description else sig
+
 
 # ── 内容块 ────────────────────────────────────────────────────────────────
 
