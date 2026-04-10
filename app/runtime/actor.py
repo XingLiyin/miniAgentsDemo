@@ -55,18 +55,81 @@ class Actor:
         conversation_turns: list[ConversationTurn] = []
         terminal_signal_data: dict = {}
         last_text = ""
+        session_id = getattr(task, "session_id", "")
+
+        # 按 agent.llm_name 动态解析 LLM 客户端，缺省用注入的默认客户端
+        llm_client = self._llm_client
+        if agent.llm_name:
+            try:
+                from app.llm.registry import get_llm_registry
+                llm_client = get_llm_registry().get_client(agent.llm_name)
+            except Exception:
+                pass
+
+        try:
+            from app.runtime.sse_bus import get_sse_bus
+            from app.common.utils import now_iso
+            _sse = get_sse_bus() if session_id else None
+        except Exception:
+            _sse = None
 
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
             messages_sent = list(messages)
-            raw_response = self._llm_client.send_message(
+
+            # ── 推送 llm_prompt 调试事件 ──────────────────────────────────────
+            if _sse and session_id:
+                try:
+                    _sse.push(session_id, {
+                        "type": "llm_prompt",
+                        "source": "actor",
+                        "round_label": f"actor_round_{_round}",
+                        "system_prompt": system_prompt,
+                        "messages": [{"role": m.role, "content": m.content} for m in messages],
+                        "tool_names": [r.name for r in ctx.resources if r.kind == "tool" and r.llm_tool is not None],
+                    })
+                except Exception:
+                    pass
+
+            # ── 流式 LLM 调用 ────────────────────────────────────────────────
+            full_text = ""
+            tool_call_acc: dict[int, dict] = {}   # index → cumulative {id, name, arguments}
+
+            for chunk in llm_client.stream_message(
                 messages=messages,
                 system_prompt=system_prompt,
                 tools=tools,
-            )
-            response = self._llm_client.parse_response(raw_response)
+            ):
+                if chunk.text_delta:
+                    full_text += chunk.text_delta
+                    if _sse:
+                        try:
+                            _sse.push(session_id, {
+                                "type": "text_delta",
+                                "delta": chunk.text_delta,
+                                "round": _round,
+                            })
+                        except Exception:
+                            pass
+                if chunk.tool_call_delta:
+                    # adapter 已在内部累积，每次 yield 的是最新全量状态，直接覆写
+                    tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
 
-            if not response.tool_calls:
-                last_text = response.text or ""
+            # text_done：通知前端本 round 流式结束，可落地气泡
+            if _sse:
+                try:
+                    _sse.push(session_id, {
+                        "type": "text_done",
+                        "text": full_text,
+                        "round": _round,
+                    })
+                except Exception:
+                    pass
+
+            # 将累积缓冲区还原为 ToolCallBlock 列表
+            tool_calls_from_stream = _build_tool_calls_from_stream(tool_call_acc)
+
+            if not tool_calls_from_stream:
+                last_text = full_text
                 conversation_turns.append(ConversationTurn(
                     round=_round,
                     messages_sent=messages_sent,
@@ -78,7 +141,7 @@ class Actor:
             round_tool_calls: list[ToolCallRecord] = []
             done = False
 
-            for tool_call in response.tool_calls:
+            for tool_call in tool_calls_from_stream:
                 if self._agent_controller.can_handle(tool_call.name):
                     ctrl = self._agent_controller.dispatch(
                         tool_call.name, tool_call.input, agent, task
@@ -110,7 +173,20 @@ class Actor:
                 tool_calls_made.append(record)
                 messages = self._append_tool_turn(messages, tool_call.name, tool_call.input, result)
 
-            last_text = response.text or ""
+                if _sse:
+                    try:
+                        _sse.push(session_id, {
+                            "type": "tool_call",
+                            "tool_name": record.tool_name,
+                            "arguments": record.arguments,
+                            "result": record.result,
+                            "is_error": record.is_error,
+                            "created_at": now_iso(),
+                        })
+                    except Exception:
+                        pass
+
+            last_text = full_text
             conversation_turns.append(ConversationTurn(
                 round=_round,
                 messages_sent=messages_sent,
@@ -210,3 +286,27 @@ class Actor:
         prefix   = f"Tool '{tool_name}' error" if is_error else f"Tool '{tool_name}' result"
         messages.append(LLMMessage(role="user", content=f"{prefix}:\n{content}"))
         return messages
+
+
+# ── 模块级工具 ─────────────────────────────────────────────────────────────────
+
+def _build_tool_calls_from_stream(acc: dict[int, dict]) -> list:
+    """将流式 tool_call 累积缓冲区（index → 最终全量状态）转换为 ToolCallBlock 列表。"""
+    import json
+    from app.llm.types import ToolCallBlock
+
+    result = []
+    for idx in sorted(acc.keys()):
+        buf = acc[idx]
+        args_raw = buf.get("arguments") or ""
+        try:
+            args = json.loads(args_raw) if args_raw else {}
+        except json.JSONDecodeError:
+            args = {"_raw": args_raw}
+        result.append(ToolCallBlock(
+            type="tool_call",
+            id=buf.get("id", ""),
+            name=buf.get("name", ""),
+            input=args,
+        ))
+    return result

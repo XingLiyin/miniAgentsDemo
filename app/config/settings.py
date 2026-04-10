@@ -34,7 +34,7 @@ class Settings(BaseModel):
     def _to_secret(cls, v: Any) -> "SecretString":
         return v if isinstance(v, SecretString) else SecretString(str(v))
     llm_default_model: str = "gpt-4.1-mini"
-    default_llm_timeout_sec: int = 60
+    default_llm_timeout_sec: int = 3600
 
     # Agent 默认配置
     agent_default_system_prompt: str = "You are a helpful agent."

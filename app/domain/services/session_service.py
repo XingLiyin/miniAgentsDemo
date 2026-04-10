@@ -72,6 +72,20 @@ class SessionService:
         }
         if to_status in event_map:
             self._bus.publish(event_map[to_status], {"session_id": session_id})
+        # Push SSE event
+        try:
+            from app.runtime.sse_bus import get_sse_bus
+            sse_event: dict = {
+                "type": "session_update",
+                "session_id": session_id,
+                "status": to_status,
+                "token_used": session.token_used,
+            }
+            get_sse_bus().push(session_id, sse_event)
+            if to_status in ("SUCCEEDED", "FAILED", "CANCELED"):
+                get_sse_bus().push(session_id, {"type": "done", "final_status": to_status})
+        except Exception:
+            pass
         return session
 
     def set_root_agent(self, session_id: str, agent_id: str) -> None:

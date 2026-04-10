@@ -31,6 +31,7 @@ export interface CreateSessionRequest {
   template_id?: string | null
   token_budget?: number
   root_max_turns?: number
+  llm_name?: string | null
 }
 
 // ─── Task ────────────────────────────────────────────────────────────────────

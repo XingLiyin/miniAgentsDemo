@@ -11,6 +11,7 @@ class CreateSessionRequest(BaseModel):
     template_id: Optional[str] = None
     token_budget: Optional[int] = None
     root_max_turns: Optional[int] = None
+    llm_name: Optional[str] = None
 
 
 class SessionResponse(BaseModel):

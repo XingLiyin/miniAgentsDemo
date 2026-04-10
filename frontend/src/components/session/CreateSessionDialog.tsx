@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { sessionsApi } from '@/api/sessions'
 import { templatesApi } from '@/api/templates'
+import { llmsApi } from '@/api/llms'
 import type { CreateSessionRequest } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -22,6 +23,7 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
     template_id: null,
     token_budget: 200000,
     root_max_turns: 20,
+    llm_name: null,
   })
   const [goalError, setGoalError] = useState('')
 
@@ -30,13 +32,18 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
     queryFn: templatesApi.list,
   })
 
+  const { data: llms } = useQuery({
+    queryKey: ['llms'],
+    queryFn: llmsApi.list,
+  })
+
   const mutation = useMutation({
     mutationFn: sessionsApi.create,
     onSuccess: (session) => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       onCreated(session.id)
       onClose()
-      setForm({ goal: '', template_id: null, token_budget: 200000, root_max_turns: 20 })
+      setForm({ goal: '', template_id: null, token_budget: 200000, root_max_turns: 20, llm_name: null })
       setGoalError('')
     },
   })
@@ -73,6 +80,21 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
           {templates?.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name} — {t.description || t.version}
+            </option>
+          ))}
+        </Select>
+
+        <Select
+          label="模型"
+          value={form.llm_name ?? ''}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, llm_name: e.target.value || null }))
+          }
+        >
+          <option value="">使用默认模型</option>
+          {llms?.map((l) => (
+            <option key={l.name} value={l.name}>
+              {l.name} — {l.model}
             </option>
           ))}
         </Select>

@@ -154,7 +154,8 @@ def get_llm_registry() -> LLMRegistry:
     """获取全局 LLM 注册表（单例）。首次调用时自动从文件恢复已保存配置。"""
     global _registry
     if _registry is None:
-        transport = HttpxTransport(timeout=60)
+        from app.config.settings import get_settings
+        transport = HttpxTransport(timeout=get_settings().default_llm_timeout_sec)
         provider_registry = ProviderRegistry(transport)
         _registry = LLMRegistry(provider_registry)
         loaded = _registry.load_from_store()

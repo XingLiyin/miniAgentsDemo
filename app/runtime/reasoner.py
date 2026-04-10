@@ -109,7 +109,11 @@ class Reasoner:
     # ── 私有辅助 ──────────────────────────────────────────────────────────────
 
     def _build_resources(self, goal: str, agent: Agent, task: Task) -> list[ContextResource]:
-        """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
+        """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。
+
+        从 AgentController scope 获取的控制工具，经 agent.tool_list 过滤后才暴露给 LLM。
+        """
+        allowed = set(agent.tool_list or [])
         if task.type == "plan":
             skill_resources = [
                 ContextResource(name=name, description=desc, kind="skill")
@@ -117,30 +121,37 @@ class Reasoner:
             ]
             tool_resources = [
                 ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-                for t in self._agent_controller.get_llm_schemas(scope="planner")
+                for t in self._agent_controller.get_llm_schemas(scope="actor")
+                if t.name in allowed
             ]
             return skill_resources + tool_resources
         else:
+            ctrl_tools = [
+                t for t in self._agent_controller.get_llm_schemas(scope="actor")
+                if t.name in allowed
+            ]
             return [
                 ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-                for t in self._retrieve_tools(goal, agent)
-                        + self._agent_controller.get_llm_schemas(scope="actor")
+                for t in self._retrieve_tools(goal, agent) + ctrl_tools
             ]
 
     def _build_observer_tools(self, agent: Agent, task: Task) -> list:
         """组装 Observer 阶段可用工具。
 
-        plan task：submit_plan（必须）+ submit_observation（兜底）+ observer_opt 过滤
-        act  task：submit_observation（必须）+ observer_opt 过滤
+        plan task：observer_plan + observer scope
+        act  task：observer scope
+        所有从 scope 获取的工具均经 agent.tool_list 过滤。
+        submit_task_reviews 由 Observer 在第二轮内部注入，不经此处。
         """
-        opt = [t for t in self._agent_controller.get_llm_schemas(scope="observer_opt")
-               if t.name in (agent.tool_list or [])]
+        allowed = set(agent.tool_list or [])
         if task.type == "plan":
-            base = (self._agent_controller.get_llm_schemas(scope="observer_plan")
-                    + self._agent_controller.get_llm_schemas(scope="observer"))
+            candidates = (self._agent_controller.get_llm_schemas(scope="observer_plan")
+                          + self._agent_controller.get_llm_schemas(scope="observer")
+                          + self._agent_controller.get_llm_schemas(scope="observer_opt"))
         else:
-            base = self._agent_controller.get_llm_schemas(scope="observer")
-        return base + opt
+            candidates = (self._agent_controller.get_llm_schemas(scope="observer")
+                          + self._agent_controller.get_llm_schemas(scope="observer_opt"))
+        return [t for t in candidates if t.name in allowed]
 
     def _retrieve_tools(self, goal: str, agent: Agent) -> list:
         if not self._tool_registry or not agent.tool_list:

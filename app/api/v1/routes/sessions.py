@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import json
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.responses import StreamingResponse
 
 from pydantic import BaseModel
 
@@ -19,7 +21,6 @@ class SendMessageRequest(BaseModel):
 
 
 class AnswerInputRequest(BaseModel):
-    task_id: str
     content: str
 
 router = APIRouter()
@@ -44,6 +45,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             template_id=req.template_id,
             token_budget=req.token_budget,
             root_max_turns=req.root_max_turns,
+            llm_name=req.llm_name,
         )
         # 异步启动 AgentLoop（在当前 asyncio event loop 中）
         mgr.schedule_loop(session.id, agent_id)
@@ -105,11 +107,80 @@ async def answer_input(session_id: str, req: AnswerInputRequest) -> SessionRespo
     """Submit a user answer for a WAITING_INPUT task and resume the agent loop."""
     try:
         mgr = get_session_manager()
-        session = mgr.answer_input(session_id, req.task_id, req.content)
+        session = mgr.answer_input(session_id, req.content)
         return SessionResponse(**session.to_dict())
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
+
+
+@router.get("/{session_id}/stream")
+async def stream_session_events(session_id: str, request: Request) -> StreamingResponse:
+    """SSE stream：实时推送 session 下的所有事件。"""
+    from app.api.v1.deps import get_memory_service
+    from app.runtime.sse_bus import get_sse_bus
+
+    try:
+        svc = get_session_service()
+        session = svc.get(session_id)
+    except AppError as e:
+        raise HTTPException(status_code=404, detail={"code": e.code, "message": e.message})
+
+    sse_bus = get_sse_bus()
+
+    async def generate():
+        q = sse_bus.create_subscription(session_id)
+        try:
+            # 发送初始快照
+            task_svc = get_task_service()
+            mem_svc = get_memory_service()
+
+            tasks = task_svc.list_by_session(session_id)
+            task_data = [TaskResponse(**t.to_dict()).model_dump() for t in tasks]
+
+            agent_id = session.root_agent_id or ""
+            messages: list = []
+            if agent_id:
+                messages = mem_svc.get_window(agent_id, n=500)
+
+            init_event = {
+                "type": "init",
+                "session": SessionResponse(**session.to_dict()).model_dump(),
+                "tasks": task_data,
+                "messages": messages,
+            }
+            yield f"data: {json.dumps(init_event, default=str)}\n\n"
+
+            # 发送历史事件快照（用于断线重连后恢复完整聊天记录）
+            from app.runtime.event_store import get_event_store
+            history = get_event_store().load(session_id)
+            if history:
+                history_event = {"type": "history", "events": history}
+                yield f"data: {json.dumps(history_event, default=str)}\n\n"
+
+            # 流式推送后续事件
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=15.0)
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
+                    if event.get("type") == "done":
+                        break
+                except asyncio.TimeoutError:
+                    yield 'data: {"type":"ping"}\n\n'
+        finally:
+            sse_bus.remove_subscription(session_id, q)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/{session_id}/tasks", response_model=list[TaskResponse])

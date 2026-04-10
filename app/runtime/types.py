@@ -7,6 +7,9 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel
 
+TaskOutcome = Literal["success", "failed", "needs_user_input"]
+ReviewStatus = Literal["confirmed", "reopen", "skip"]
+
 if TYPE_CHECKING:
     from app.domain.models.task import Task
     from app.llm.types import LLMTool
@@ -88,11 +91,18 @@ class ActorResult:
 
 
 @dataclass
+class TaskReview:
+    """Observer 对单个任务的复核判断。"""
+    task_id: str
+    current_status: str      # "FINISHED" | "PENDING"
+    review_status: ReviewStatus  # confirmed | reopen | skip
+    reasoning: str           # 判断依据（必填）
+
+
+@dataclass
 class ObserverVerdict:
     """Observer 阶段输出。"""
-    done: bool               # session 级目标是否达成
-    task_success: bool       # 当前 task 是否完成
-    task_result: str         # 写入 task.result 的内容
-    summary: str             # 写入 Memory（role=assistant）
-    reasoning: str           # 只进日志
-    needs_user_confirm: bool = False  # Observer 不确定，要求 AgentLoop 触发 HITL
+    task_outcome: TaskOutcome          # success / failed / needs_user_input
+    task_result: str                   # 写入 task.result 的内容
+    summary: str                       # 写入 Memory（role=assistant）
+    task_reviews: list[TaskReview] = field(default_factory=list)

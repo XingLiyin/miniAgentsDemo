@@ -128,10 +128,7 @@ class OpenAIAdapter(BaseAdapter):
             'messages': [{'role': m.role, 'content': m.content} for m in messages],
             'stream': stream,
         }
-        if stream:
-            # 请求服务端在结束 chunk 中携带 usage
-            payload['stream_options'] = {'include_usage': True}
-        if req.tools is not None:
+        if req.tools:
             payload['tools'] = _map_openai_tools(req.tools)
         if req.temperature is not None:
             payload['temperature'] = req.temperature

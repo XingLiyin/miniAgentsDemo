@@ -43,7 +43,11 @@ class HttpxTransport(Transport, StreamTransport):
         try:
             with httpx.Client(timeout=timeout or self._timeout) as client:
                 with client.stream('POST', url, headers=headers, json=json) as resp:
-                    resp.raise_for_status()
+                    if resp.status_code >= 400:
+                        resp.read()   # 必须先读 body，否则流式上下文下 text 为空
+                        raise RuntimeError(
+                            f'HTTP 状态错误: {resp.status_code} {resp.text}'
+                        )
                     for raw_line in resp.iter_lines():
                         line = raw_line.strip()
                         if not line or not line.startswith('data:'):
@@ -52,6 +56,8 @@ class HttpxTransport(Transport, StreamTransport):
                         if payload == '[DONE]':
                             return
                         yield payload
+        except RuntimeError:
+            raise
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(f'HTTP 状态错误: {exc.response.status_code}') from exc
         except httpx.TimeoutException as exc:

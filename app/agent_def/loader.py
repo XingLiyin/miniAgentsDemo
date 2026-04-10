@@ -150,7 +150,18 @@ def _parse_simple_yaml(text: str) -> dict:
             result[key] = items
             continue
 
-        # 去掉引号
+        # 内联列表：['a', 'b'] 或 ["a", "b"]
+        if raw_val.startswith("[") and raw_val.endswith("]"):
+            inner = raw_val[1:-1]
+            result[key] = [
+                item.strip().strip("'").strip('"')
+                for item in inner.split(",")
+                if item.strip().strip("'").strip('"')
+            ]
+            i += 1
+            continue
+
+        # 简单标量：去掉引号
         result[key] = raw_val.strip('"').strip("'")
         i += 1
 

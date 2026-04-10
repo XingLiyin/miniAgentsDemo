@@ -15,11 +15,11 @@ _SESSION_TRANSITIONS: dict[str, set[str]] = {
 }
 
 _TASK_TRANSITIONS: dict[str, set[str]] = {
-    "PENDING":   {"ACTIVE", "CANCELED"},
+    "PENDING":   {"ACTIVE", "CANCELED", "FINISHED"},
     "ACTIVE":    {"FINISHED", "FAILED", "CANCELED", "SUSPENDED"},
     "SUSPENDED": {"ACTIVE", "FAILED", "CANCELED"},
-    "FINISHED":  set(),
-    "FAILED":    set(),
+    "FINISHED":  {"PENDING"},   # Observer 复核不通过时 reopen
+    "FAILED":    {"PENDING"},   # LifecycleManager 重试时 retry
     "CANCELED":  set(),
 }
 

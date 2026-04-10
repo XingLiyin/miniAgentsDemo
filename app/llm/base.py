@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, List, Optional, Protocol
+from typing import Any, Dict, Iterator, List, Optional, Protocol, runtime_checkable
 
 from app.llm.types import LLMMessage, LLMRequest, LLMResponse, LLMTool, ParsedResponse, StreamChunk
 
 
 # ── 传输层 ────────────────────────────────────────────────────────────────
 
+@runtime_checkable
 class Transport(Protocol):
     """同步非流式传输层。"""
 
@@ -18,6 +19,7 @@ class Transport(Protocol):
         ...
 
 
+@runtime_checkable
 class StreamTransport(Protocol):
     """支持 SSE 流式传输层。"""
 

@@ -19,7 +19,8 @@ def register_llm(req: LLMRegisterRequest) -> LLMRegisterResponse:
         raise HTTPException(status_code=409, detail={"code": "LLM_ALREADY_EXISTS", "message": f"LLM '{req.name}' already registered"})
     if req.style not in SUPPORTED_LLM_STYLES:
         raise HTTPException(status_code=400, detail={"code": "INVALID_LLM_STYLE", "message": f"Unsupported LLM style: {req.style}"})
-    timeout_sec = req.timeout_sec or 60
+    from app.config.settings import get_settings
+    timeout_sec = req.timeout_sec or get_settings().default_llm_timeout_sec
     config = LLMProviderConfig(
         name=req.name,
         style=req.style,

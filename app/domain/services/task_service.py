@@ -55,6 +55,12 @@ class TaskService:
         )
         self._store.save(task.to_dict())
         self._bus.publish(TASK_CREATED, {"task_id": task.id, "session_id": session_id})
+        # Push SSE event
+        try:
+            from app.runtime.sse_bus import get_sse_bus
+            get_sse_bus().push(session_id, {"type": "task_created", "task": task.to_dict()})
+        except Exception:
+            pass
         return task
 
     def create_plan_task(
@@ -104,6 +110,12 @@ class TaskService:
         }
         if to_status in event_map:
             self._bus.publish(event_map[to_status], {"task_id": task_id, "session_id": task.session_id})
+        # Push SSE event
+        try:
+            from app.runtime.sse_bus import get_sse_bus
+            get_sse_bus().push(task.session_id, {"type": "task_updated", "task": task.to_dict()})
+        except Exception:
+            pass
         return task
 
     def finish(self, task_id: str, result: str | None = None, outputs: dict | None = None) -> Task:
@@ -121,6 +133,21 @@ class TaskService:
         task.error = error
         self.save(task)
         return self.transition(task_id, "FAILED")
+
+    def reopen(self, task_id: str) -> Task:
+        """将 FINISHED 任务重置为 PENDING（Observer 复核不通过时使用）。"""
+        task = self.get(task_id)
+        task.result = None
+        task.outputs = {}
+        self.save(task)
+        return self.transition(task_id, "PENDING")
+
+    def retry(self, task_id: str) -> Task:
+        """将 FAILED 任务打回 PENDING（LifecycleManager 重试调度时使用）。"""
+        task = self.get(task_id)
+        task.error = None
+        self.save(task)
+        return self.transition(task_id, "PENDING")
 
     def list_by_session(self, session_id: str) -> list[Task]:
         """列出 session 下所有 Task（扫描全量，Phase 1 可接受）。"""

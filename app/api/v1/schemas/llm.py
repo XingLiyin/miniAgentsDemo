@@ -13,7 +13,7 @@ class LLMRegisterRequest(BaseModel):
     api_key: str
     base_url: str
     model: str
-    timeout_sec: Optional[int] = 60
+    timeout_sec: Optional[int] = None
 
 
 class LLMRegisterResponse(BaseModel):

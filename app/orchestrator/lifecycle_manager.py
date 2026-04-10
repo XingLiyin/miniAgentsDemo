@@ -285,12 +285,21 @@ class LifecycleManager:
                     )
                 else:
                     pending = self._task_svc.list_pending(session_id)
-                    if pending:
-                        next_task_to_schedule = pending[0]
-                    else:
-                        next_task_to_schedule = self._task_manager.create_replan(
-                            session_id, agent_id
+                    if not pending:
+                        # Plan A: task succeeded + no pending tasks → session complete
+                        logger.info("Session %s: no pending tasks, marking SUCCEEDED", session_id)
+                        try:
+                            self._session_svc.transition(session_id, "SUCCEEDED")
+                        except Exception:
+                            logger.exception("LM: failed to transition session %s to SUCCEEDED", session_id)
+                        state.agent_registry.pop(agent_id, None)
+                        state.concurrent_agents -= 1
+                        self._bus.publish(
+                            LIFECYCLE_AGENT_RECYCLED,
+                            {"session_id": session_id, "agent_id": agent_id},
                         )
+                    else:
+                        next_task_to_schedule = pending[0]
 
                     if next_task_to_schedule:
                         meta.task_id = next_task_to_schedule.id
@@ -356,10 +365,12 @@ class LifecycleManager:
                         next_task_to_schedule = pending[0]
                         root_resume_agent_id = root_id
                     else:
-                        replan = self._task_manager.create_replan(session_id, root_id)
-                        root_meta.task_id = replan.id
-                        next_task_to_schedule = replan
-                        root_resume_agent_id = root_id
+                        # Plan A: sub-agent finished + no pending → session complete
+                        logger.info("Session %s: no pending tasks after sub-agent, marking SUCCEEDED", session_id)
+                        try:
+                            self._session_svc.transition(session_id, "SUCCEEDED")
+                        except Exception:
+                            logger.exception("LM: failed to transition session %s to SUCCEEDED", session_id)
 
         if next_task_to_schedule:
             sched_agent_id = root_resume_agent_id or agent_id
@@ -393,27 +404,85 @@ class LifecycleManager:
             )
 
             if meta.spawn_depth == 0:
-                try:
-                    self._session_svc.transition(session_id, "FAILED")
-                except Exception:
-                    pass
+                failed_task_id = meta.task_id
+                retry_count = state.retry_counts.get(failed_task_id, 0) if failed_task_id else state.max_retries
+                if failed_task_id and retry_count < state.max_retries:
+                    state.retry_counts[failed_task_id] = retry_count + 1
+                    logger.info(
+                        "LM: retrying task %s (attempt %d/%d) for session %s",
+                        failed_task_id, retry_count + 1, state.max_retries, session_id,
+                    )
+                    try:
+                        self._task_svc.retry(failed_task_id)
+                    except Exception:
+                        logger.exception("LM: failed to reset task %s for retry", failed_task_id)
+                        try:
+                            self._session_svc.transition(session_id, "FAILED")
+                        except Exception:
+                            pass
+                    else:
+                        # reschedule outside lock
+                        resume_root_agent_id = agent_id
+                        resume_root_task = self._task_svc.get(failed_task_id)
+                        state.agent_registry[agent_id] = AgentMeta(
+                            agent_id=agent_id,
+                            task_id=failed_task_id,
+                            spawn_depth=0,
+                            status="RUNNING",
+                        )
+                        state.concurrent_agents += 1
+                else:
+                    try:
+                        self._session_svc.transition(session_id, "FAILED")
+                    except Exception:
+                        pass
             else:
                 root_id = state.root_agent_id
                 root_meta = state.agent_registry.get(root_id)
                 if root_meta is not None:
                     pending = self._task_svc.list_pending(session_id)
-                    if pending:
-                        root_meta.task_id = pending[0].id
-                        resume_root_agent_id = root_id
-                        resume_root_task = pending[0]
+                    if not pending:
+                        logger.warning(
+                            "LM: sub-agent %s failed with no pending tasks, marking session %s FAILED",
+                            agent_id, session_id,
+                        )
+                        try:
+                            self._session_svc.transition(session_id, "FAILED")
+                        except Exception:
+                            pass
                     else:
-                        replan = self._task_manager.create_replan(session_id, root_id)
-                        root_meta.task_id = replan.id
+                        next_task = pending[0]
+                        root_meta.task_id = next_task.id
                         resume_root_agent_id = root_id
-                        resume_root_task = replan
+                        resume_root_task = next_task
+
+                        if next_task.inputs.get("use_subagent"):
+                            reject = self._check_spawn_permission(
+                                state,
+                                root_id,
+                                [SpawnPlanItem(title=next_task.title, description=next_task.description)],
+                            )
+                            if reject:
+                                logger.warning(
+                                    "LM: auto-spawn rejected for task %s (%s); "
+                                    "falling back to inline execution",
+                                    next_task.id,
+                                    reject,
+                                )
+                            else:
+                                self._pending_auto_spawns.setdefault(session_id, []).append(
+                                    (root_id, next_task.id)
+                                )
+                                resume_root_agent_id = None
+                                resume_root_task = None
+                                root_meta.task_id = None
 
         if resume_root_agent_id and resume_root_task:
             self.schedule_task(session_id, resume_root_agent_id, resume_root_task.id)
+
+        auto_spawns = self._pending_auto_spawns.pop(session_id, [])
+        for spawning_agent_id, task_id in auto_spawns:
+            self._auto_spawn_for_task(session_id, spawning_agent_id, task_id)
 
     def _auto_spawn_for_task(
         self,

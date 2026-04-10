@@ -78,6 +78,7 @@ class SessionManager:
         template_id: str | None = None,
         token_budget: int | None = None,
         root_max_turns: int | None = None,
+        llm_name: str | None = None,
     ) -> tuple[Session, str]:
         """创建 Session + root Agent，返回 (Session, root_agent_id)。
         由调用方决定是否/如何启动 AgentLoop（sync or async）。
@@ -126,7 +127,7 @@ class SessionManager:
             skill_list=skill_list,
             soul_path=soul_path,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
-            llm_name=settings.agent_default_llm_name,
+            llm_name=llm_name or settings.agent_default_llm_name,
             has_spawn_permission=True,   # root agent 默认可以 spawn
             spawn_depth=0,
             created_at=now,
@@ -184,6 +185,18 @@ class SessionManager:
             content=user_message,
             session_id=session_id,
         )
+        # Push SSE user message event
+        try:
+            from app.common.utils import now_iso
+            from app.runtime.sse_bus import get_sse_bus
+            get_sse_bus().push(session_id, {
+                "type": "message",
+                "role": "user",
+                "content": user_message,
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
 
         # Loop still active — message will be picked up automatically
         if session.status in ("QUEUED", "RUNNING"):
@@ -251,8 +264,10 @@ class SessionManager:
 
         return self._session_svc.get(session_id)
 
-    def answer_input(self, session_id: str, task_id: str, content: str) -> Session:
-        """Submit user answer for a WAITING_INPUT task and restart the loop."""
+    def answer_input(self, session_id: str, content: str) -> Session:
+        """Submit user answer for a WAITING_INPUT session and unblock the agent thread."""
+        from app.runtime.hitl_store import get_hitl_store
+
         session = self._session_svc.get(session_id)
         if session.status != "WAITING_INPUT":
             raise AppError(
@@ -260,33 +275,32 @@ class SessionManager:
                 f"Session {session_id} is not waiting for input (status={session.status})",
             )
 
-        if self._task_svc is None or self._memory_svc is None:
-            raise AppError("INTERNAL_ERROR", "SessionManager missing task_svc or memory_svc")
+        # 注入答案并唤醒阻塞的工作线程
+        entry = get_hitl_store().submit(session_id, content)
 
-        # Read task before finishing (need inputs.type and agent_id)
-        task = self._task_svc.get(task_id)
+        # 写入记忆（由 entry 携带的 agent_id 确定归属）
+        if entry is not None and self._memory_svc is not None:
+            self._memory_svc.append_message(
+                agent_id=entry.agent_id,
+                role="user",
+                content=content,
+                session_id=session_id,
+            )
 
-        # Write user answer into the task and mark it finished
-        self._task_svc.finish(task_id, result=content)
+        # 推送用户回答气泡
+        try:
+            from app.common.utils import now_iso
+            from app.runtime.sse_bus import get_sse_bus
+            get_sse_bus().push(session_id, {
+                "type": "message",
+                "role": "user",
+                "content": content,
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
 
-        # Append to the memory of the agent that triggered this HITL
-        self._memory_svc.append_message(
-            agent_id=task.assigned_agent_id,
-            role="user",
-            content=content,
-            session_id=session_id,
-        )
-
-        # inline HITL（request_human_input / task_completion_confirm）：
-        # actor 线程正在阻塞轮询，它会自己把 session 转回 RUNNING，此处不重启 loop
-        if task.inputs.get("inline"):
-            return self._session_svc.get(session_id)
-
-        # 普通 HITL：重启 loop
-        self._session_svc.transition(session_id, "QUEUED")
-        if session.root_agent_id:
-            self.schedule_loop(session_id, session.root_agent_id)
-
+        # 工作线程自行将 session 转回 RUNNING，此处无需重启 loop
         return self._session_svc.get(session_id)
 
     def cancel_session(self, session_id: str) -> Session:
@@ -322,6 +336,13 @@ class SessionManager:
         # 删除 agent 文件
         if session.root_agent_id:
             self._agent_store.delete(session.root_agent_id)
+
+        # 删除事件日志（SSE 历史回放）
+        try:
+            from app.runtime.event_store import get_event_store
+            get_event_store().delete(session_id)
+        except Exception:
+            pass
 
         # 最后删除 session 文件
         self._session_svc.delete(session_id)

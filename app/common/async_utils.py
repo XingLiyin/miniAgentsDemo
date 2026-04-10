@@ -23,6 +23,11 @@ def set_main_loop(loop: asyncio.AbstractEventLoop) -> None:
     _main_loop = loop
 
 
+def get_main_loop() -> asyncio.AbstractEventLoop | None:
+    """Return the captured main event loop, or None if not yet set."""
+    return _main_loop
+
+
 def run_awaitable_sync(awaitable: Awaitable[_T]) -> _T:
     """Run an awaitable synchronously, even if a loop is already running.
 

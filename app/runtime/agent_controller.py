@@ -6,16 +6,15 @@
   且可通过 ControlSignal 修改调用方的执行流。
 
 内置控制工具（按 scope 分组）：
-  actor        : request_human_input — 创建 user_input task，阻塞等待用户回答
-  observer_plan: submit_plan         — Observer 读取文本计划，创建 atomic 子任务并返回 verdict
-  observer     : submit_observation  — 解析观察结果，按需创建 spawn_planner task
-  observer_opt : replan              — 取消 session 全部 pending tasks，创建新 plan task（仅 planner agent）
+  actor        : request_human_input    — 阻塞当前线程等待用户回答（HitlStore）
+  observer_plan: submit_plan            — 创建 atomic 子任务 + 评估当前 plan task（proceed_to_review=False）
+  observer     : submit_task_assessment — 评估当前 atomic task，继续第二轮复核（proceed_to_review=True）
+  observer     : replan                 — 取消 session 全部 pending tasks，创建新 plan task（proceed_to_review=False）
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Callable
@@ -79,8 +78,22 @@ def submit_plan(
             "false for fully isolated tasks with no need for conversation context."
         ),
     ],
+    task_outcome: Annotated[
+        str,
+        "Outcome of the current plan task: "
+        "'success' if planning completed successfully (even if tasks=[]); "
+        "'failed' if planning itself could not be completed.",
+    ] = "success",
+    task_result: Annotated[
+        str,
+        "Brief description of what the plan covers, or why planning failed.",
+    ] = "",
+    summary: Annotated[
+        str,
+        "Concise summary of this planning turn (1-3 sentences), written to agent memory.",
+    ] = "",
 ) -> ToolResult:
-    """Submit the decomposed task plan. Call exactly once per turn."""
+    """Submit the decomposed task plan and assessment of the current planning turn. Call exactly once per turn."""
     return ToolResult(content="")
 
 
@@ -139,13 +152,13 @@ class AgentController:
     # ── 默认注册 ───────────────────────────────────────────────────────────
 
     def _register_defaults(self) -> None:
-        from app.tools.builtins import request_human_input
-        from app.runtime.observer import replan, submit_observation
+        from app.tools.builtins import request_human_input, replan
+        from app.runtime.observer import submit_task_assessment
 
-        self.register(request_human_input, self._handle_request_human_input, scope="actor")
-        self.register(submit_plan,         self._handle_submit_plan,         scope="observer_plan")
-        self.register(submit_observation,  self._handle_submit_observation,  scope="observer")
-        self.register(replan,              self._handle_replan,              scope="observer")
+        self.register(request_human_input,    self._handle_request_human_input,    scope="actor")
+        self.register(submit_plan,            self._handle_submit_plan,            scope="observer")
+        self.register(submit_task_assessment, self._handle_submit_task_assessment, scope="observer")
+        self.register(replan,                 self._handle_replan,                 scope="observer")
 
     # ── 内置 handler：request_human_input ──────────────────────────────────
 
@@ -155,31 +168,37 @@ class AgentController:
         agent: "Agent",
         task: "Task",
     ) -> ControlResult:
-        """创建 user_input task，同步阻塞直到用户回答，恢复 session 后返回。"""
+        """阻塞等待用户回答，恢复 session 后返回。
+
+        不创建 user_input task；通过 HitlStore + threading.Event 阻塞当前工作线程。
+        """
+        from app.runtime.hitl_store import get_hitl_store
+        from app.runtime.sse_bus import get_sse_bus
+
         prompt = args.get("prompt", "")
-        context = args.get("context", "")
+        session_id = task.session_id
+        agent_id = task.assigned_agent_id
 
-        hitl_task = self._task_svc.create(
-            session_id=task.session_id,
-            creator_agent_id=task.assigned_agent_id,
-            task_type="user_input",
-            title="等待用户输入",
-            description=prompt,
-            inputs={"prompt": prompt, "context": context, "inline": True},
-        )
-        self._task_svc.transition(hitl_task.id, "ACTIVE")
-        self._session_svc.transition(task.session_id, "WAITING_INPUT")
+        self._session_svc.transition(session_id, "WAITING_INPUT")
+        try:
+            from app.common.utils import now_iso
+            get_sse_bus().push(session_id, {
+                "type": "message",
+                "role": "assistant",
+                "content": prompt,
+                "created_at": now_iso(),
+            })
+            get_sse_bus().push(session_id, {
+                "type": "waiting_input",
+                "prompt": prompt,
+                "input_type": "user_input",
+                "task_title": "等待用户输入",
+            })
+        except Exception:
+            pass
 
-        answer = ""
-        deadline = time.monotonic() + 3600
-        while time.monotonic() < deadline:
-            refreshed = self._task_svc.get(hitl_task.id)
-            if refreshed.status == "FINISHED":
-                answer = refreshed.result or ""
-                break
-            time.sleep(1)
-
-        self._session_svc.transition(task.session_id, "RUNNING")
+        answer = get_hitl_store().wait(session_id, agent_id, prompt, "user_input")
+        self._session_svc.transition(session_id, "RUNNING")
 
         return ControlResult(
             tool_result=ToolResult(content=answer),
@@ -195,9 +214,10 @@ class AgentController:
         agent: "Agent",
         task: "Task",
     ) -> ControlResult:
-        """Observer 调用：将文本计划结构化为 Task 记录，批量写入存储，返回 verdict。
+        """Observer 调用：将计划结构化为 Task 记录并批量写入，同时收集当前 plan task 的评估字段。
 
         agent 在 Observer 上下文中为 None，统一从 task 取 session_id / assigned_agent_id。
+        proceed_to_review=False：任务刚创建，无需进入第二轮复核。
         """
         task_ids: list[str] = []
         titles: list[str] = []
@@ -223,67 +243,27 @@ class AgentController:
             task_ids.append(t.id)
             titles.append(spec.get("title", ""))
 
-        done = len(task_ids) == 0
-        summary = (
+        # assessment 字段：LLM 提供则优先使用，否则自动生成
+        task_outcome = args.get("task_outcome", "success")
+        if task_outcome not in ("success", "failed", "needs_user_input"):
+            task_outcome = "success"
+        default_result = (
             f"Planned {len(task_ids)} tasks: {', '.join(titles)}"
             if task_ids
             else "No further tasks needed — goal already achieved."
         )
+        task_result = args.get("task_result") or default_result
+        summary     = args.get("summary")     or default_result
+
         logger.debug("AgentController: submit_plan created %d tasks", len(task_ids))
         return ControlResult(
-            tool_result=ToolResult(content=summary),
+            tool_result=ToolResult(content=default_result),
             signal=ControlSignal.NONE,
             signal_data={
-                "task_success":       True,
-                "task_result":        summary,
-                "done":               done,
-                "summary":            summary,
-                "reasoning":          f"submit_plan: {len(task_ids)} tasks created",
-                "needs_user_confirm": False,
-            },
-        )
-
-    # ── 内置 handler：submit_observation ───────────────────────────────────
-
-    def _handle_submit_observation(
-        self,
-        args: dict,
-        agent: "Agent",
-        task: "Task",
-    ) -> ControlResult:
-        """解析观察结果字段；若需要 spawn planner，立即创建 plan task。
-
-        create_plan_task 在此处触发，而非由 AgentLoop 在收到 verdict 后再判断，
-        原因：spawn_planner 是 submit_observation 语义的直接副作用，AgentController 已持有
-        TaskService，可在工具处理层完成，AgentLoop 无需关心 spawn_planner 字段。
-        """
-        task_success = bool(args.get("task_complete", False))
-        done = bool(args.get("done", False))
-        needs_replan = bool(args.get("spawn_planner", False))
-        task_result = args.get("task_result", "")
-
-        if needs_replan and task_success and not done:
-            self._task_svc.create_plan_task(
-                session_id=task.session_id,
-                creator_agent_id=task.assigned_agent_id,
-                title="Re-plan: discover follow-up tasks",
-                description=task_result,
-            )
-            logger.debug(
-                "AgentController: submit_observation triggered replan for session %s",
-                agent.session_id,
-            )
-
-        return ControlResult(
-            tool_result=ToolResult(content=""),
-            signal=ControlSignal.NONE,
-            signal_data={
-                "task_success":       task_success,
-                "task_result":        task_result,
-                "done":               done,
-                "summary":            args.get("summary", ""),
-                "reasoning":          args.get("reasoning", ""),
-                "needs_user_confirm": bool(args.get("needs_user_confirm", False)),
+                "task_outcome":      task_outcome,
+                "task_result":       task_result,
+                "summary":           summary,
+                "proceed_to_review": False,
             },
         )
 
@@ -314,11 +294,33 @@ class AgentController:
             tool_result=ToolResult(content=f"Cancelled {cancelled} tasks. New plan task created."),
             signal=ControlSignal.NONE,
             signal_data={
-                "task_success":       True,
-                "task_result":        reason,
-                "done":               False,
-                "summary":            summary,
-                "reasoning":          f"replan: {reason}",
-                "needs_user_confirm": False,
+                "task_outcome":      "success",
+                "task_result":       reason,
+                "summary":           summary,
+                "proceed_to_review": False,
+            },
+        )
+
+    # ── 内置 handler：submit_task_assessment ───────────────────────────────
+
+    def _handle_submit_task_assessment(
+        self,
+        args: dict,
+        agent: "Agent",
+        task: "Task",
+    ) -> ControlResult:
+        """解析当前 task 评估结果，标记 proceed_to_review=True 以触发第二轮复核。"""
+        task_outcome = args.get("task_outcome", "failed")
+        if task_outcome not in ("success", "failed", "needs_user_input"):
+            task_outcome = "failed"
+
+        return ControlResult(
+            tool_result=ToolResult(content=""),
+            signal=ControlSignal.NONE,
+            signal_data={
+                "task_outcome":      task_outcome,
+                "task_result":       args.get("task_result", ""),
+                "summary":           args.get("summary", ""),
+                "proceed_to_review": True,
             },
         )

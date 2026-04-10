@@ -189,6 +189,21 @@ def request_human_input(
     return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
 
 
+# ── replan ───────────────────────────────────────────────────────────────
+# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 AgentController，由其特殊处理。
+
+@tool_result
+def replan(
+    reason: Annotated[str, "Why the current plan is invalid and needs to be rebuilt"],
+    summary: Annotated[str, "Brief summary of progress so far (written to agent memory)"] = "",
+) -> ToolResult:
+    """Cancel all pending tasks and trigger a full replan from scratch.
+    Use when the current task list is fundamentally wrong or the goal has shifted."""
+    import json
+    output = json.dumps({"reason": reason, "summary": summary}, ensure_ascii=False)
+    return ToolResult(content=output)  # 触发信号，AgentController 特殊处理，函数体不执行
+
+
 # ── Provider 入口 ─────────────────────────────────────────────────────────
 
 def get_builtin_provider() -> BuiltinToolProvider:

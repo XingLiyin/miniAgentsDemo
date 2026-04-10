@@ -4,9 +4,9 @@
   - task.type == "plan"   → Actor._act_as_planner（内部调用 Planner）
   - task.type == "atomic" → Actor._act_as_executor（多轮 tool use）
 
-task 完成判定由 Observer 负责（mark_task_complete 已从 LLM 工具中移除）。
-AgentLoop 依据 ObserverVerdict 写入 task 状态，并在 needs_user_confirm 时触发 HITL。
-调度逻辑（下一个 task 是什么、session 是否结束）由 LifecycleManager 负责。
+task 完成判定由 Observer 负责，返回 task_outcome（success / failed / needs_user_input）。
+AgentLoop 依据 task_outcome 写入 task 状态；needs_user_input 时触发 HITL。
+调度逻辑（下一个 task、session SUCCEEDED/重试）由 LifecycleManager 负责。
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ class AgentLoop:
     def run(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Execute one task synchronously inside a worker thread.
 
-        Observer decides task completion (task_success) and writes task state.
+        Observer decides task_outcome and AgentLoop writes task state.
         Transitions session to SUCCEEDED when observer reports done=True.
         Raises AppError on budget/turn exceeded or task failure — caller handles session FAILED.
         """
@@ -95,13 +95,13 @@ class AgentLoop:
 
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
-            verdict = self._observer.observe(session, result, ctx, task)
+            task_list = self._task_svc.list_by_session(session_id)
+            verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
 
-            logger.debug("Session %s observer: %s", session_id, verdict.reasoning)
+            logger.debug("Session %s observer outcome: %s", session_id, verdict.task_outcome)
 
             # ── task 状态写入（由 Observer 判定，AgentLoop 执行）──────────────
-            # spawn_planner 副作用（create_plan_task）已在 AgentController._handle_submit_observation 完成
-            if verdict.needs_user_confirm:
+            if verdict.task_outcome == "needs_user_input":
                 confirmed, feedback = self._ask_user_for_task_confirmation(
                     task, result.output
                 )
@@ -111,12 +111,27 @@ class AgentLoop:
                     error = feedback or "用户确认任务未完成"
                     self._task_svc.fail(task_id, error=error)
                     raise AppError("TASK_NOT_CONFIRMED", error)
-            elif verdict.task_success:
+            elif verdict.task_outcome == "success":
                 outputs = result.task_outputs if result.task_outputs else None
                 self._task_svc.finish(task_id, result=verdict.task_result, outputs=outputs)
             else:
                 self._task_svc.fail(task_id, error=verdict.task_result)
                 raise AppError("TASK_FAILED_BY_OBSERVER", verdict.task_result)
+
+            # ── task_reviews：复核 FINISHED，提前完成 PENDING ────────────────
+            for review in verdict.task_reviews:
+                if review.task_id == task_id:
+                    continue  # 当前 task 由上方逻辑处理，跳过
+                try:
+                    if review.review_status == "reopen":
+                        self._task_svc.reopen(review.task_id)
+                        logger.info("Task %s reopened by observer: %s", review.task_id, review.reasoning)
+                    elif review.review_status == "skip":
+                        self._task_svc.finish(review.task_id, result=review.reasoning or "Completed indirectly per observer.")
+                        logger.info("Task %s skipped by observer: %s", review.task_id, review.reasoning)
+                    # "confirmed" → 无操作
+                except Exception as e:
+                    logger.warning("Failed to apply task review for %s: %s", review.task_id, e)
 
             # ── memory / blackboard ───────────────────────────────────────────
             if verdict.summary:
@@ -128,17 +143,12 @@ class AgentLoop:
                 )
 
             for result_turn in result.conversation_turns:
-                self._bb_svc.publish(session_id, "_root", "user_id_" + session_id, result_turn.messages_sent)
                 self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, result_turn.llm_text)
                 for tool_call in result_turn.tool_calls:
                     self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
 
             if self._memory_svc.should_summarize(agent_id):
                 self._do_summarize(session_id, agent_id, verdict.summary)
-
-            if verdict.done and verdict.task_success:
-                logger.info("Session %s: observer reports done", session_id)
-                self._session_svc.transition(session_id, "SUCCEEDED")
 
         except AppError as e:
             logger.error(
@@ -191,35 +201,38 @@ class AgentLoop:
         return confirmed, feedback
 
     def _block_for_user_input(self, task: object, title: str, inputs: dict) -> str:
-        """创建 user_input task，阻塞等待用户回答后返回内容（最多 1 小时）。
+        """阻塞等待用户回答后返回内容（最多 1 小时）。
 
-        inputs 必须包含 "inline": True，使 answer_input 不重启 loop。
+        不创建 user_input task；通过 HitlStore + threading.Event 阻塞当前工作线程。
+        答案由 POST /sessions/{id}/input 注入，唤醒后继续执行。
         """
-        import time
+        from app.runtime.hitl_store import get_hitl_store
+        from app.runtime.sse_bus import get_sse_bus
 
         session_id = getattr(task, "session_id", "")
         agent_id = getattr(task, "assigned_agent_id", "")
+        prompt = inputs.get("prompt", "")
+        input_type = inputs.get("type", "user_input")
 
-        hitl_task = self._task_svc.create(
-            session_id=session_id,
-            creator_agent_id=agent_id,
-            task_type="user_input",
-            title=title,
-            description=inputs.get("prompt", ""),
-            inputs=inputs,
-        )
-        self._task_svc.transition(hitl_task.id, "ACTIVE")
         self._session_svc.transition(session_id, "WAITING_INPUT")
+        try:
+            from app.common.utils import now_iso
+            get_sse_bus().push(session_id, {
+                "type": "message",
+                "role": "assistant",
+                "content": prompt,
+                "created_at": now_iso(),
+            })
+            get_sse_bus().push(session_id, {
+                "type": "waiting_input",
+                "prompt": prompt,
+                "input_type": input_type,
+                "task_title": title,
+            })
+        except Exception:
+            pass
 
-        answer = ""
-        deadline = time.monotonic() + 3600
-        while time.monotonic() < deadline:
-            refreshed = self._task_svc.get(hitl_task.id)
-            if refreshed.status == "FINISHED":
-                answer = refreshed.result or ""
-                break
-            time.sleep(1)
-
+        answer = get_hitl_store().wait(session_id, agent_id, prompt, input_type)
         self._session_svc.transition(session_id, "RUNNING")
         return answer
 

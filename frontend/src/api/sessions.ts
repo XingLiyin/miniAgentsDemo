@@ -9,7 +9,7 @@ export const sessionsApi = {
   getTasks: (id: string) => http.get<Task[]>(`/sessions/${id}/tasks`),
   sendMessage: (id: string, content: string) =>
     http.post<Session>(`/sessions/${id}/messages`, { content }),
-  answerInput: (id: string, task_id: string, content: string) =>
-    http.post<Session>(`/sessions/${id}/input`, { task_id, content }),
+  answerInput: (id: string, content: string) =>
+    http.post<Session>(`/sessions/${id}/input`, { content }),
   delete: (id: string) => http.delete<void>(`/sessions/${id}`),
 }
