@@ -640,7 +640,6 @@ class LifecycleManager:
             template_id=template_id,
             name=agent_name,
             status="IDLE",
-            system_prompt=system_prompt,
             soul_md=soul_md,
             role_md=role_md,
             tool_list=tool_list,

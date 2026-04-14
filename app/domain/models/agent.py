@@ -37,24 +37,24 @@ class Agent:
                        ↕
                     WAITING  （调用 spawn_agents 后等待子任务完成）
     """
+    # metadata
     id: str
     session_id: str
     template_id: str
     name: str
     status: str                                 # IDLE | RUNNING | WAITING | FINISHED | FAILED
+    llm_name: str = ""                          # LLM 配置（继承自 template 或 session 创建时指定）
 
-    system_prompt: str = ""
+    # context engineering
     soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
     role_md: str = ""                           # 驱动 Observer 阶段 system prompt（评判准则）
     tool_list: list[str] = field(default_factory=list)
     skill_list: list[str] = field(default_factory=list)
     soul_path: str | None = None
+    inherit_memory: bool = True                 # False = spawn 时跳过记忆复制
+
     loop_guard: LoopGuard = field(default_factory=LoopGuard)
-    inherit_memory: bool = True                 # False = Reasoner 跳过 session 记忆加载
-
-    # LLM 配置（继承自 template 或 session 创建时指定）
-    llm_name: str = ""
-
+    
     # Spawn 字段
     has_spawn_permission: bool = False          # 是否允许 spawn sub-agent
     spawn_depth: int = 0                        # 嵌套深度（root=0）
@@ -70,7 +70,6 @@ class Agent:
             "template_id": self.template_id,
             "name": self.name,
             "status": self.status,
-            "system_prompt": self.system_prompt,
             "soul_md": self.soul_md,
             "role_md": self.role_md,
             "tool_list": self.tool_list,
@@ -94,7 +93,6 @@ class Agent:
             template_id=d.get("template_id"),
             name=d["name"],
             status=d["status"],
-            system_prompt=d.get("system_prompt", ""),
             soul_md=d.get("soul_md", ""),
             role_md=d.get("role_md", ""),
             tool_list=d.get("tool_list", []),

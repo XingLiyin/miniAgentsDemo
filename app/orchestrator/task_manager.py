@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from app.config.settings import get_settings
 from app.domain.models.task import Task
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
@@ -34,14 +35,21 @@ class TaskManager:
 
         use_subagent=True：由 plan sub-agent 执行规划，root agent 不直接运行。
         """
-        task = self._task_svc.create_plan_task(
+        settings = get_settings()
+        task = self._task_svc.create(
             session_id=session_id,
             creator_agent_id=agent_id,
+            task_type="plan",
             title="Re-plan: evaluate next steps",
             description=(
                 "All current tasks completed. Re-evaluate the goal and plan "
                 "next steps if needed."
             ),
+            inputs={
+                "use_subagent": True,
+                "inherit_memory": True,
+                "subagent_template": settings.default_planner_template_name,
+            },
         )
         logger.info("Session %s: created re-plan task %s", session_id, task.id)
         return task

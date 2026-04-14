@@ -20,8 +20,8 @@ class Settings(BaseModel):
 
     # 数据目录
     data_dir: Path = Path("data")
-    skills_dir: Path = Path("data/skills")
-    agents_dir: Path = Path("data/agents")
+    skills_dir: Path = Path("resources/skills")
+    agents_dir: Path = Path("resources/agents")
 
     # LLM 配置
     llm_openai_api_key: SecretString = SecretString("")

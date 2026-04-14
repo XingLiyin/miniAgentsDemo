@@ -26,12 +26,19 @@ export interface Session {
   updated_at: string
 }
 
+export interface InitialTaskConfig {
+  title?: string | null
+  use_subagent?: boolean
+  subagent_template?: string | null
+}
+
 export interface CreateSessionRequest {
   goal: string
   template_id?: string | null
   token_budget?: number
   root_max_turns?: number
   llm_name?: string | null
+  initial_task?: InitialTaskConfig | null
 }
 
 // ─── Task ────────────────────────────────────────────────────────────────────

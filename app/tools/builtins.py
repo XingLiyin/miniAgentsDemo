@@ -1,4 +1,4 @@
-"""内置工具实现：bash_exec、http_request、search_tools。
+"""内置工具实现：bash_exec、http_request、search_tools、read、write、glob。
 
 新增内置工具步骤：
 1. 用 @tool_result 装饰函数，参数用 Annotated[type, "描述"] 声明
@@ -8,9 +8,11 @@
 
 from __future__ import annotations
 
+import glob as _glob
 import logging
 import re
 import subprocess
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -158,54 +160,98 @@ def search_tools(
     return ToolResult(content=output)
 
 
-# ── mark_task_complete ────────────────────────────────────────────────────
-# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
+
+
+# ── read ──────────────────────────────────────────────────────────────────
 
 @tool_result
-def mark_task_complete(
-    summary: Annotated[str, "Brief summary of what was accomplished"],
-    success: Annotated[bool, "True if the task succeeded, False if it failed"] = True,
+def read(
+    path: Annotated[str, "Absolute or relative path to the file to read"],
+    encoding: Annotated[str, "File encoding (default: utf-8)"] = "utf-8",
 ) -> ToolResult:
-    """Mark the current task as complete. You MUST call this tool once you have finished
-    the task — whether it succeeded or failed. Do not return a plain text response without
-    calling this tool first."""
-    import json
-    output = json.dumps({"summary": summary, "success": success}, ensure_ascii=False)
-    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
+    """Read a file from the filesystem and return its content as text."""
+    settings = get_settings()
+    limit = settings.http_response_limit_bytes  # reuse response limit as file size cap
+
+    file_path = Path(path)
+    if not file_path.exists():
+        raise AppError("FILE_NOT_FOUND", f"File not found: {path}")
+    if not file_path.is_file():
+        raise AppError("NOT_A_FILE", f"Path is not a file: {path}")
+
+    size = file_path.stat().st_size
+    if size > limit:
+        raise AppError("FILE_TOO_LARGE", f"File size {size} bytes exceeds limit {limit} bytes")
+
+    try:
+        content = file_path.read_text(encoding=encoding)
+    except UnicodeDecodeError as e:
+        raise AppError("DECODE_ERROR", f"Failed to decode file with encoding '{encoding}': {e}")
+
+    return ToolResult(content=content, metadata={"path": str(file_path.resolve()), "size": size})
 
 
-# ── request_human_input ───────────────────────────────────────────────────
-# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 Actor，由 Actor 特殊处理。
+# ── write ─────────────────────────────────────────────────────────────────
 
 @tool_result
-def request_human_input(
-    prompt: Annotated[str, "The question or instruction to show the user"],
-    context: Annotated[str, "Optional background context for the user"] = "",
+def write(
+    path: Annotated[str, "Absolute or relative path to the file to write"],
+    content: Annotated[str, "Text content to write to the file"],
+    encoding: Annotated[str, "File encoding (default: utf-8)"] = "utf-8",
+    overwrite: Annotated[bool, "Allow overwriting an existing file (default: true)"] = True,
 ) -> ToolResult:
-    """Pause execution and request input from the human user.
-    Use when you need information or a decision that only the user can provide."""
-    import json
-    output = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
-    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
+    """Write text content to a file. Creates parent directories if they don't exist."""
+    file_path = Path(path)
+
+    if file_path.exists() and not overwrite:
+        raise AppError("FILE_EXISTS", f"File already exists and overwrite=false: {path}")
+
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        file_path.write_text(content, encoding=encoding)
+    except OSError as e:
+        raise AppError("WRITE_ERROR", f"Failed to write file: {e}")
+
+    return ToolResult(
+        content=f"Written {len(content.encode(encoding))} bytes to {file_path.resolve()}",
+        metadata={"path": str(file_path.resolve()), "bytes": len(content.encode(encoding))},
+    )
 
 
-# ── replan ───────────────────────────────────────────────────────────────
-# 不注册到 BuiltinToolProvider；仅作为 LLM schema 传给 AgentController，由其特殊处理。
+# ── glob ──────────────────────────────────────────────────────────────────
 
 @tool_result
-def replan(
-    reason: Annotated[str, "Why the current plan is invalid and needs to be rebuilt"],
-    summary: Annotated[str, "Brief summary of progress so far (written to agent memory)"] = "",
+def glob(
+    pattern: Annotated[str, "Glob pattern to match files, e.g. 'src/**/*.py'"],
+    root: Annotated[str, "Root directory to search from (default: current working directory)"] = ".",
+    limit: Annotated[int, "Maximum number of results to return (default: 200)"] = 200,
 ) -> ToolResult:
-    """Cancel all pending tasks and trigger a full replan from scratch.
-    Use when the current task list is fundamentally wrong or the goal has shifted."""
-    import json
-    output = json.dumps({"reason": reason, "summary": summary}, ensure_ascii=False)
-    return ToolResult(content=output)  # 触发信号，AgentController 特殊处理，函数体不执行
+    """Find files matching a glob pattern. Returns a newline-separated list of matching paths."""
+    root_path = Path(root).resolve()
+    if not root_path.is_dir():
+        raise AppError("NOT_A_DIRECTORY", f"Root path is not a directory: {root}")
+
+    matches = _glob.glob(pattern, root_dir=str(root_path), recursive=True)
+    matches.sort()
+
+    truncated = False
+    if len(matches) > limit:
+        matches = matches[:limit]
+        truncated = True
+
+    output = "\n".join(matches) if matches else "(no matches)"
+    if truncated:
+        output += f"\n[truncated at {limit} results]"
+
+    return ToolResult(
+        content=output,
+        metadata={"count": len(matches), "truncated": truncated, "root": str(root_path)},
+    )
 
 
 # ── Provider 入口 ─────────────────────────────────────────────────────────
 
 def get_builtin_provider() -> BuiltinToolProvider:
     """返回包含所有内置工具的 Provider 实例。"""
-    return BuiltinToolProvider([bash_exec, http_request, search_tools])
+    return BuiltinToolProvider([bash_exec, http_request, search_tools, read, write, glob])

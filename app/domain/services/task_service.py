@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from app.config.settings import get_settings
 from app.common.errors import AppError
 from app.common.utils import new_task_id, now_iso
 from app.domain.events.event_bus import EventBus
@@ -62,30 +61,6 @@ class TaskService:
         except Exception:
             pass
         return task
-
-    def create_plan_task(
-        self,
-        session_id: str,
-        creator_agent_id: str,
-        title: str,
-        description: str = "",
-        *,
-        inherit_memory: bool = True,
-    ) -> Task:
-        """Create a plan task that is always delegated to the planner sub-agent."""
-        settings = get_settings()
-        return self.create(
-            session_id=session_id,
-            creator_agent_id=creator_agent_id,
-            task_type="plan",
-            title=title,
-            description=description,
-            inputs={
-                "use_subagent": True,
-                "inherit_memory": inherit_memory,
-                "subagent_template": settings.default_planner_template_name,
-            },
-        )
 
     def get(self, task_id: str) -> Task:
         data = self._store.get(task_id)

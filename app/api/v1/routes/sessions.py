@@ -11,13 +11,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from app.api.v1.deps import get_session_manager, get_session_service, get_task_service
-from app.api.v1.schemas.session import CreateSessionRequest, SessionResponse
+from app.api.v1.schemas.session import CreateSessionRequest, InitialTaskConfig, SessionResponse
 from app.api.v1.schemas.task import TaskResponse
 from app.common.errors import AppError
 
 
 class SendMessageRequest(BaseModel):
     content: str
+    initial_task: InitialTaskConfig | None = None
 
 
 class AnswerInputRequest(BaseModel):
@@ -46,6 +47,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             token_budget=req.token_budget,
             root_max_turns=req.root_max_turns,
             llm_name=req.llm_name,
+            initial_task=req.initial_task,
         )
         # 异步启动 AgentLoop（在当前 asyncio event loop 中）
         mgr.schedule_loop(session.id, agent_id)
@@ -95,7 +97,7 @@ async def send_message(session_id: str, req: SendMessageRequest) -> SessionRespo
     """Send a user message to a session. Re-opens the session if it has ended."""
     try:
         mgr = get_session_manager()
-        session = mgr.continue_session(session_id, req.content)
+        session = mgr.continue_session(session_id, req.content, initial_task=req.initial_task)
         return SessionResponse(**session.to_dict())
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400

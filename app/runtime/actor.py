@@ -235,17 +235,23 @@ class Actor:
         """
         messages: list[LLMMessage] = []
 
-        goal_content = ctx.goal
-        if ctx.summary_text:
-            goal_content = f"Previous progress:\n{ctx.summary_text}\n\nCurrent goal: {ctx.goal}"
-        messages.append(LLMMessage(role="user", content=goal_content))
+        # recent_messages：当前agent记忆，按时间顺序直接加入
+        # 去掉最后一条刚刚输入的user消息（如果有），因为它通常是对当前 task 的补充说明，放在最后更合适
+        recent_messages = ctx.recent_messages[:-1] if ctx.recent_messages and ctx.recent_messages[-1].get("role") == "user" else ctx.recent_messages
+        for m in recent_messages:
+            messages.append(LLMMessage(role=m.get("role", "user"), content=m.get("content", "")))
 
+        # blackboard_snippets：当前 session 相关的零散信息碎片
+        bb_content = "\n".join(f"- {s}" for s in ctx.blackboard_snippets)
         if ctx.blackboard_snippets:
             bb = "\n".join(f"- {s}" for s in ctx.blackboard_snippets)
-            messages.append(LLMMessage(role="user", content=f"Context:\n{bb}"))
+            bb_content = f"Task Background:\n{bb}"
 
-        for m in ctx.recent_messages:
-            messages.append(LLMMessage(role=m.get("role", "user"), content=m.get("content", "")))
+        # task 描述
+        goal_content = f"Current goal: {ctx.current_task.title}:{ctx.current_task.description}"
+        if ctx.summary_text:
+            goal_content = f"Previous progress:\n{ctx.summary_text}\n\nCurrent goal: {ctx.current_task.title}:{ctx.current_task.description}"
+        messages.append(LLMMessage(role="user", content=f"{bb_content}\n{goal_content}"))
 
         return messages
 

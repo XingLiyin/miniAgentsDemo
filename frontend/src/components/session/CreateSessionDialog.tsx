@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { sessionsApi } from '@/api/sessions'
 import { templatesApi } from '@/api/templates'
 import { llmsApi } from '@/api/llms'
-import type { CreateSessionRequest } from '@/types'
+import type { CreateSessionRequest, InitialTaskConfig } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
@@ -16,16 +16,21 @@ interface Props {
   onCreated: (sessionId: string) => void
 }
 
+const DEFAULT_FORM: CreateSessionRequest = {
+  goal: '',
+  template_id: null,
+  token_budget: 200000,
+  root_max_turns: 20,
+  llm_name: null,
+  initial_task: null,
+}
+
 export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
   const queryClient = useQueryClient()
-  const [form, setForm] = useState<CreateSessionRequest>({
-    goal: '',
-    template_id: null,
-    token_budget: 200000,
-    root_max_turns: 20,
-    llm_name: null,
-  })
+  const [form, setForm] = useState<CreateSessionRequest>(DEFAULT_FORM)
   const [goalError, setGoalError] = useState('')
+  const [useSubagent, setUseSubagent] = useState(false)
+  const [subagentTemplate, setSubagentTemplate] = useState('')
 
   const { data: templates } = useQuery({
     queryKey: ['templates'],
@@ -43,8 +48,10 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       onCreated(session.id)
       onClose()
-      setForm({ goal: '', template_id: null, token_budget: 200000, root_max_turns: 20, llm_name: null })
+      setForm(DEFAULT_FORM)
       setGoalError('')
+      setUseSubagent(false)
+      setSubagentTemplate('')
     },
   })
 
@@ -54,7 +61,10 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
       return
     }
     setGoalError('')
-    mutation.mutate(form)
+    const initialTask: InitialTaskConfig | null = useSubagent
+      ? { use_subagent: true, subagent_template: subagentTemplate || null }
+      : null
+    mutation.mutate({ ...form, initial_task: initialTask })
   }
 
   return (
@@ -116,6 +126,37 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
               setForm((f) => ({ ...f, root_max_turns: Number(e.target.value) }))
             }
           />
+        </div>
+
+        {/* 首个 Task 执行方式 */}
+        <div className="rounded-lg border border-gray-200 p-3 flex flex-col gap-3">
+          <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">首个任务</p>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={useSubagent}
+              onChange={(e) => {
+                setUseSubagent(e.target.checked)
+                if (!e.target.checked) setSubagentTemplate('')
+              }}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-gray-700">委托给规划 Sub-agent 执行</span>
+          </label>
+          {useSubagent && (
+            <Select
+              label="规划器模板"
+              value={subagentTemplate}
+              onChange={(e) => setSubagentTemplate(e.target.value)}
+            >
+              <option value="">使用系统默认规划器</option>
+              {templates?.map((t) => (
+                <option key={t.id} value={t.name}>
+                  {t.name} — {t.description || t.version}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
 
         {mutation.error instanceof Error && (

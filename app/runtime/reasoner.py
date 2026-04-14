@@ -67,7 +67,7 @@ class Reasoner:
 
     def _extract_agent_identity(self, agent: Agent, task: Task) -> tuple[str, str, str]:
         """提取 soul、role、skill_instructions（plan/act 均适用）。"""
-        soul = agent.soul_md or agent.system_prompt or ""
+        soul = agent.soul_md or ""
         role = agent.role_md or ""
         skill_instructions = ""
         skill_name = task.inputs.get("skill_name") if task.inputs else None
@@ -82,15 +82,11 @@ class Reasoner:
     def _fetch_base(self, session: Session, agent: Agent) -> tuple:
         """获取 memory、blackboard、token 估算等共享数据，返回 tuple。
 
-        若 agent.inherit_memory=False，跳过 session 记忆加载（完全隔离执行）。
+        
         """
-        if agent.inherit_memory:
-            messages = self._memory_svc.get_window(agent.id)
-            summary = self._memory_svc.get_summary(agent.id)
-            summary_text = summary.summary_text if summary else ""
-        else:
-            messages = []
-            summary_text = ""
+        messages = self._memory_svc.get_window(agent.id)
+        summary = self._memory_svc.get_summary(agent.id)
+        summary_text = summary.summary_text if summary else ""
 
         bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
         bb_snippets = [entry.content for entry in bb_entries]
@@ -114,43 +110,28 @@ class Reasoner:
         从 AgentController scope 获取的控制工具，经 agent.tool_list 过滤后才暴露给 LLM。
         """
         allowed = set(agent.tool_list or [])
-        if task.type == "plan":
-            skill_resources = [
-                ContextResource(name=name, description=desc, kind="skill")
-                for name, desc in self._retrieve_skills(goal, agent)
-            ]
-            tool_resources = [
-                ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-                for t in self._agent_controller.get_llm_schemas(scope="actor")
-                if t.name in allowed
-            ]
-            return skill_resources + tool_resources
-        else:
-            ctrl_tools = [
-                t for t in self._agent_controller.get_llm_schemas(scope="actor")
-                if t.name in allowed
-            ]
-            return [
-                ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-                for t in self._retrieve_tools(goal, agent) + ctrl_tools
-            ]
+        skill_resources = [
+            ContextResource(name=name, description=desc, kind="skill")
+            for name, desc in self._retrieve_skills(goal, agent)
+        ]
+        ctrl_tools = [
+            t for t in self._agent_controller.get_llm_schemas(scope="actor")
+            if t.name in allowed
+        ]
+        tool_resources = [
+            ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
+            for t in self._retrieve_tools(goal, agent) + ctrl_tools
+        ]
+        return skill_resources + tool_resources
 
     def _build_observer_tools(self, agent: Agent, task: Task) -> list:
         """组装 Observer 阶段可用工具。
 
-        plan task：observer_plan + observer scope
-        act  task：observer scope
         所有从 scope 获取的工具均经 agent.tool_list 过滤。
         submit_task_reviews 由 Observer 在第二轮内部注入，不经此处。
         """
         allowed = set(agent.tool_list or [])
-        if task.type == "plan":
-            candidates = (self._agent_controller.get_llm_schemas(scope="observer_plan")
-                          + self._agent_controller.get_llm_schemas(scope="observer")
-                          + self._agent_controller.get_llm_schemas(scope="observer_opt"))
-        else:
-            candidates = (self._agent_controller.get_llm_schemas(scope="observer")
-                          + self._agent_controller.get_llm_schemas(scope="observer_opt"))
+        candidates = self._agent_controller.get_llm_schemas(scope="observer")
         return [t for t in candidates if t.name in allowed]
 
     def _retrieve_tools(self, goal: str, agent: Agent) -> list:

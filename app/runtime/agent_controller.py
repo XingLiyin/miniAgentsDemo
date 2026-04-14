@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Callable
 
+from app.config.settings import get_settings
 from app.runtime.types import PlannedTask
 from app.tools.definition import ToolDefinition, ToolResult
 from app.tools.tool_decorator import tool_result
@@ -58,6 +59,35 @@ class _ControlToolDef:
     schema: ToolDefinition
     handler: Callable[[dict, "Agent", "Task"], ControlResult]
     scope: str = "actor"
+
+
+# ── request_human_input 工具说明 ───────────────────────────────────────────────────
+
+@tool_result
+def request_human_input(
+    prompt: Annotated[str, "The question or instruction to show the user"],
+    context: Annotated[str, "Optional background context for the user"] = "",
+) -> ToolResult:
+    """Pause execution and request input from the human user.
+    Use when you need information or a decision that only the user can provide."""
+    import json
+    output = json.dumps({"prompt": prompt, "context": context}, ensure_ascii=False)
+    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
+
+
+# ── replan 工具说明 ───────────────────────────────────────────────────
+
+@tool_result
+def replan(
+    reason: Annotated[str, "The reason for replanning"],
+    summary: Annotated[str, "Concise summary of this replanning action (1-3 sentences), describe what has been done for this task"] = "",
+) -> ToolResult:
+    """Pause execution and request input from the human user.
+    Use when you need information or a decision that only the user can provide."""
+    import json
+    output = json.dumps({"reason": reason, "summary": summary}, ensure_ascii=False)
+    return ToolResult(content=output)   # 触发信号，Actor 特殊处理，函数体不执行
+
 
 
 # ── submit_plan 工具声明 ────────────────────────────────────────────────────
@@ -152,7 +182,6 @@ class AgentController:
     # ── 默认注册 ───────────────────────────────────────────────────────────
 
     def _register_defaults(self) -> None:
-        from app.tools.builtins import request_human_input, replan
         from app.runtime.observer import submit_task_assessment
 
         self.register(request_human_input,    self._handle_request_human_input,    scope="actor")
@@ -280,11 +309,18 @@ class AgentController:
         summary = args.get("summary", "")
 
         cancelled = self._task_svc.cancel_pending(task.session_id)
-        self._task_svc.create_plan_task(
+        settings = get_settings()
+        self._task_svc.create(
             session_id=task.session_id,
             creator_agent_id=task.assigned_agent_id,
+            task_type="plan",
             title="Replan: rebuild task list",
             description=reason,
+            inputs={
+                "use_subagent": True,
+                "inherit_memory": True,
+                "subagent_template": settings.default_planner_template_name,
+            },
         )
         logger.debug(
             "AgentController: replan cancelled %d pending tasks, new plan task created for session %s",
