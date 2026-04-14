@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.agent_def.definition import AgentDefContent, AgentDefMetadata
+from app.agent_def.definition import AgentDefContent, AgentDefMetadata, ToolSpec
 
 logger = logging.getLogger(__name__)
 
@@ -36,28 +36,27 @@ class AgentLoader:
         return result
 
     def load_metadata(self, agent_dir: Path) -> AgentDefMetadata:
-        """解析 SOUL.md frontmatter + TOOLS.md frontmatter.tools → Level 1。"""
+        """解析 SOUL.md + ROLE.md frontmatter.tools → Level 1。"""
         soul_content = (agent_dir / "SOUL.md").read_text(encoding="utf-8")
         soul_fm, _ = _parse_agent_md(soul_content)
 
-        # TOOLS.md frontmatter 提供 tool_list 快速路径
-        tool_list: list[str] = []
-        tool_list_ready = False
-        tools_md_path = agent_dir / "TOOLS.md"
-        if tools_md_path.exists():
-            tools_content = tools_md_path.read_text(encoding="utf-8")
-            tools_fm, _ = _parse_agent_md(tools_content)
-            raw_tools = tools_fm.get("tools", [])
-            if isinstance(raw_tools, list) and raw_tools:
-                tool_list = raw_tools
-                tool_list_ready = True
+        # SOUL.md tools frontmatter → act_tool_spec（Actor 阶段）
+        act_tool_spec = _parse_tool_spec(soul_fm)
+
+        # ROLE.md tools frontmatter → observe_tool_spec（Observer 阶段）
+        observe_tool_spec = ToolSpec()
+        role_md_path = agent_dir / "ROLE.md"
+        if role_md_path.exists():
+            role_content = role_md_path.read_text(encoding="utf-8")
+            role_fm, _ = _parse_agent_md(role_content)
+            observe_tool_spec = _parse_tool_spec(role_fm)
 
         return AgentDefMetadata(
             name=soul_fm["name"],
             version=str(soul_fm.get("version", "1.0.0")),
             description=str(soul_fm.get("description", "")).strip(),
-            tool_list=tool_list,
-            tool_list_ready=tool_list_ready,
+            act_tool_spec=act_tool_spec,
+            observe_tool_spec=observe_tool_spec,
             agent_dir=agent_dir,
         )
 
@@ -106,6 +105,30 @@ def _parse_agent_md(content: str) -> tuple[dict, str]:
     return frontmatter, body
 
 
+def _parse_tool_spec(fm: dict) -> ToolSpec:
+    """从 frontmatter dict 中解析 tools.required / tools.forbidden → ToolSpec。
+
+    支持两种格式：
+      嵌套格式（新）：tools:\n  required:\n    - foo
+      平铺格式（兼容旧 TOOLS.md 风格）：tools:\n  - foo
+    """
+    raw = fm.get("tools")
+    if not raw:
+        return ToolSpec()
+    if isinstance(raw, list):
+        # 兼容旧平铺格式，全部视为 required
+        return ToolSpec(required=raw)
+    if isinstance(raw, dict):
+        required = raw.get("required") or []
+        forbidden = raw.get("forbidden") or []
+        if not isinstance(required, list):
+            required = []
+        if not isinstance(forbidden, list):
+            forbidden = []
+        return ToolSpec(required=required, forbidden=forbidden)
+    return ToolSpec()
+
+
 def _parse_simple_yaml(text: str) -> dict:
     """轻量级 YAML 解析，支持 Agent 定义文件 frontmatter 所需格式：
 
@@ -141,13 +164,26 @@ def _parse_simple_yaml(text: str) -> dict:
             continue
 
         if not raw_val:
-            # 可能是列表
-            items: list[str] = []
-            i += 1
-            while i < len(lines) and lines[i].strip().startswith("- "):
-                items.append(lines[i].strip()[2:].strip())
+            # 查看下一个非空行：以 "- " 开头 → 列表；以空格开头但非 "- " → 嵌套 dict
+            peek = i + 1
+            while peek < len(lines) and not lines[peek].strip():
+                peek += 1
+            if peek < len(lines) and lines[peek].startswith("  ") and not lines[peek].strip().startswith("- "):
+                # 嵌套 dict：收集缩进块，去掉两格缩进后递归解析
+                nested_lines: list[str] = []
                 i += 1
-            result[key] = items
+                while i < len(lines) and (not lines[i] or lines[i].startswith("  ")):
+                    nested_lines.append(lines[i][2:] if lines[i].startswith("  ") else "")
+                    i += 1
+                result[key] = _parse_simple_yaml("\n".join(nested_lines))
+            else:
+                # 列表
+                items: list[str] = []
+                i += 1
+                while i < len(lines) and lines[i].strip().startswith("- "):
+                    items.append(lines[i].strip()[2:].strip())
+                    i += 1
+                result[key] = items
             continue
 
         # 内联列表：['a', 'b'] 或 ["a", "b"]

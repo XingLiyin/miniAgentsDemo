@@ -24,7 +24,7 @@ def _make_task(
         title="Test task",
         status=status,
         description="desc",
-        inputs=inputs or {},
+        settings=inputs or {},
         created_at="2026-01-01T00:00:00Z",
         updated_at="2026-01-01T00:00:00Z",
     )

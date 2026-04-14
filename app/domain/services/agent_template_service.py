@@ -22,7 +22,8 @@ class AgentTemplateService:
         self,
         name: str,
         system_prompt: str = "",
-        tool_list: list[str] | None = None,
+        act_tool_list: list[str] | None = None,
+        observe_tool_list: list[str] | None = None,
         description: str = "",
         source_dir: str = "",
         summary_threshold: int = 20,
@@ -33,7 +34,8 @@ class AgentTemplateService:
             id=new_template_id(),
             name=name,
             system_prompt=system_prompt,
-            tool_list=tool_list or [],
+            act_tool_list=act_tool_list or [],
+            observe_tool_list=observe_tool_list or [],
             description=description,
             source_dir=source_dir,
             summary_threshold=summary_threshold,
@@ -71,8 +73,8 @@ class AgentTemplateService:
         role_md: str,
         tools_md: str,
         style_md: str,
-        tool_list: list[str],
-        tool_list_ready: bool,
+        act_tool_list: list[str],
+        observe_tool_list: list[str],
         source_dir: str = "",
     ) -> AgentTemplate:
         """按 name 做 upsert（目录扫描时调用）。
@@ -89,8 +91,8 @@ class AgentTemplateService:
             existing.role_md = role_md
             existing.tools_md = tools_md
             existing.style_md = style_md
-            existing.tool_list = tool_list
-            existing.tool_list_ready = tool_list_ready
+            existing.act_tool_list = act_tool_list
+            existing.observe_tool_list = observe_tool_list
             existing.source_dir = source_dir
             existing.updated_at = now
             self._store.save(existing.to_dict())
@@ -106,8 +108,8 @@ class AgentTemplateService:
             role_md=role_md,
             tools_md=tools_md,
             style_md=style_md,
-            tool_list=tool_list,
-            tool_list_ready=tool_list_ready,
+            act_tool_list=act_tool_list,
+            observe_tool_list=observe_tool_list,
             source_dir=source_dir,
             created_at=now,
             updated_at=now,
@@ -116,25 +118,12 @@ class AgentTemplateService:
         logger.debug("AgentTemplateService: upserted (created) template '%s'", name)
         return tpl
 
-    def get_or_prepare(self, template_id: str, llm_client) -> AgentTemplate:
-        """若 tool_list_ready=False，调用 LLM 从 tools_md 提取工具名并写回。
+    def get_or_prepare(self, template_id: str, llm_client=None) -> AgentTemplate:
+        """工具列表已在目录扫描时从 frontmatter 提取，直接返回模板。
 
-        同模板只提取一次：写回后 tool_list_ready=True，后续调用直接返回。
+        保留此方法签名以兼容调用方，llm_client 参数不再使用。
         """
-        tpl = self.get(template_id)
-        if tpl.tool_list_ready or not tpl.tools_md:
-            return tpl
-
-        tool_list = _extract_tool_list(tpl.tools_md, llm_client)
-        tpl.tool_list = tool_list
-        tpl.tool_list_ready = True
-        tpl.updated_at = now_iso()
-        self._store.save(tpl.to_dict())
-        logger.info(
-            "AgentTemplateService: lazily extracted tool_list for '%s': %s",
-            tpl.name, tool_list,
-        )
-        return tpl
+        return self.get(template_id)
 
     def get_by_name(self, name: str) -> "AgentTemplate | None":
         """按 name 查找模板，未找到返回 None（不抛异常）。"""
@@ -149,26 +138,3 @@ class AgentTemplateService:
                 return AgentTemplate.from_dict(data)
         return None
 
-
-# ── 懒加载工具提取 ─────────────────────────────────────────────────────────
-
-def _extract_tool_list(tools_md: str, llm_client) -> list[str]:
-    """调用 LLM 从 TOOLS.md 正文中提取工具名列表。"""
-    import json
-
-    from app.llm.types import LLMMessage
-
-    prompt = (
-        "Read the tool usage guide below and extract all tool names.\n"
-        "Return a JSON array of strings only. Example: [\"http_request\", \"bash_exec\"]\n\n"
-        f"Tool guide:\n{tools_md}"
-    )
-    try:
-        response = llm_client.send_message(
-            messages=[LLMMessage(role="user", content=prompt)],
-            system_prompt="You extract tool names from documentation. Output only a JSON array.",
-        )
-        return json.loads(response.text.strip())
-    except Exception as e:
-        logger.warning("_extract_tool_list: LLM extraction failed: %s", e)
-        return []

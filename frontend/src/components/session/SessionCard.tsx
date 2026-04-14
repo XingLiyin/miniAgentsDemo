@@ -29,7 +29,7 @@ export function SessionCard({ session, selected, onClick, onDeleted }: SessionCa
 
   const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (!window.confirm(`确认删除会话「${session.goal.slice(0, 30)}...」？此操作不可撤销。`)) return
+    if (!window.confirm(`确认删除会话「${session.user_prompt.slice(0, 30)}...」？此操作不可撤销。`)) return
     deleteMutation.mutate()
   }
 
@@ -43,7 +43,7 @@ export function SessionCard({ session, selected, onClick, onDeleted }: SessionCa
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm text-gray-900 line-clamp-2 flex-1 leading-snug">
-          {session.goal}
+          {session.user_prompt}
         </p>
         <div className="flex items-center gap-1.5 flex-shrink-0">
           <SessionStatusBadge status={session.status} />

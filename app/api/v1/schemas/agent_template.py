@@ -9,10 +9,10 @@ class AgentTemplateResponse(BaseModel):
     id: str
     name: str
     system_prompt: str
-    tool_list: list[str]
+    act_tool_list: list[str]
+    observe_tool_list: list[str]
     description: str
     version: str
-    tool_list_ready: bool
     inject_style: bool
     summary_threshold: int
     short_window_size: int

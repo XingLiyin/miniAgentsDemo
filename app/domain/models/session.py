@@ -20,7 +20,8 @@ class Session:
     状态流转：QUEUED → RUNNING → SUCCEEDED / FAILED / CANCELED
     """
     id: str
-    goal: str
+    user_prompt: str                   # 用户输入的文本信息，创建 session 的依据，供 Agent 处理，不可为空
+    goal: str                          # session 目标，供 Agent 处理，初始值同 user_prompt，等待 llm 补全
     status: str                        # QUEUED | RUNNING | SUCCEEDED | FAILED | CANCELED
     template_id: str | None
     root_agent_id: str | None
@@ -39,6 +40,7 @@ class Session:
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
+            "user_prompt": self.user_prompt,
             "goal": self.goal,
             "status": self.status,
             "template_id": self.template_id,
@@ -57,6 +59,7 @@ class Session:
     def from_dict(cls, d: dict[str, Any]) -> "Session":
         return cls(
             id=d["id"],
+            user_prompt=d["user_prompt"],
             goal=d["goal"],
             status=d["status"],
             template_id=d.get("template_id"),

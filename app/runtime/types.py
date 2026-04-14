@@ -38,7 +38,7 @@ class ReasoningContext:
     skill_instructions: str = ""         # 当前 task 的 skill instructions（plan/act 均可有）
     # 检索结果：工具（kind="tool"）+ 可用技能（kind="skill"）
     resources: list[ContextResource] = field(default_factory=list)
-    # Observer 阶段可用工具（由 Reasoner 按 agent.tool_list 过滤后填充）
+    # Observer 阶段可用工具（由 Reasoner 按 agent.observe_tool_list 过滤后填充）
     observer_tools: list["LLMTool"] = field(default_factory=list)
     # 当前待执行 task（plan or atomic，统一字段）
     current_task: "Task | None" = None

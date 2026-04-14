@@ -46,8 +46,8 @@ class AgentTemplateRegistry:
                 role_md=content.role_md,
                 tools_md=content.tools_md,
                 style_md=content.style_md,
-                tool_list=metadata.tool_list,
-                tool_list_ready=metadata.tool_list_ready,
+                act_tool_list=metadata.act_tool_spec.effective(),
+                observe_tool_list=metadata.observe_tool_spec.effective(),
                 source_dir=str(metadata.agent_dir),
             )
             logger.debug("AgentTemplateRegistry: upserted template '%s'", metadata.name)

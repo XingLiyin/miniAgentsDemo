@@ -36,12 +36,12 @@ export function SessionStats({ session }: Props) {
             {session.failure_counter > 0 && (
               <span className="inline-flex items-center gap-1 text-xs text-yellow-600">
                 <AlertTriangle size={11} />
-                {session.failure_counter}/{session.failure_threshold} 失败
+                {session.failure_counter} 失败
               </span>
             )}
           </div>
           <p className="text-sm text-gray-800 mt-1.5 leading-snug line-clamp-3">
-            {session.goal}
+            {session.user_prompt}
           </p>
         </div>
         {!isTerminalSession(session.status) && (

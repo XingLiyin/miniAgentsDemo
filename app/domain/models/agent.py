@@ -48,7 +48,8 @@ class Agent:
     # context engineering
     soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
     role_md: str = ""                           # 驱动 Observer 阶段 system prompt（评判准则）
-    tool_list: list[str] = field(default_factory=list)
+    act_tool_list: list[str] = field(default_factory=list)      # Actor 阶段可用工具
+    observe_tool_list: list[str] = field(default_factory=list)  # Observer 阶段可用工具
     skill_list: list[str] = field(default_factory=list)
     soul_path: str | None = None
     inherit_memory: bool = True                 # False = spawn 时跳过记忆复制
@@ -72,7 +73,8 @@ class Agent:
             "status": self.status,
             "soul_md": self.soul_md,
             "role_md": self.role_md,
-            "tool_list": self.tool_list,
+            "act_tool_list": self.act_tool_list,
+            "observe_tool_list": self.observe_tool_list,
             "skill_list": self.skill_list,
             "soul_path": self.soul_path,
             "loop_guard": self.loop_guard.to_dict(),
@@ -95,7 +97,8 @@ class Agent:
             status=d["status"],
             soul_md=d.get("soul_md", ""),
             role_md=d.get("role_md", ""),
-            tool_list=d.get("tool_list", []),
+            act_tool_list=d.get("act_tool_list", []),
+            observe_tool_list=d.get("observe_tool_list", []),
             skill_list=d.get("skill_list", []),
             soul_path=d.get("soul_path"),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),

@@ -1,7 +1,10 @@
 ---
 name: planner
-version: 2.0.0
+version: 2.1.0
 description: 内置规划子代理。将会话目标分解为有序任务列表，以结构化文本输出。
+tools:
+  required: []
+  forbidden: []
 ---
 
 你是一个规划代理，唯一职责是分析会话目标与当前上下文，然后以纯文本形式输出结构化任务列表。

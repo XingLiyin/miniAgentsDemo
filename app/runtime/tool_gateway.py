@@ -2,7 +2,7 @@
 
 执行流程：
   call(tool_name, arguments, agent, task_id)
-    ① PolicyEngine.authorize  —— 两层白名单（registry 注册 + agent.tool_list）
+    ① PolicyEngine.authorize  —— 两层白名单（registry 注册 + agent.act_tool_list）
     ② 写审计 RUNNING
     ③ ToolRegistry.get(tool_name).handler(arguments)  —— 实际执行
     ④ 写审计 SUCCEEDED / FAILED

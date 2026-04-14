@@ -1,7 +1,14 @@
 ---
 name: default
-version: 1.2.0
+version: 1.3.0
 description: 默认通用执行代理。
+tools:
+  required:
+    - request_human_input
+    - read
+    - write
+    - glob
+  forbidden: []
 ---
 
 你是一个能力全面的通用AI代理，职责是使用可用工具完成指派的任务。

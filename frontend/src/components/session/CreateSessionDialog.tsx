@@ -17,7 +17,7 @@ interface Props {
 }
 
 const DEFAULT_FORM: CreateSessionRequest = {
-  goal: '',
+  user_prompt: '',
   template_id: null,
   token_budget: 200000,
   root_max_turns: 20,
@@ -56,7 +56,7 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
   })
 
   function handleSubmit() {
-    if (!form.goal.trim()) {
+    if (!form.user_prompt.trim()) {
       setGoalError('请描述 Agent 需要完成的任务')
       return
     }
@@ -73,8 +73,8 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
         <Textarea
           label="目标 (Goal) *"
           placeholder="请描述你希望 Agent 完成的任务，例如：分析这个代码库并生成文档..."
-          value={form.goal}
-          onChange={(e) => setForm((f) => ({ ...f, goal: e.target.value }))}
+          value={form.user_prompt}
+          onChange={(e) => setForm((f) => ({ ...f, user_prompt: e.target.value }))}
           rows={4}
           error={goalError}
         />

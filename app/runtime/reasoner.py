@@ -70,7 +70,7 @@ class Reasoner:
         soul = agent.soul_md or ""
         role = agent.role_md or ""
         skill_instructions = ""
-        skill_name = task.inputs.get("skill_name") if task.inputs else None
+        skill_name = task.settings.get("skill_name") if task.settings else None
         if skill_name and self._skill_registry:
             skill_def = self._skill_registry.load_definition(skill_name)
             if skill_def is not None:
@@ -107,9 +107,9 @@ class Reasoner:
     def _build_resources(self, goal: str, agent: Agent, task: Task) -> list[ContextResource]:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。
 
-        从 AgentController scope 获取的控制工具，经 agent.tool_list 过滤后才暴露给 LLM。
+        从 AgentController scope 获取的控制工具，经 agent.act_tool_list 过滤后才暴露给 LLM。
         """
-        allowed = set(agent.tool_list or [])
+        allowed = set(agent.act_tool_list or [])
         skill_resources = [
             ContextResource(name=name, description=desc, kind="skill")
             for name, desc in self._retrieve_skills(goal, agent)
@@ -127,15 +127,15 @@ class Reasoner:
     def _build_observer_tools(self, agent: Agent, task: Task) -> list:
         """组装 Observer 阶段可用工具。
 
-        所有从 scope 获取的工具均经 agent.tool_list 过滤。
+        所有从 scope 获取的工具均经 agent.observe_tool_list 过滤。
         submit_task_reviews 由 Observer 在第二轮内部注入，不经此处。
         """
-        allowed = set(agent.tool_list or [])
+        allowed = set(agent.observe_tool_list or [])
         candidates = self._agent_controller.get_llm_schemas(scope="observer")
         return [t for t in candidates if t.name in allowed]
 
     def _retrieve_tools(self, goal: str, agent: Agent) -> list:
-        if not self._tool_registry or not agent.tool_list:
+        if not self._tool_registry or not agent.act_tool_list:
             return []
 
         try:
@@ -144,7 +144,7 @@ class Reasoner:
             if store_client.enabled:
                 results = store_client.search(goal, top_k=10)
                 if results:
-                    allowed = set(agent.tool_list)
+                    allowed = set(agent.act_tool_list)
                     filtered = [r for r in results if r.name in allowed]
                     if filtered:
                         return self._tool_registry.to_llm_tools(
@@ -153,7 +153,7 @@ class Reasoner:
         except Exception:
             logger.debug("Reasoner: tool store search failed, falling back to full list")
 
-        return self._tool_registry.to_llm_tools(agent.tool_list)
+        return self._tool_registry.to_llm_tools(agent.act_tool_list)
 
     def _retrieve_skills(self, goal: str, agent: Agent) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。"""

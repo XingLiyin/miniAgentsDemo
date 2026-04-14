@@ -26,7 +26,7 @@ class SessionService:
 
     def create(
         self,
-        goal: str,
+        user_prompt: str,
         template_id: str | None = None,
         token_budget: int = 200_000,
         root_max_turns: int = 20,
@@ -35,7 +35,8 @@ class SessionService:
         now = now_iso()
         session = Session(
             id=new_session_id(),
-            goal=goal,
+            user_prompt=user_prompt,
+            goal=user_prompt,
             status="QUEUED",
             template_id=template_id,
             root_agent_id=None,
@@ -45,7 +46,7 @@ class SessionService:
             updated_at=now,
         )
         self._store.save(session.to_dict())
-        self._bus.publish(SESSION_CREATED, {"session_id": session.id, "goal": goal})
+        self._bus.publish(SESSION_CREATED, {"session_id": session.id, "user_prompt": user_prompt})
         return session
 
     def get(self, session_id: str) -> Session:

@@ -35,9 +35,6 @@ function TaskCard({ task }: { task: Task }) {
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm font-medium text-gray-900">{task.title}</span>
-            <Badge variant={task.type === 'atomic' ? 'info' : 'muted'}>
-              {task.type}
-            </Badge>
             <TaskStatusBadge status={task.status} />
           </div>
 
@@ -45,11 +42,11 @@ function TaskCard({ task }: { task: Task }) {
             <p className="text-xs text-gray-500 mt-1">{task.description}</p>
           )}
 
-          {/* Task inputs (for atomic tasks with skill or tool context) */}
-          {task.type === 'atomic' && Object.keys(task.inputs).length > 0 && (
+          {/* Task settings */}
+          {Object.keys(task.settings).length > 0 && (
             <div className="mt-2 bg-gray-900 rounded-md px-3 py-2">
               <pre className="text-xs text-green-300 overflow-x-auto whitespace-pre-wrap break-words">
-                {JSON.stringify(task.inputs, null, 2)}
+                {JSON.stringify(task.settings, null, 2)}
               </pre>
             </div>
           )}

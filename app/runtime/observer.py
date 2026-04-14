@@ -138,7 +138,13 @@ class Observer:
         task_list: list["Task"] | None = None,
         agent: "Agent | None" = None,
     ) -> ObserverVerdict:
-        """评估本轮执行结果，返回 ObserverVerdict。"""
+        """评估本轮执行结果，返回 ObserverVerdict。
+
+        若 agent 未配置 role_md（ctx.role 为空），跳过 LLM 直接走规则降级。
+        """
+        if not ctx.role:
+            logger.debug("Observer: no role_md configured, using rule-based fallback")
+            return self._rule_observe(result, session)
         try:
             return self._llm_observe(session, result, ctx, task, task_list or [], agent)
         except Exception as e:

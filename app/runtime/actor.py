@@ -266,7 +266,7 @@ class Actor:
         terminal_signal_data: dict,
     ) -> ActorResult:
         """plan 和 act 统一走文本路径；task 创建由 Observer 阶段负责。"""
-        skill_used = task.inputs.get("skill_name")
+        skill_used = task.settings.get("skill_name")
         actor_mode = "skill" if skill_used else ("tool_use" if tool_calls_made else "text")
         return ActorResult(
             task_id=task.id,

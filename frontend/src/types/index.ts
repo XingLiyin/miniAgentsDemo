@@ -13,7 +13,7 @@ export const TERMINAL_STATUSES: SessionStatus[] = ['SUCCEEDED', 'FAILED', 'CANCE
 
 export interface Session {
   id: string
-  goal: string
+  user_prompt: string
   status: SessionStatus
   template_id: string | null
   root_agent_id: string | null
@@ -21,7 +21,6 @@ export interface Session {
   token_used: number
   root_max_turns: number
   failure_counter: number
-  failure_threshold: number
   created_at: string
   updated_at: string
 }
@@ -33,7 +32,7 @@ export interface InitialTaskConfig {
 }
 
 export interface CreateSessionRequest {
-  goal: string
+  user_prompt: string
   template_id?: string | null
   token_budget?: number
   root_max_turns?: number
@@ -44,17 +43,17 @@ export interface CreateSessionRequest {
 // ─── Task ────────────────────────────────────────────────────────────────────
 
 export type TaskStatus = 'PENDING' | 'ACTIVE' | 'FINISHED' | 'FAILED' | 'CANCELED'
-export type TaskType = 'atomic' | 'user_input'
 
 export interface Task {
   id: string
   session_id: string
-  agent_id: string
-  type: TaskType
+  creator_agent_id: string
+  assigned_agent_id: string
   title: string
   status: TaskStatus
   description: string
-  inputs: Record<string, unknown>
+  user_prompt: string
+  settings: Record<string, unknown>
   result: string | null
   outputs: Record<string, unknown>
   error: string | null

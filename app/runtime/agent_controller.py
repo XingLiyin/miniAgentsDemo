@@ -78,6 +78,15 @@ def request_human_input(
 # ── replan 工具说明 ───────────────────────────────────────────────────
 
 @tool_result
+def update_task_metadata(
+    title: Annotated[str, "简短的任务标题（≤20字）"],
+    description: Annotated[str, "任务描述（≤80字）"],
+) -> ToolResult:
+    """将生成的标题和描述保存到目标任务。调用一次后任务即完成。"""
+    return ToolResult(content="ok")
+
+
+@tool_result
 def replan(
     reason: Annotated[str, "The reason for replanning"],
     summary: Annotated[str, "Concise summary of this replanning action (1-3 sentences), describe what has been done for this task"] = "",
@@ -185,6 +194,7 @@ class AgentController:
         from app.runtime.observer import submit_task_assessment
 
         self.register(request_human_input,    self._handle_request_human_input,    scope="actor")
+        self.register(update_task_metadata,   self._handle_update_task_metadata,   scope="actor")
         self.register(submit_plan,            self._handle_submit_plan,            scope="observer")
         self.register(submit_task_assessment, self._handle_submit_task_assessment, scope="observer")
         self.register(replan,                 self._handle_replan,                 scope="observer")
@@ -264,7 +274,7 @@ class AgentController:
             t = self._task_svc.create(
                 session_id=task.session_id,
                 creator_agent_id=task.assigned_agent_id,
-                task_type="atomic",
+                user_prompt=spec.get("user_prompt", ""),
                 title=spec.get("title", ""),
                 description=spec.get("description", ""),
                 inputs=inputs,
@@ -307,15 +317,16 @@ class AgentController:
         """取消当前 planner agent 本轮产出的所有 PENDING tasks，创建新 plan task。"""
         reason  = args.get("reason", "")
         summary = args.get("summary", "")
+        user_prompt = args.get("user_prompt", "")
 
         cancelled = self._task_svc.cancel_pending(task.session_id)
         settings = get_settings()
         self._task_svc.create(
             session_id=task.session_id,
             creator_agent_id=task.assigned_agent_id,
-            task_type="plan",
-            title="Replan: rebuild task list",
-            description=reason,
+            user_prompt=user_prompt,
+            title=f"Replan For: {reason}",
+            description=f"{summary}\n\n请基于最新情况重新制定计划。",
             inputs={
                 "use_subagent": True,
                 "inherit_memory": True,
@@ -359,4 +370,46 @@ class AgentController:
                 "summary":           args.get("summary", ""),
                 "proceed_to_review": True,
             },
+        )
+
+    # ── 内置 handler：update_task_metadata ─────────────────────────────────
+
+    def _handle_update_task_metadata(
+        self,
+        args: dict,
+        agent: "Agent",
+        task: "Task",
+    ) -> ControlResult:
+        """将生成的 title / description 写入目标 task，并推 SSE 通知。
+
+        目标 task id 从当前 task.settings["target_task_id"] 读取，
+        由 metadata_filler 子代理在创建时注入。
+        """
+        target_task_id = task.settings.get("target_task_id", "")
+        title = str(args.get("title", "")).strip()
+        description = str(args.get("description", "")).strip()
+
+        if target_task_id:
+            try:
+                target = self._task_svc.get(target_task_id)
+                if title:
+                    target.title = title
+                if description:
+                    target.description = description
+                self._task_svc.save(target)
+                try:
+                    from app.runtime.sse_bus import get_sse_bus
+                    get_sse_bus().push(target.session_id, {"type": "task_updated", "task": target.to_dict()})
+                except Exception:
+                    pass
+                logger.debug(
+                    "AgentController: updated metadata for task %s: title=%r", target_task_id, title
+                )
+            except Exception:
+                logger.exception("AgentController: failed to update metadata for task %s", target_task_id)
+
+        return ControlResult(
+            tool_result=ToolResult(content="ok"),
+            signal=ControlSignal.TASK_COMPLETE,
+            signal_data={"task_outcome": "success", "task_result": "metadata updated", "summary": ""},
         )

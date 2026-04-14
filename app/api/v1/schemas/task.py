@@ -11,11 +11,10 @@ class TaskResponse(BaseModel):
     session_id: str
     creator_agent_id: str
     assigned_agent_id: str
-    type: str
     title: str
     status: str
     description: str = ""
-    inputs: dict[str, Any] = {}
+    settings: dict[str, Any] = {}
     result: Optional[str] = None
     outputs: dict[str, Any] = {}
     error: Optional[str] = None

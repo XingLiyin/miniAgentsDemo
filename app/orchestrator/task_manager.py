@@ -30,30 +30,6 @@ class TaskManager:
         tasks = self._task_svc.list_pending(session_id)
         return tasks[0] if tasks else None
 
-    def create_replan(self, session_id: str, agent_id: str) -> Task:
-        """所有 atomic task 完成后，创建 re-plan task 重新评估目标。
-
-        use_subagent=True：由 plan sub-agent 执行规划，root agent 不直接运行。
-        """
-        settings = get_settings()
-        task = self._task_svc.create(
-            session_id=session_id,
-            creator_agent_id=agent_id,
-            task_type="plan",
-            title="Re-plan: evaluate next steps",
-            description=(
-                "All current tasks completed. Re-evaluate the goal and plan "
-                "next steps if needed."
-            ),
-            inputs={
-                "use_subagent": True,
-                "inherit_memory": True,
-                "subagent_template": settings.default_planner_template_name,
-            },
-        )
-        logger.info("Session %s: created re-plan task %s", session_id, task.id)
-        return task
-
     # ── failure_counter ────────────────────────────────────────────────────────
 
     def record_success(self, session_id: str) -> None:

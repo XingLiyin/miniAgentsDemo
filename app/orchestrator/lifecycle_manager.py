@@ -153,14 +153,14 @@ class LifecycleManager:
             if agent_id not in state.agent_registry:
                 state.agent_registry[agent_id] = AgentMeta(
                     agent_id=agent_id,
-                    task_id=None if task.inputs.get("use_subagent") else task_id,
+                    task_id=None if task.settings.get("use_subagent") else task_id,
                     spawn_depth=0,
                     status="RUNNING",
                 )
                 state.concurrent_agents += 1
             else:
                 state.agent_registry[agent_id].task_id = (
-                    None if task.inputs.get("use_subagent") else task_id
+                    None if task.settings.get("use_subagent") else task_id
                 )
                 state.agent_registry[agent_id].status = "RUNNING"
 
@@ -170,7 +170,7 @@ class LifecycleManager:
             agent_id,
             session_id,
         )
-        if task.inputs.get("use_subagent"):
+        if task.settings.get("use_subagent"):
             self._auto_spawn_for_task(session_id, agent_id, task_id)
         else:
             self.schedule_task(session_id, agent_id, task_id)
@@ -187,6 +187,46 @@ class LifecycleManager:
             daemon=True,
         )
         thread.start()
+
+    def spawn_daemon_task(
+        self, session_id: str, parent_agent_id: str, task_id: str
+    ) -> None:
+        """Spawn a daemon sub-agent for a hidden task, outside the normal lifecycle.
+
+        The daemon agent is NOT registered in state.agent_registry, so its
+        completion does not trigger root-agent continuation or session transitions.
+        The task is pre-transitioned to ACTIVE to keep it out of list_pending.
+        """
+        try:
+            task = self._task_svc.get(task_id)
+        except Exception:
+            logger.exception("LM: spawn_daemon_task: cannot load task %s", task_id)
+            return
+
+        template_name = str(task.settings.get("subagent_template", ""))
+        try:
+            sub_agent_id = self._instantiate_sub_agent(
+                session_id=session_id,
+                task_id=task_id,
+                parent_agent_id=parent_agent_id,
+                spawn_depth=1,
+                inherit_memory=False,
+                template_name=template_name,
+            )
+        except Exception:
+            logger.exception("LM: spawn_daemon_task: failed to create sub-agent for task %s", task_id)
+            return
+
+        task.assigned_agent_id = sub_agent_id
+        self._task_svc.save(task)
+        # Pre-activate so list_pending never returns this task to the root agent.
+        try:
+            self._task_svc.transition(task_id, "ACTIVE")
+        except Exception:
+            logger.warning("LM: spawn_daemon_task: could not pre-activate task %s", task_id)
+
+        logger.info("LM: spawning daemon sub-agent %s for task %s", sub_agent_id, task_id)
+        self.schedule_task(session_id, sub_agent_id, task_id)
 
     def cleanup_session(self, session_id: str) -> None:
         """Release in-memory scheduler state for a finished session."""
@@ -303,7 +343,7 @@ class LifecycleManager:
 
                     if next_task_to_schedule:
                         meta.task_id = next_task_to_schedule.id
-                        if next_task_to_schedule.inputs.get("use_subagent"):
+                        if next_task_to_schedule.settings.get("use_subagent"):
                             reject = self._check_spawn_permission(
                                 state,
                                 agent_id,
@@ -456,7 +496,7 @@ class LifecycleManager:
                         resume_root_agent_id = root_id
                         resume_root_task = next_task
 
-                        if next_task.inputs.get("use_subagent"):
+                        if next_task.settings.get("use_subagent"):
                             reject = self._check_spawn_permission(
                                 state,
                                 root_id,
@@ -504,8 +544,8 @@ class LifecycleManager:
                 logger.exception("LM: _auto_spawn_for_task: cannot load task %s", task_id)
                 return
 
-            inherit_memory = task.inputs.get("inherit_memory", True)
-            template_name = str(task.inputs.get("subagent_template", ""))
+            inherit_memory = task.settings.get("inherit_memory", True)
+            template_name = str(task.settings.get("subagent_template", ""))
             spawn_depth = 1
 
             try:
@@ -600,7 +640,8 @@ class LifecycleManager:
                 system_prompt = tpl.system_prompt
                 soul_md = tpl.soul_md
                 role_md = tpl.role_md
-                tool_list = tpl.tool_list
+                act_tool_list = tpl.act_tool_list
+                observe_tool_list = tpl.observe_tool_list
                 skill_list = tpl.skill_list
                 template_id = tpl.id
                 agent_name = f"sub-agent-{template_name}"
@@ -617,7 +658,8 @@ class LifecycleManager:
                 )
                 soul_md = parent_data.get("soul_md", "")
                 role_md = parent_data.get("role_md", "")
-                tool_list = parent_data.get("tool_list", [])
+                act_tool_list = parent_data.get("act_tool_list", [])
+                observe_tool_list = parent_data.get("observe_tool_list", [])
                 skill_list = parent_data.get("skill_list", [])
                 template_id = parent_data.get("template_id")
                 agent_name = f"sub-agent-{template_name}"
@@ -627,7 +669,8 @@ class LifecycleManager:
             )
             soul_md = parent_data.get("soul_md", "")
             role_md = parent_data.get("role_md", "")
-            tool_list = parent_data.get("tool_list", [])
+            act_tool_list = parent_data.get("act_tool_list", [])
+            observe_tool_list = parent_data.get("observe_tool_list", [])
             skill_list = parent_data.get("skill_list", [])
             template_id = parent_data.get("template_id")
             agent_name = f"sub-agent-d{spawn_depth}"
@@ -642,7 +685,8 @@ class LifecycleManager:
             status="IDLE",
             soul_md=soul_md,
             role_md=role_md,
-            tool_list=tool_list,
+            act_tool_list=act_tool_list,
+            observe_tool_list=observe_tool_list,
             skill_list=skill_list,
             soul_path=parent_data.get("soul_path"),
             loop_guard=LoopGuard(

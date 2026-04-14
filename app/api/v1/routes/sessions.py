@@ -42,7 +42,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
     try:
         mgr = get_session_manager()
         session, agent_id = mgr.create_session(
-            goal=req.goal,
+            user_prompt=req.user_prompt,
             template_id=req.template_id,
             token_budget=req.token_budget,
             root_max_turns=req.root_max_turns,
@@ -137,7 +137,7 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             task_svc = get_task_service()
             mem_svc = get_memory_service()
 
-            tasks = task_svc.list_by_session(session_id)
+            tasks = [t for t in task_svc.list_by_session(session_id) if not t.settings.get("_daemon")]
             task_data = [TaskResponse(**t.to_dict()).model_dump() for t in tasks]
 
             agent_id = session.root_agent_id or ""
@@ -190,7 +190,7 @@ def list_session_tasks(session_id: str) -> list[TaskResponse]:
     """列出 session 下的所有 Task。"""
     try:
         task_svc = get_task_service()
-        tasks = task_svc.list_by_session(session_id)
+        tasks = [t for t in task_svc.list_by_session(session_id) if not t.settings.get("_daemon")]
         return [TaskResponse(**t.to_dict()) for t in tasks]
     except AppError as e:
         raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})

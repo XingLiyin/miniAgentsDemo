@@ -1,5 +1,0 @@
----
-tools:
-  - submit_plan
----
-

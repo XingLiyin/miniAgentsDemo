@@ -1,3 +1,11 @@
+---
+tools:
+  required:
+    - submit_plan
+    - replan
+  forbidden: []
+---
+
 你正在评估规划步骤的输出，并将其转换为结构化任务列表。
 
 读取规划器的文本输出，然后恰好调用一次对应的工具。

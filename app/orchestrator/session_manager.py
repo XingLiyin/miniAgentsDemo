@@ -40,6 +40,8 @@ def _apply_template_to_agent(tpl: "AgentTemplate", agent: Agent) -> None:  # typ
     """
     agent.soul_md = getattr(tpl, "soul_md", "")
     agent.role_md = getattr(tpl, "role_md", "")
+    agent.act_tool_list = getattr(tpl, "act_tool_list", [])
+    agent.observe_tool_list = getattr(tpl, "observe_tool_list", [])
 
 
 class SessionManager:
@@ -74,7 +76,7 @@ class SessionManager:
 
     def create_session(
         self,
-        goal: str,
+        user_prompt: str,
         template_id: str | None = None,
         token_budget: int | None = None,
         root_max_turns: int | None = None,
@@ -86,7 +88,7 @@ class SessionManager:
         """
         settings = get_settings()
         session = self._session_svc.create(
-            goal=goal,
+            user_prompt=user_prompt,
             template_id=template_id,
             token_budget=token_budget or settings.default_token_budget,
             root_max_turns=root_max_turns or settings.default_root_max_turns,
@@ -94,8 +96,8 @@ class SessionManager:
 
         # 构建 root Agent
         # TODO: skill_list 需要改成后续动态查询，当前默认空列表
-        system_prompt = settings.agent_default_system_prompt
-        tool_list: list[str] = []
+        act_tool_list: list[str] = []
+        observe_tool_list: list[str] = []
         skill_list: list[str] = []
         soul_path: str | None = None
         tpl = None
@@ -112,7 +114,8 @@ class SessionManager:
                     settings.default_agent_template_name,
                 )
         if tpl is not None:
-            tool_list = tpl.tool_list
+            act_tool_list = tpl.act_tool_list
+            observe_tool_list = tpl.observe_tool_list
             skill_list = tpl.skill_list
             soul_path = tpl.source_dir or None
 
@@ -123,7 +126,8 @@ class SessionManager:
             template_id=template_id,
             name="root",
             status="IDLE",
-            tool_list=tool_list,
+            act_tool_list=act_tool_list,
+            observe_tool_list=observe_tool_list,
             skill_list=skill_list,
             soul_path=soul_path,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
@@ -138,6 +142,18 @@ class SessionManager:
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 
+        # Push SSE user message event
+        try:
+            from app.runtime.sse_bus import get_sse_bus
+            get_sse_bus().push(session.id, {
+                "type": "message",
+                "role": "user",
+                "content": user_prompt,
+                "created_at": now_iso(),
+            })
+        except Exception:
+            pass
+
         # 初始化 LifecycleManager session 状态
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session.id)
@@ -147,7 +163,7 @@ class SessionManager:
             self._create_initial_task(
                 session_id=session.id,
                 creator_agent_id=agent.id,
-                goal=goal,
+                user_prompt=user_prompt,
                 cfg=initial_task,
             )
 
@@ -171,7 +187,7 @@ class SessionManager:
         self,
         session_id: str,
         creator_agent_id: str,
-        goal: str,
+        user_prompt: str,
         cfg: InitialTaskConfig | None,
     ) -> None:
         """根据 InitialTaskConfig 创建第一个 task。
@@ -179,20 +195,35 @@ class SessionManager:
         """
         assert self._task_svc is not None
         use_subagent = cfg.use_subagent if cfg else False
-        title = (cfg.title if cfg else None) or f"{goal[:80]}"
+        title = (cfg.title if cfg else None) or ""
+        description = (cfg.description if cfg else None) or ""
         inputs: dict = {"use_subagent": use_subagent, "inherit_memory": True}
         if use_subagent:
             settings = get_settings()
             subagent_tpl = (cfg.subagent_template if cfg else None) or settings.default_planner_template_name
             inputs["subagent_template"] = subagent_tpl
-        self._task_svc.create(
+        task = self._task_svc.create(
             session_id=session_id,
             creator_agent_id=creator_agent_id,
-            task_type="plan" if use_subagent else "atomic",
+            user_prompt=user_prompt,
             title=title,
-            description=goal,
+            description=description,
             inputs=inputs,
         )
+        if (not title or not description) and self._lifecycle_manager is not None:
+            meta_task = self._task_svc.create(
+                session_id=session_id,
+                creator_agent_id=creator_agent_id,
+                user_prompt=user_prompt,
+                title="",
+                description="",
+                inputs={
+                    "subagent_template": "metadata_filler",
+                    "target_task_id": task.id,
+                    "_daemon": True,
+                },
+            )
+            self._lifecycle_manager.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
 
     def continue_session(self, session_id: str, user_message: str, *, initial_task: InitialTaskConfig | None = None) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
@@ -200,6 +231,9 @@ class SessionManager:
         from app.storage.file.memory_store import MemoryStore
 
         session = self._session_svc.get(session_id)
+
+        session.user_prompt = user_message  # 更新 session.user_prompt 以供后续参考（如创建新 task）
+        self._session_svc.save(session)
 
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
@@ -214,7 +248,6 @@ class SessionManager:
         )
         # Push SSE user message event
         try:
-            from app.common.utils import now_iso
             from app.runtime.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {
                 "type": "message",
@@ -249,7 +282,7 @@ class SessionManager:
             self._create_initial_task(
                 session_id=session_id,
                 creator_agent_id=agent.id,
-                goal=user_message,
+                user_prompt=user_message,
                 cfg=initial_task,
             )
         self.schedule_loop(session_id, agent.id)

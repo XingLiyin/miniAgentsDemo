@@ -95,8 +95,6 @@ function TaskEventBadge({ item }: { item: ChatTaskEvent }) {
   const isFinished = task.status === 'FINISHED'
   const isFailed = task.status === 'FAILED'
 
-  // Only show certain states
-  if (task.type === 'user_input') return null
 
   return (
     <div className="flex justify-center">
@@ -459,7 +457,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-shrink-0">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{session?.goal || '加载中…'}</p>
+          <p className="text-sm font-medium text-gray-900 truncate">{session?.user_prompt || '加载中…'}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {session && <SessionStatusBadge status={session.status} />}
             {session && session.token_used > 0 && (
