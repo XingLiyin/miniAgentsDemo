@@ -34,6 +34,8 @@ class AgentDefMetadata:
     act_tool_spec: ToolSpec    # 来自 SOUL.md tools frontmatter（Actor 阶段）
     observe_tool_spec: ToolSpec  # 来自 ROLE.md tools frontmatter（Observer 阶段）
     agent_dir: Path            # 四个文件所在目录
+    mcp_act_servers: list[str] = field(default_factory=list)      # SOUL.md 声明订阅的 MCP server
+    mcp_observe_servers: list[str] = field(default_factory=list)  # ROLE.md 声明订阅的 MCP server
 
 
 @dataclass

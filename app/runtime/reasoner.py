@@ -104,12 +104,28 @@ class Reasoner:
 
     # ── 私有辅助 ──────────────────────────────────────────────────────────────
 
+    def _resolve_act_tool_names(self, agent: Agent) -> set[str]:
+        """展开 act 阶段的有效工具名集合：显式列表 + 订阅 MCP server 的全部工具。"""
+        tools = set(agent.act_tool_list or [])
+        if self._tool_registry and agent.mcp_act_servers:
+            for server_name in agent.mcp_act_servers:
+                tools.update(self._tool_registry.get_server_tool_names(server_name))
+        return tools
+
+    def _resolve_observe_tool_names(self, agent: Agent) -> set[str]:
+        """展开 observe 阶段的有效工具名集合：显式列表 + 订阅 MCP server 的全部工具。"""
+        tools = set(agent.observe_tool_list or [])
+        if self._tool_registry and agent.mcp_observe_servers:
+            for server_name in agent.mcp_observe_servers:
+                tools.update(self._tool_registry.get_server_tool_names(server_name))
+        return tools
+
     def _build_resources(self, goal: str, agent: Agent, task: Task) -> list[ContextResource]:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。
 
-        从 AgentController scope 获取的控制工具，经 agent.act_tool_list 过滤后才暴露给 LLM。
+        从 AgentController scope 获取的控制工具，经有效 act 工具集过滤后才暴露给 LLM。
         """
-        allowed = set(agent.act_tool_list or [])
+        allowed = self._resolve_act_tool_names(agent)
         skill_resources = [
             ContextResource(name=name, description=desc, kind="skill")
             for name, desc in self._retrieve_skills(goal, agent)
@@ -120,22 +136,26 @@ class Reasoner:
         ]
         tool_resources = [
             ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-            for t in self._retrieve_tools(goal, agent) + ctrl_tools
+            for t in self._retrieve_tools(goal, agent, allowed) + ctrl_tools
         ]
         return skill_resources + tool_resources
 
     def _build_observer_tools(self, agent: Agent, task: Task) -> list:
         """组装 Observer 阶段可用工具。
 
-        所有从 scope 获取的工具均经 agent.observe_tool_list 过滤。
+        所有从 scope 获取的工具均经有效 observe 工具集过滤。
         submit_task_reviews 由 Observer 在第二轮内部注入，不经此处。
         """
-        allowed = set(agent.observe_tool_list or [])
+        allowed = self._resolve_observe_tool_names(agent)
         candidates = self._agent_controller.get_llm_schemas(scope="observer")
         return [t for t in candidates if t.name in allowed]
 
-    def _retrieve_tools(self, goal: str, agent: Agent) -> list:
-        if not self._tool_registry or not agent.act_tool_list:
+    def _retrieve_tools(self, goal: str, agent: Agent, allowed: set[str] | None = None) -> list:
+        if not self._tool_registry:
+            return []
+        if allowed is None:
+            allowed = self._resolve_act_tool_names(agent)
+        if not allowed:
             return []
 
         try:
@@ -144,7 +164,6 @@ class Reasoner:
             if store_client.enabled:
                 results = store_client.search(goal, top_k=10)
                 if results:
-                    allowed = set(agent.act_tool_list)
                     filtered = [r for r in results if r.name in allowed]
                     if filtered:
                         return self._tool_registry.to_llm_tools(
@@ -153,7 +172,7 @@ class Reasoner:
         except Exception:
             logger.debug("Reasoner: tool store search failed, falling back to full list")
 
-        return self._tool_registry.to_llm_tools(agent.act_tool_list)
+        return self._tool_registry.to_llm_tools(list(allowed))
 
     def _retrieve_skills(self, goal: str, agent: Agent) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。"""

@@ -50,6 +50,7 @@ class PlannedTask(BaseModel):
     """Planner 输出的单个任务。"""
     title: str
     description: str
+    user_prompt: str = ""          # Planner 可选指定，描述触发该任务的用户输入
     skill_name: str | None = None       # Planner 指定，None 表示不用 skill
     use_subagent: bool = False          # Planner 指定，True 表示由独立 sub-agent 执行
     subagent_template: str | None = None  # 可选的 sub-agent template（如 planner 专用模板）

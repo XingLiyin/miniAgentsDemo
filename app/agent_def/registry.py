@@ -48,6 +48,8 @@ class AgentTemplateRegistry:
                 style_md=content.style_md,
                 act_tool_list=metadata.act_tool_spec.effective(),
                 observe_tool_list=metadata.observe_tool_spec.effective(),
+                mcp_act_servers=metadata.mcp_act_servers,
+                mcp_observe_servers=metadata.mcp_observe_servers,
                 source_dir=str(metadata.agent_dir),
             )
             logger.debug("AgentTemplateRegistry: upserted template '%s'", metadata.name)

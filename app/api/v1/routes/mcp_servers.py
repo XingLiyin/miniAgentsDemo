@@ -49,7 +49,11 @@ def register_http(req: MCPHttpRegisterRequest) -> MCPServerResponse:
             timeout=req.timeout,
         )
     except AppError as e:
-        status = 409 if e.code == "MCP_ALREADY_EXISTS" else 500
+        status = {
+            "MCP_ALREADY_EXISTS": 409,
+            "MCP_CONNECT_CANCELLED": 502,
+            "MCP_CONNECT_TIMEOUT": 504,
+        }.get(e.code, 500)
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
     return _to_response(info)
 

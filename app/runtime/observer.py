@@ -222,10 +222,10 @@ class Observer:
         system_prompt = role_base + "\n\n---\n\n" + _ASSESSMENT_GUIDE
         transcript = self._build_transcript(result)
         user_content = (
-            f"Session goal: {session.goal}\n\n"
             f"Previous progress summary: {ctx.summary_text or 'None'}\n\n"
             f"Current task: {task.title}\n"
             f"Task description: {task.description or task.title}\n\n"
+            f"User prompt that triggered this execution: {session.user_prompt}\n\n"
             f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}\n\n"
             "Assess: was the current task completed successfully?"
         )
@@ -273,7 +273,6 @@ class Observer:
         system_prompt = role_base + "\n\n---\n\n" + _REVIEW_GUIDE
         task_list_text = self._build_task_list_section(reviewable)
         user_content = (
-            f"Session goal: {session.goal}\n\n"
             f"Round 1 assessment — current task '{current_task.title}':\n"
             f"  outcome: {assessment['task_outcome']}\n"
             f"  result: {assessment['task_result']}\n\n"

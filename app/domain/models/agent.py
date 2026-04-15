@@ -48,8 +48,10 @@ class Agent:
     # context engineering
     soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
     role_md: str = ""                           # 驱动 Observer 阶段 system prompt（评判准则）
-    act_tool_list: list[str] = field(default_factory=list)      # Actor 阶段可用工具
-    observe_tool_list: list[str] = field(default_factory=list)  # Observer 阶段可用工具
+    act_tool_list: list[str] = field(default_factory=list)      # Actor 阶段显式工具
+    observe_tool_list: list[str] = field(default_factory=list)  # Observer 阶段显式工具
+    mcp_act_servers: list[str] = field(default_factory=list)    # Actor 阶段订阅的 MCP server
+    mcp_observe_servers: list[str] = field(default_factory=list)  # Observer 阶段订阅的 MCP server
     skill_list: list[str] = field(default_factory=list)
     soul_path: str | None = None
     inherit_memory: bool = True                 # False = spawn 时跳过记忆复制
@@ -75,6 +77,8 @@ class Agent:
             "role_md": self.role_md,
             "act_tool_list": self.act_tool_list,
             "observe_tool_list": self.observe_tool_list,
+            "mcp_act_servers": self.mcp_act_servers,
+            "mcp_observe_servers": self.mcp_observe_servers,
             "skill_list": self.skill_list,
             "soul_path": self.soul_path,
             "loop_guard": self.loop_guard.to_dict(),
@@ -99,6 +103,8 @@ class Agent:
             role_md=d.get("role_md", ""),
             act_tool_list=d.get("act_tool_list", []),
             observe_tool_list=d.get("observe_tool_list", []),
+            mcp_act_servers=d.get("mcp_act_servers", []),
+            mcp_observe_servers=d.get("mcp_observe_servers", []),
             skill_list=d.get("skill_list", []),
             soul_path=d.get("soul_path"),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),

@@ -248,12 +248,18 @@ class Actor:
             bb_content = f"Task Background:\n{bb}"
 
         # task 描述
-        goal_content = f"Current goal: {ctx.current_task.title}:{ctx.current_task.description}"
+        goal_content = ""
+        if task.title and task.description:
+            goal_content = f"Current goal: {task.title}\nDescription: {task.description}"
+        previous_progress = ""
         if ctx.summary_text:
-            goal_content = f"Previous progress:\n{ctx.summary_text}\n\nCurrent goal: {ctx.current_task.title}:{ctx.current_task.description}"
-        messages.append(LLMMessage(role="user", content=f"{bb_content}\n{goal_content}"))
+            previous_progress = f"Previous progress:\n{ctx.summary_text}"
+
+        # user 消息最后追加，确保对当前 task 的补充说明在最显著的位置
+        messages.append(LLMMessage(role="user", content=f"{bb_content}\n{goal_content}\n{previous_progress}\nCurrent message: {ctx.current_task.user_prompt}"))
 
         return messages
+        
 
     # ── ActorResult 构建 ───────────────────────────────────────────────────
 

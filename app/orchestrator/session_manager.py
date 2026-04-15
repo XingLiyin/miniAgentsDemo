@@ -42,6 +42,8 @@ def _apply_template_to_agent(tpl: "AgentTemplate", agent: Agent) -> None:  # typ
     agent.role_md = getattr(tpl, "role_md", "")
     agent.act_tool_list = getattr(tpl, "act_tool_list", [])
     agent.observe_tool_list = getattr(tpl, "observe_tool_list", [])
+    agent.mcp_act_servers = getattr(tpl, "mcp_act_servers", [])
+    agent.mcp_observe_servers = getattr(tpl, "mcp_observe_servers", [])
 
 
 class SessionManager:
@@ -215,8 +217,8 @@ class SessionManager:
                 session_id=session_id,
                 creator_agent_id=creator_agent_id,
                 user_prompt=user_prompt,
-                title="",
-                description="",
+                title="Update task meta data details",
+                description=f"Summarize the user prompt ({user_prompt}) and fill in the task title and description accordingly",
                 inputs={
                     "subagent_template": "metadata_filler",
                     "target_task_id": task.id,

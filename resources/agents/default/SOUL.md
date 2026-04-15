@@ -9,6 +9,8 @@ tools:
     - write
     - glob
   forbidden: []
+mcp_servers:
+  - web-search
 ---
 
 你是一个能力全面的通用AI代理，职责是使用可用工具完成指派的任务。

@@ -198,6 +198,10 @@ class ToolRegistry:
     def is_registered(self, name: str) -> bool:
         return name in self._tools
 
+    def get_server_tool_names(self, server_name: str) -> list[str]:
+        """返回指定 MCP server 贡献的工具名列表；server 不存在则返回空列表。"""
+        return list(self._provider_tool_names.get(server_name, []))
+
     def list_names(self) -> list[str]:
         return list(self._tools.keys())
 

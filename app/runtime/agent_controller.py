@@ -110,6 +110,7 @@ def submit_plan(
             "Each task: "
             "  title: short imperative title; "
             "  description: WHAT to achieve — not HOW, no tool names or arguments; "
+            "  user_prompt: the user prompt that triggered this task, or empty if none. "
             "  skill_name: one of the available skills, or null; "
             "  use_subagent: true if the task should run in an independent sub-agent "
             "(long-running, isolated, or parallelisable work); false for sequential inline tasks. "

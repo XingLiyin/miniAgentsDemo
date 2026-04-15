@@ -45,11 +45,15 @@ class AgentLoader:
 
         # ROLE.md tools frontmatter → observe_tool_spec（Observer 阶段）
         observe_tool_spec = ToolSpec()
+        role_fm: dict = {}
         role_md_path = agent_dir / "ROLE.md"
         if role_md_path.exists():
             role_content = role_md_path.read_text(encoding="utf-8")
             role_fm, _ = _parse_agent_md(role_content)
             observe_tool_spec = _parse_tool_spec(role_fm)
+
+        mcp_act_servers = _parse_mcp_servers(soul_fm)
+        mcp_observe_servers = _parse_mcp_servers(role_fm)
 
         return AgentDefMetadata(
             name=soul_fm["name"],
@@ -58,6 +62,8 @@ class AgentLoader:
             act_tool_spec=act_tool_spec,
             observe_tool_spec=observe_tool_spec,
             agent_dir=agent_dir,
+            mcp_act_servers=mcp_act_servers,
+            mcp_observe_servers=mcp_observe_servers,
         )
 
     def load_content(self, agent_dir: Path) -> AgentDefContent:
@@ -103,6 +109,22 @@ def _parse_agent_md(content: str) -> tuple[dict, str]:
     body = content[end + 4:].strip()
     frontmatter = _parse_simple_yaml(frontmatter_str)
     return frontmatter, body
+
+
+def _parse_mcp_servers(fm: dict) -> list[str]:
+    """从 frontmatter dict 中解析 mcp_servers 列表。
+
+    支持格式：
+      mcp_servers:
+        - server_a
+        - server_b
+    """
+    raw = fm.get("mcp_servers")
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(s) for s in raw if s]
+    return []
 
 
 def _parse_tool_spec(fm: dict) -> ToolSpec:

@@ -75,6 +75,8 @@ class AgentTemplateService:
         style_md: str,
         act_tool_list: list[str],
         observe_tool_list: list[str],
+        mcp_act_servers: list[str] | None = None,
+        mcp_observe_servers: list[str] | None = None,
         source_dir: str = "",
     ) -> AgentTemplate:
         """按 name 做 upsert（目录扫描时调用）。
@@ -93,6 +95,8 @@ class AgentTemplateService:
             existing.style_md = style_md
             existing.act_tool_list = act_tool_list
             existing.observe_tool_list = observe_tool_list
+            existing.mcp_act_servers = mcp_act_servers or []
+            existing.mcp_observe_servers = mcp_observe_servers or []
             existing.source_dir = source_dir
             existing.updated_at = now
             self._store.save(existing.to_dict())
@@ -110,6 +114,8 @@ class AgentTemplateService:
             style_md=style_md,
             act_tool_list=act_tool_list,
             observe_tool_list=observe_tool_list,
+            mcp_act_servers=mcp_act_servers or [],
+            mcp_observe_servers=mcp_observe_servers or [],
             source_dir=source_dir,
             created_at=now,
             updated_at=now,

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -102,8 +103,17 @@ class _MCPProviderBase(ABC):
     def _start_loop(self) -> None:
         """启动后台事件循环线程（子类在 start() 开头调用）。"""
         self._loop = asyncio.new_event_loop()
+        _loop = self._loop
+
+        def _run() -> None:
+            # 必须绑定到当前线程，否则 agent-framework 内部的
+            # asyncio.get_event_loop() 在 Python 3.10+ 会返回错误的 loop，
+            # 导致内部 task 被取消并抛出 CancelledError。
+            asyncio.set_event_loop(_loop)
+            _loop.run_forever()
+
         self._thread = threading.Thread(
-            target=self._loop.run_forever, daemon=True, name=self._thread_name
+            target=_run, daemon=True, name=self._thread_name
         )
         self._thread.start()
 
@@ -112,7 +122,19 @@ class _MCPProviderBase(ABC):
         if self._loop is None:
             raise AppError("MCP_NOT_STARTED", "Event loop not initialized")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        return future.result(timeout=30)
+        try:
+            return future.result(timeout=30)
+        except concurrent.futures.CancelledError as exc:
+            raise AppError(
+                "MCP_CONNECT_CANCELLED",
+                "MCP connection was cancelled; check server availability",
+            ) from exc
+        except concurrent.futures.TimeoutError as exc:
+            future.cancel()
+            raise AppError(
+                "MCP_CONNECT_TIMEOUT",
+                "MCP connection timed out after 30 s",
+            ) from exc
 
     def _map_function_tool(self, ft: Any) -> ToolDefinition:
         """将 AF FunctionTool 映射为 miniAgents ToolDefinition。"""
