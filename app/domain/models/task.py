@@ -21,11 +21,13 @@ class Task:
     status: str                        # PENDING | ACTIVE | SUSPENDED | FINISHED | FAILED | CANCELED
 
     user_prompt: str                   # 用户输入的文本信息，创建 task 的依据，供 Agent 处理，不可为空
+    conversation_turns: list[dict[str, Any]] = field(default_factory=list) # 任务相关的对话历史（agent 内部维护，非必需）
 
     title: str = ""                    # 简短描述，供 Agent 识别和展示用, 可为空，等待 llm 补全
     description: str = ""              # 详细描述，供 Agent 识别和展示用, 可为空，等待 llm 补全
     settings: dict[str, Any] = field(default_factory=dict) # 任务配置项（如 skill_name、use_subagent 等，Agent 执行时参考）
-    result: str | None = None          # reasoning 结果文本
+    progress_text: str = ""            # 任务执行中的进度描述，供 Agent 内部维护和展示用
+    result: str | None = None          # 结果文本
     outputs: dict[str, Any] = field(default_factory=dict) # 若需要输出结构化文本，可用此字段存储
     error: str | None = None           # 若任务失败，存储错误信息
 
@@ -36,6 +38,13 @@ class Task:
 
     created_at: str = ""
     updated_at: str = ""
+
+    # ── 运行时临时字段（不持久化，handler 直接写，loop 直接读）──────────────────
+    actor_done: bool = field(default=False, compare=False)
+    actor_outcome: str = field(default="", compare=False)
+    actor_result: str = field(default="", compare=False)
+    actor_summary: str = field(default="", compare=False)
+    proceed_to_review: bool = field(default=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {

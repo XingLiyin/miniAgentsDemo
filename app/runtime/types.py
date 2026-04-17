@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from pydantic import BaseModel
 
 TaskOutcome = Literal["success", "failed", "needs_user_input"]
-ReviewStatus = Literal["confirmed", "reopen", "skip"]
 
 if TYPE_CHECKING:
     from app.domain.models.task import Task
@@ -37,9 +36,9 @@ class ReasoningContext:
     role: str = ""                       # agent.role_md
     skill_instructions: str = ""         # 当前 task 的 skill instructions（plan/act 均可有）
     # 检索结果：工具（kind="tool"）+ 可用技能（kind="skill"）
-    resources: list[ContextResource] = field(default_factory=list)
+    actor_resources: list[ContextResource] = field(default_factory=list)
     # Observer 阶段可用工具（由 Reasoner 按 agent.observe_tool_list 过滤后填充）
-    observer_tools: list["LLMTool"] = field(default_factory=list)
+    observer_resources: list[ContextResource] = field(default_factory=list)
     # 当前待执行 task（plan or atomic，统一字段）
     current_task: "Task | None" = None
     # Token 估算（给 guard 用）
@@ -92,18 +91,6 @@ class ActorResult:
 
 
 @dataclass
-class TaskReview:
-    """Observer 对单个任务的复核判断。"""
-    task_id: str
-    current_status: str      # "FINISHED" | "PENDING"
-    review_status: ReviewStatus  # confirmed | reopen | skip
-    reasoning: str           # 判断依据（必填）
-
-
-@dataclass
 class ObserverVerdict:
-    """Observer 阶段输出。"""
-    task_outcome: TaskOutcome          # success / failed / needs_user_input
-    task_result: str                   # 写入 task.result 的内容
+    """Observer 阶段输出。task 状态由 ControlToolProvider handler 写入，此处只携带 memory 摘要。"""
     summary: str                       # 写入 Memory（role=assistant）
-    task_reviews: list[TaskReview] = field(default_factory=list)

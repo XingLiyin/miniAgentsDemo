@@ -20,7 +20,7 @@ import logging
 
 from agent_framework import MCPStreamableHTTPTool
 
-from app.tools.mcp_base import _MCPProviderBase
+from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,10 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
             url:  MCP Server 的 HTTP 端点，如 "http://localhost:3000/mcp"
             timeout: 请求超时秒数（默认 30）
         """
-        af_tool = MCPStreamableHTTPTool(
+        class _Tool(_MetaInjectingMixin, MCPStreamableHTTPTool):
+            pass
+
+        af_tool = _Tool(
             name=name,
             url=url,
             load_tools=True,

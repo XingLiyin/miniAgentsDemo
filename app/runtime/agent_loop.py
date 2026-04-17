@@ -95,45 +95,22 @@ class AgentLoop:
 
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
-            task_list = self._task_svc.list_by_session(session_id)
+            task_list = self._task_svc.list_by_agent(session_id, agent_id)
             verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
 
-            logger.debug("Session %s observer outcome: %s", session_id, verdict.task_outcome)
-
-            # ── task 状态写入（由 Observer 判定，AgentLoop 执行）──────────────
-            if verdict.task_outcome == "needs_user_input":
-                confirmed, feedback = self._ask_user_for_task_confirmation(
-                    task, result.output
-                )
-                if confirmed:
-                    self._task_svc.finish(task_id, result=result.output)
-                else:
-                    error = feedback or "用户确认任务未完成"
-                    self._task_svc.fail(task_id, error=error)
-                    raise AppError("TASK_NOT_CONFIRMED", error)
-            elif verdict.task_outcome == "success":
-                outputs = result.task_outputs if result.task_outputs else None
-                self._task_svc.finish(task_id, result=verdict.task_result, outputs=outputs)
-            else:
-                self._task_svc.fail(task_id, error=verdict.task_result)
-                raise AppError("TASK_FAILED_BY_OBSERVER", verdict.task_result)
-
-            # ── task_reviews：复核 FINISHED，提前完成 PENDING ────────────────
-            for review in verdict.task_reviews:
-                if review.task_id == task_id:
-                    continue  # 当前 task 由上方逻辑处理，跳过
-                try:
-                    if review.review_status == "reopen":
-                        self._task_svc.reopen(review.task_id)
-                        logger.info("Task %s reopened by observer: %s", review.task_id, review.reasoning)
-                    elif review.review_status == "skip":
-                        self._task_svc.finish(review.task_id, result=review.reasoning or "Completed indirectly per observer.")
-                        logger.info("Task %s skipped by observer: %s", review.task_id, review.reasoning)
-                    # "confirmed" → 无操作
-                except Exception as e:
-                    logger.warning("Failed to apply task review for %s: %s", review.task_id, e)
+            # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
+            task = self._task_svc.get(task_id)
+            if task.status == "FAILED":
+                raise AppError("TASK_FAILED_BY_OBSERVER", task.result or "")
 
             # ── memory / blackboard ───────────────────────────────────────────
+            if task.user_prompt:
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="user",
+                    content=task.user_prompt,
+                    session_id=session_id,
+                )
             if verdict.summary:
                 self._memory_svc.append_message(
                     agent_id=agent_id,
@@ -162,79 +139,6 @@ class AgentLoop:
             if agent.status == "RUNNING":
                 agent.status = "FINISHED"
                 self._agent_store.save(agent.to_dict())
-
-    # ── HITL ──────────────────────────────────────────────────────────────────
-
-    def _ask_user_for_task_confirmation(
-        self,
-        task: object,
-        llm_output: str,
-    ) -> tuple[bool, str | None]:
-        """Observer 不确定时，暂停并等待用户确认任务状态（单次，不重试）。
-
-        返回 (confirmed, feedback)：
-          - True, None  → 用户确认完成
-          - False, str  → 用户表示未完成，feedback 作为 fail error
-        """
-        prompt = (
-            f"任务「{task.title}」已执行，但系统无法自动判定完成状态。\n\n"
-            f"执行结果：\n{llm_output or '（无输出）'}\n\n"
-            "请确认任务是否完成，或补充说明以便 Agent 重新规划。"
-        )
-        answer = self._block_for_user_input(
-            task,
-            title="请确认任务完成状态",
-            inputs={
-                "prompt": prompt,
-                "type": "task_completion_confirm",
-                "task_title": task.title,
-                "task_output": llm_output,
-                "original_task_id": task.id,
-                "inline": True,
-            },
-        )
-        confirmed = answer.startswith("用户已确认任务完成")
-        feedback: str | None = None
-        if not confirmed:
-            prefix = "用户表示任务未完成，请重试。用户补充说明："
-            feedback = answer[len(prefix):] if answer.startswith(prefix) else answer
-        return confirmed, feedback
-
-    def _block_for_user_input(self, task: object, title: str, inputs: dict) -> str:
-        """阻塞等待用户回答后返回内容（最多 1 小时）。
-
-        不创建 user_input task；通过 HitlStore + threading.Event 阻塞当前工作线程。
-        答案由 POST /sessions/{id}/input 注入，唤醒后继续执行。
-        """
-        from app.runtime.hitl_store import get_hitl_store
-        from app.runtime.sse_bus import get_sse_bus
-
-        session_id = getattr(task, "session_id", "")
-        agent_id = getattr(task, "assigned_agent_id", "")
-        prompt = inputs.get("prompt", "")
-        input_type = inputs.get("type", "user_input")
-
-        self._session_svc.transition(session_id, "WAITING_INPUT")
-        try:
-            from app.common.utils import now_iso
-            get_sse_bus().push(session_id, {
-                "type": "message",
-                "role": "assistant",
-                "content": prompt,
-                "created_at": now_iso(),
-            })
-            get_sse_bus().push(session_id, {
-                "type": "waiting_input",
-                "prompt": prompt,
-                "input_type": input_type,
-                "task_title": title,
-            })
-        except Exception:
-            pass
-
-        answer = get_hitl_store().wait(session_id, agent_id, prompt, input_type)
-        self._session_svc.transition(session_id, "RUNNING")
-        return answer
 
     def _load_agent(self, agent_id: str) -> Agent:
         data = self._agent_store.get(agent_id)

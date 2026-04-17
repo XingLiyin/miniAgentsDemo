@@ -17,8 +17,8 @@ from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.task_service import TaskService
 from app.llm.base import BaseChatClient, LLMMessage
-from app.runtime.agent_controller import AgentController, ControlSignal
 from app.runtime.types import ActorResult, ContextResource, ConversationTurn, ReasoningContext, ToolCallRecord
+from app.tools.definition import CallContext
 
 if TYPE_CHECKING:
     from app.runtime.tool_gateway import ToolGateway
@@ -35,12 +35,10 @@ class Actor:
         llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
-        agent_controller: AgentController,
     ) -> None:
         self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
-        self._agent_controller = agent_controller
 
     def act(self, task: Task, ctx: ReasoningContext, agent: Agent) -> ActorResult:
         """执行单个 task，plan 和 act 共用同一循环。"""
@@ -49,13 +47,13 @@ class Actor:
 
         system_prompt = self._build_system_prompt(ctx)
         messages      = self._build_messages(task, ctx)
-        tools         = [r.llm_tool for r in ctx.resources if r.kind == "tool" and r.llm_tool is not None]
+        tools         = [r.llm_tool for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None]
 
         tool_calls_made: list[ToolCallRecord] = []
         conversation_turns: list[ConversationTurn] = []
-        terminal_signal_data: dict = {}
         last_text = ""
         session_id = getattr(task, "session_id", "")
+        toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, agent=agent, task=task)
 
         # 按 agent.llm_name 动态解析 LLM 客户端，缺省用注入的默认客户端
         llm_client = self._llm_client
@@ -85,7 +83,7 @@ class Actor:
                         "round_label": f"actor_round_{_round}",
                         "system_prompt": system_prompt,
                         "messages": [{"role": m.role, "content": m.content} for m in messages],
-                        "tool_names": [r.name for r in ctx.resources if r.kind == "tool" and r.llm_tool is not None],
+                        "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
                     })
                 except Exception:
                     pass
@@ -142,26 +140,20 @@ class Actor:
             done = False
 
             for tool_call in tool_calls_from_stream:
-                if self._agent_controller.can_handle(tool_call.name):
-                    ctrl = self._agent_controller.dispatch(
-                        tool_call.name, tool_call.input, agent, task
+                try:
+                    result = self._tool_gateway.call(
+                        tool_name=tool_call.name,
+                        arguments=tool_call.input,
+                        agent=agent,
+                        task_id=task.id,
+                        ctx=toolcall_ctx,
                     )
-                    result = ctrl.tool_result
-                    if ctrl.signal == ControlSignal.TASK_COMPLETE:
-                        terminal_signal_data = ctrl.signal_data
-                        done = True
-                else:
-                    try:
-                        result = self._tool_gateway.call(
-                            tool_name=tool_call.name,
-                            arguments=tool_call.input,
-                            agent=agent,
-                            task_id=task.id,
-                        )
-                    except Exception as e:
-                        logger.warning("Actor: tool '%s' raised %s", tool_call.name, e)
-                        from app.tools.definition import ToolResult as TR
-                        result = TR(content=str(e), is_error=True)
+                except Exception as e:
+                    logger.warning("Actor: tool '%s' raised %s", tool_call.name, e)
+                    from app.tools.definition import ToolResult as TR
+                    result = TR(content=str(e), is_error=True)
+                if task.actor_done:
+                    done = True
 
                 record = ToolCallRecord(
                     tool_name=tool_call.name,
@@ -197,8 +189,7 @@ class Actor:
             if done:
                 break
 
-        return self._build_result(task, tool_calls_made, conversation_turns,
-                                  last_text, terminal_signal_data)
+        return self._build_result(task, tool_calls_made, conversation_turns, last_text)
 
     # ── System prompt 构建 ─────────────────────────────────────────────────
 
@@ -211,8 +202,8 @@ class Actor:
 
     def _build_resources_section(self, ctx: ReasoningContext) -> str:
         """将 ctx.resources 按 kind 分组渲染，skill 和 tool 各自独立成段。"""
-        skills = [r for r in ctx.resources if r.kind == "skill"]
-        tools  = [r for r in ctx.resources if r.kind == "tool" and r.llm_tool is not None]
+        skills = [r for r in ctx.actor_resources if r.kind == "skill"]
+        tools  = [r for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None]
         parts: list[str] = []
         if skills:
             lines = ["## Available Skills (assign to tasks where appropriate)"]
@@ -269,7 +260,6 @@ class Actor:
         tool_calls_made: list[ToolCallRecord],
         conversation_turns: list[ConversationTurn],
         last_text: str,
-        terminal_signal_data: dict,
     ) -> ActorResult:
         """plan 和 act 统一走文本路径；task 创建由 Observer 阶段负责。"""
         skill_used = task.settings.get("skill_name")

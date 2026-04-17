@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 from app.common.errors import AppError
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.definition import CallContext, ToolDefinition, ToolResult
 from app.tools.tool_decorator import _extract_input_schema
 
 logger = logging.getLogger(__name__)
@@ -71,14 +71,18 @@ class _MCPProviderBase(ABC):
         self._run_sync(self._af_tool.load_tools())
         return self.list_definitions()
 
-    def call(self, tool_name: str, arguments: dict) -> ToolResult:
+    def call(self, tool_name: str, arguments: dict, ctx: CallContext | None = None) -> ToolResult:
         """调用远端工具。"""
         if not self._initialized:
             raise AppError(
                 "MCP_NOT_STARTED",
                 f"{type(self).__name__}.start() has not been called",
             )
-        result = self._run_sync(self._af_tool.call_tool(tool_name, **arguments))
+        # meta 在此处（同步层）捕获并传入 coroutine 参数，coroutine 对象创建时即绑定，
+        # 不依赖共享实例属性，规避多线程竞态。
+        meta = {"netcowork/sessionId": ctx.session_id} if ctx else None
+        logger.debug("Calling MCP tool '%s' with arguments %s and meta %s", tool_name, arguments, meta)
+        result = self._run_sync(self._af_tool.call_tool(tool_name, _injected_meta=meta, **arguments))
         text = result if isinstance(result, str) else _content_to_text(result)
         return ToolResult(content=text)
 
@@ -142,8 +146,8 @@ class _MCPProviderBase(ABC):
         provider_ref = self
         tool_name = ft.name
 
-        def handler(arguments: dict) -> ToolResult:
-            return provider_ref.call(tool_name, arguments)
+        def handler(arguments: dict, ctx: CallContext | None = None) -> ToolResult:
+            return provider_ref.call(tool_name, arguments, ctx)
 
         return ToolDefinition(
             name=ft.name,
@@ -151,6 +155,32 @@ class _MCPProviderBase(ABC):
             input_schema=input_schema,
             handler=handler,
         )
+
+
+class _MetaInjectingMixin:
+    """将调用方传入的 meta 合并到 MCP session.call_tool 的 meta 参数中。
+
+    与 AF 的 _inject_otel_into_mcp_meta 模式对称：通过 _injected_meta 参数
+    在 coroutine 创建时绑定 meta，避免共享实例属性带来的多线程竞态。
+    """
+
+    async def call_tool(self, tool_name: str, *, _injected_meta: dict | None = None, **kwargs: Any) -> Any:
+        extra = _injected_meta or {}
+        if not extra:
+            return await super().call_tool(tool_name, **kwargs)  # type: ignore[misc]
+
+        original = self.session.call_tool  # type: ignore[attr-defined]
+
+        async def _with_extra_meta(name: str, *, arguments: Any = None, meta: Any = None) -> Any:
+            merged = dict(meta or {})
+            merged.update(extra)
+            return await original(name, arguments=arguments, meta=merged)
+
+        self.session.call_tool = _with_extra_meta  # type: ignore[method-assign]
+        try:
+            return await super().call_tool(tool_name, **kwargs)  # type: ignore[misc]
+        finally:
+            self.session.call_tool = original
 
 
 def _content_to_text(content: Any) -> str:

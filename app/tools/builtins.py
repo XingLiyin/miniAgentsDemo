@@ -214,7 +214,7 @@ def write(
         raise AppError("WRITE_ERROR", f"Failed to write file: {e}")
 
     return ToolResult(
-        content=f"Written {len(content.encode(encoding))} bytes to {file_path.resolve()}",
+        content=f"Write successfully: Written {len(content.encode(encoding))} bytes to {file_path.resolve()}",
         metadata={"path": str(file_path.resolve()), "bytes": len(content.encode(encoding))},
     )
 

@@ -160,6 +160,19 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
                 history_event = {"type": "history", "events": history}
                 yield f"data: {json.dumps(history_event, default=str)}\n\n"
 
+            # 若 session 正在等待用户输入，重放 waiting_input 事件（断线重连恢复输入框）
+            if session.status == "WAITING_INPUT":
+                from app.runtime.hitl_store import get_hitl_store
+                pending = get_hitl_store().get_pending(session_id)
+                if pending:
+                    replay = {
+                        "type": "waiting_input",
+                        "prompt": pending.prompt,
+                        "input_type": pending.input_type,
+                        "task_title": "等待用户输入",
+                    }
+                    yield f"data: {json.dumps(replay, default=str)}\n\n"
+
             # 流式推送后续事件
             while True:
                 if await request.is_disconnected():

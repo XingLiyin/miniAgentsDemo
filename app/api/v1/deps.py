@@ -17,8 +17,8 @@ from app.orchestrator.lifecycle_manager import LifecycleManager
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
 from app.runtime.actor import Actor
-from app.runtime.agent_controller import AgentController
 from app.runtime.agent_loop import AgentLoop
+from app.tools.control_tools import register_control_tools
 from app.runtime.observer import Observer
 from app.runtime.policy_engine import PolicyEngine
 from app.runtime.reasoner import Reasoner
@@ -75,6 +75,11 @@ def get_task_manager() -> TaskManager:
 @lru_cache
 def get_tool_gateway() -> ToolGateway:
     registry = get_tool_registry()
+    register_control_tools(
+        registry=registry,
+        task_svc=get_task_service(),
+        session_svc=get_session_service(),
+    )
     return ToolGateway(
         policy=PolicyEngine(tool_registry=registry),
         tool_registry=registry,
@@ -104,17 +109,8 @@ def get_reasoner() -> Reasoner:
     return Reasoner(
         memory_svc=get_memory_service(),
         blackboard_svc=get_blackboard_service(),
-        agent_controller=get_agent_controller(),
         tool_registry=get_tool_registry(),
         skill_registry=get_skill_registry(),
-    )
-
-
-@lru_cache
-def get_agent_controller() -> AgentController:
-    return AgentController(
-        task_svc=get_task_service(),
-        session_svc=get_session_service(),
     )
 
 
@@ -124,7 +120,6 @@ def get_actor() -> Actor:
         llm_client=_get_llm_client(),
         tool_gateway=get_tool_gateway(),
         task_svc=get_task_service(),
-        agent_controller=get_agent_controller(),
     )
 
 
@@ -140,7 +135,7 @@ def get_agent_loop() -> AgentLoop:
         llm_client=llm_client,
         reasoner=get_reasoner(),
         actor=get_actor(),
-        observer=Observer(llm_client=llm_client, agent_controller=get_agent_controller()),
+        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service()),
     )
 
 

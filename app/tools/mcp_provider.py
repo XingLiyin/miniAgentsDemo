@@ -18,10 +18,11 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from agent_framework._mcp import MCPStdioTool
 
-from app.tools.mcp_base import _MCPProviderBase
+from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,10 @@ class MCPStdioProvider(_MCPProviderBase):
             args:    命令参数列表，如 ["-y", "@mcp/server-fs", "."]
             env:     额外的环境变量
         """
-        af_tool = MCPStdioTool(name=name, command=command, args=args or [], env=env)
+        class _Tool(_MetaInjectingMixin, MCPStdioTool):
+            pass
+
+        af_tool = _Tool(name=name, command=command, args=args or [], env=env)
         super().__init__(af_tool, thread_name="mcp-stdio-loop")
 
     def start(self) -> None:

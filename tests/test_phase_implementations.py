@@ -552,7 +552,7 @@ class TestObserver:
             recent_messages=[],
             summary_text="Previous progress done.",
             blackboard_snippets=[],
-            resources=[],
+            actor_resources=[],
         )
 
     def _make_result(self, success=True, output="done"):

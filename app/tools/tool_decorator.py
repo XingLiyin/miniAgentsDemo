@@ -34,7 +34,7 @@ from agent_framework._tools import tool as _af_tool
 from app.common.async_utils import run_awaitable_sync
 from app.common.errors import AppError
 from app.llm.types import InputSchema
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.definition import CallContext, ToolDefinition, ToolResult
 
 # 重新导出 AF @tool 装饰器
 tool = _af_tool
@@ -99,7 +99,7 @@ def _from_callable(fn: Callable) -> ToolDefinition:
                 _types_namespace=vars(module), raise_errors=False
             )
 
-    def handler(arguments: dict) -> ToolResult:
+    def handler(arguments: dict, ctx: CallContext | None = None) -> ToolResult:
         try:
             result = fn(**arguments)
             if isinstance(result, ToolResult):
@@ -119,7 +119,7 @@ def _from_callable(fn: Callable) -> ToolDefinition:
 def _from_function_tool(ft: FunctionTool) -> ToolDefinition:
     """从 FunctionTool 构建 ToolDefinition：走 invoke() 路径（含 Pydantic 校验）。"""
 
-    def handler(arguments: dict) -> ToolResult:
+    def handler(arguments: dict, ctx: CallContext | None = None) -> ToolResult:
         try:
             contents = run_awaitable_sync(ft.invoke(arguments=arguments))
             text = "\n".join(c.text for c in contents if c.text)

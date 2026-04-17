@@ -61,7 +61,7 @@ class Settings(BaseModel):
     http_response_limit_bytes: int = 524_288
 
     # 日志
-    log_level: str = "INFO"
+    log_level: str = "DEBUG"
 
     # 外部存储（工具 + Skill 语义召回后端，共用同一服务）
     store_base_url: str = ""        # 空 = 禁用，所有同步操作为 no-op

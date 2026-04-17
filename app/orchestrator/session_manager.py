@@ -240,14 +240,6 @@ class SessionManager:
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
 
-        # Append the user message to root agent's memory
-        mem_svc = MemoryService(store=MemoryStore())
-        mem_svc.append_message(
-            agent_id=session.root_agent_id or "user",
-            role="user",
-            content=user_message,
-            session_id=session_id,
-        )
         # Push SSE user message event
         try:
             from app.runtime.sse_bus import get_sse_bus
@@ -303,16 +295,16 @@ class SessionManager:
             )
 
         # 注入答案并唤醒阻塞的工作线程
-        entry = get_hitl_store().submit(session_id, content)
+        get_hitl_store().submit(session_id, content)
 
-        # 写入记忆（由 entry 携带的 agent_id 确定归属）
-        if entry is not None and self._memory_svc is not None:
-            self._memory_svc.append_message(
-                agent_id=entry.agent_id,
-                role="user",
-                content=content,
-                session_id=session_id,
-            )
+        # # 写入记忆（由 entry 携带的 agent_id 确定归属）
+        # if entry is not None and self._memory_svc is not None:
+        #     self._memory_svc.append_message(
+        #         agent_id=entry.agent_id,
+        #         role="user",
+        #         content=content,
+        #         session_id=session_id,
+        #     )
 
         # 推送用户回答气泡
         try:

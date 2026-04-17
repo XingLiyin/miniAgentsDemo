@@ -34,11 +34,22 @@ class ToolRegistry:
         self._mcp_providers: list[_MCPProviderBase] = []
         # provider name → 该 provider 贡献的工具名列表（用于按名删除）
         self._provider_tool_names: dict[str, list[str]] = {}
+        # 控制工具名集合（与外部工具同等注册，Reasoner 用于区分展示策略）
+        self._control_tool_names: set[str] = set()
 
     def register(self, tool_def: ToolDefinition) -> None:
         """注册单个工具定义（重复注册会覆盖）。"""
         self._tools[tool_def.name] = tool_def
         logger.debug("ToolRegistry: registered tool '%s'", tool_def.name)
+
+    def register_as_control(self, tool_def: ToolDefinition) -> None:
+        """注册控制工具（与普通工具共享同一注册表，额外标记为 control）。"""
+        self.register(tool_def)
+        self._control_tool_names.add(tool_def.name)
+
+    def get_control_tool_names(self) -> frozenset[str]:
+        """返回已注册的控制工具名集合。"""
+        return frozenset(self._control_tool_names)
 
     def register_provider(self, provider: ToolProvider, name: str = "builtin") -> None:
         """批量注册 Provider 提供的所有工具定义，并同步到外部工具存储。

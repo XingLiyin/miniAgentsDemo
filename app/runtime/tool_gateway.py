@@ -1,10 +1,10 @@
-"""Tool Gateway：MCP 标准工具调用 + 白名单授权 + 审计（Phase 1）。
+"""Tool Gateway：统一工具调用入口（外部工具 + 控制工具）。
 
 执行流程：
-  call(tool_name, arguments, agent, task_id)
-    ① PolicyEngine.authorize  —— 两层白名单（registry 注册 + agent.act_tool_list）
+  call(tool_name, arguments, agent, task_id, ctx)
+    ① PolicyEngine.authorize  —— agent 存在时校验白名单
     ② 写审计 RUNNING
-    ③ ToolRegistry.get(tool_name).handler(arguments)  —— 实际执行
+    ③ ToolRegistry.get(tool_name).handler(arguments, ctx)
     ④ 写审计 SUCCEEDED / FAILED
     ⑤ 返回 ToolResult
 """
@@ -20,14 +20,14 @@ from app.domain.models.agent import Agent
 from app.domain.models.tool_call import ToolCall
 from app.runtime.policy_engine import PolicyEngine
 from app.storage.file.tool_call_store import ToolCallStore
-from app.tools.definition import ToolResult
+from app.tools.definition import CallContext, ToolResult
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
 
 class ToolGateway:
-    """MCP 工具调用网关。"""
+    """统一工具调用网关：外部工具与控制工具共走同一路径。"""
 
     def __init__(
         self,
@@ -43,21 +43,29 @@ class ToolGateway:
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        agent: Agent,
+        agent: Agent | None,
         task_id: str,
+        ctx: CallContext | None = None,
     ) -> ToolResult:
-        """统一入口：授权 → 审计 RUNNING → 执行 → 审计完成 → 返回结果。"""
-        # ① 授权
-        self._policy.authorize(agent, tool_name)
+        """统一入口：授权 → 审计 RUNNING → 执行 → 审计完成 → 返回结果。
+
+        agent 为 None 时跳过授权（Observer 内部调用场景）。
+        """
+        session_id = (agent.session_id if agent else None) or (ctx.session_id if ctx else "")
+        agent_id   = (agent.id        if agent else None) or (ctx.agent_id   if ctx else "")
+
+        # ① 授权（agent 存在时）
+        if agent is not None:
+            self._policy.authorize(agent, tool_name)
 
         # ② 写 RUNNING 审计
-        call_id = new_tool_call_id()
+        call_id    = new_tool_call_id()
         started_at = now_iso()
-        self._store.append(agent.session_id, ToolCall(
+        self._store.append(session_id, ToolCall(
             id=call_id,
-            session_id=agent.session_id,
+            session_id=session_id,
             task_id=task_id,
-            agent_id=agent.id,
+            agent_id=agent_id,
             tool_name=tool_name,
             status="RUNNING",
             arguments=_redact(arguments),
@@ -65,27 +73,31 @@ class ToolGateway:
         ).to_dict())
 
         # ③ 执行
+        call_ctx = ctx if ctx is not None else CallContext(
+            session_id=session_id, agent_id=agent_id,
+            agent=agent,
+        )
         try:
             tool_def = self._registry.get(tool_name)
-            result: ToolResult = tool_def.handler(arguments)
+            result: ToolResult = tool_def.handler(arguments, call_ctx)
             status = "SUCCEEDED"
-            error = None
+            error  = None
         except AppError as e:
             result = ToolResult(content="", is_error=True, error_code=e.code)
             status = "FAILED"
-            error = e.message
+            error  = e.message
         except Exception as e:
             result = ToolResult(content="", is_error=True, error_code="TOOL_EXEC_ERROR")
             status = "FAILED"
-            error = str(e)
+            error  = str(e)
             logger.exception("ToolGateway unexpected error: tool=%s", tool_name)
 
         # ④ 写完成审计
-        self._store.append(agent.session_id, ToolCall(
+        self._store.append(session_id, ToolCall(
             id=call_id,
-            session_id=agent.session_id,
+            session_id=session_id,
             task_id=task_id,
-            agent_id=agent.id,
+            agent_id=agent_id,
             tool_name=tool_name,
             status=status,
             arguments=_redact(arguments),

@@ -133,6 +133,13 @@ class TaskService:
                 tasks.append(Task.from_dict(data))
         return tasks
 
+    def list_by_agent(self, session_id: str, agent_id: str) -> list[Task]:
+        """列出 session 下指定 agent 被分配的所有 Task。"""
+        return [
+            t for t in self.list_by_session(session_id)
+            if t.assigned_agent_id == agent_id
+        ]
+
     def cancel_pending(self, session_id: str) -> int:
         """取消 session 内所有 PENDING tasks。
 
