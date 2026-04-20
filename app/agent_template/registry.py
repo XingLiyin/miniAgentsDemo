@@ -8,8 +8,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.agent_def.definition import AgentDefContent, AgentDefMetadata
-from app.agent_def.loader import AgentLoader
+from app.agent_template.definition import AgentDefContent, AgentDefMetadata
+from app.agent_template.loader import AgentLoader
 from app.domain.services.agent_template_service import AgentTemplateService
 
 logger = logging.getLogger(__name__)
@@ -27,25 +27,10 @@ class AgentTemplateRegistry:
         """扫描目录，批量 upsert AgentTemplate（类比 SkillRegistry.load_from_dir）。"""
         for metadata in self._loader.scan(agents_dir):
             self._agents[metadata.name] = metadata
-
-            # 加载 Level 2 内容用于 upsert（内容字段需写入 store）
-            try:
-                content = self._loader.load_content(metadata.agent_dir)
-            except Exception as e:
-                logger.warning(
-                    "AgentTemplateRegistry: failed to load content for '%s': %s",
-                    metadata.name, e,
-                )
-                continue
-
             self._template_svc.upsert_by_name(
                 name=metadata.name,
                 version=metadata.version,
                 description=metadata.description,
-                soul_md=content.soul_md,
-                role_md=content.role_md,
-                tools_md=content.tools_md,
-                style_md=content.style_md,
                 act_tool_list=metadata.act_tool_spec.effective(),
                 observe_tool_list=metadata.observe_tool_spec.effective(),
                 mcp_act_servers=metadata.mcp_act_servers,

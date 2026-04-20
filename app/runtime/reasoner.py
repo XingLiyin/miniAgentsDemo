@@ -172,22 +172,21 @@ class Reasoner:
 
     def _retrieve_skills(self, goal: str, agent: Agent) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。"""
-        if not self._skill_registry or not agent.skill_list:
+        if not self._skill_registry:
             return []
 
-        try:
-            from app.skills.skill_store_client import get_skill_store_client
-            store_client = get_skill_store_client()
-            if store_client.enabled:
-                results = store_client.search(goal, top_k=5)
-                if results:
-                    allowed = set(agent.skill_list)
-                    return [(r.name, r.description) for r in results if r.name in allowed]
-        except Exception:
-            logger.debug("Reasoner: skill store search failed, falling back to full list")
+        # try:
+        #     from app.skills.skill_store_client import get_skill_store_client
+        #     store_client = get_skill_store_client()
+        #     if store_client.enabled:
+        #         results = store_client.search(goal, top_k=5)
+        #         if results:
+        #             allowed = set(agent.skill_list)
+        #             return [(r.name, r.description) for r in results if r.name in allowed]
+        # except Exception:
+        #     logger.debug("Reasoner: skill store search failed, falling back to full list")
 
         return [
             (m.name, m.description)
             for m in self._skill_registry.list_all()
-            if m.name in agent.skill_list
         ]

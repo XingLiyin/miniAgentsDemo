@@ -8,14 +8,13 @@ from pydantic import BaseModel
 class AgentTemplateResponse(BaseModel):
     id: str
     name: str
-    system_prompt: str
+    version: str
+    description: str
     act_tool_list: list[str]
     observe_tool_list: list[str]
-    description: str
-    version: str
-    inject_style: bool
-    summary_threshold: int
-    short_window_size: int
+    mcp_act_servers: list[str]
+    mcp_observe_servers: list[str]
+    source_dir: str
     has_spawn_permission: bool
     created_at: str
     updated_at: str

@@ -13,6 +13,7 @@ import glob as _glob
 import logging
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -303,6 +304,55 @@ def _make_load_skill_reference() -> ToolDefinition:
     )
 
 
+# ── skill venv helpers ────────────────────────────────────────────────────
+
+def _venv_python(skill_dir: Path) -> str:
+    """Return the Python executable to use for a skill script.
+
+    If skill_dir/requirements.txt exists, ensure a .venv is created and
+    dependencies are installed, then return its interpreter path.
+    Falls back to sys.executable when no requirements.txt is present.
+    """
+    reqs = skill_dir / "requirements.txt"
+    if not reqs.exists():
+        return sys.executable
+
+    venv_dir = skill_dir / ".venv"
+    # Determine platform-specific interpreter path inside the venv
+    if sys.platform == "win32":
+        python_bin = venv_dir / "Scripts" / "python.exe"
+        pip_bin    = venv_dir / "Scripts" / "pip.exe"
+    else:
+        python_bin = venv_dir / "bin" / "python"
+        pip_bin    = venv_dir / "bin" / "pip"
+
+    if not python_bin.exists():
+        logger.info("exec_skill_script: creating venv at '%s'", venv_dir)
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise AppError(
+                "VENV_CREATE_FAILED",
+                f"Failed to create venv: {result.stderr.strip()}",
+            )
+
+    # Always sync requirements so new packages are picked up
+    logger.info("exec_skill_script: installing requirements from '%s'", reqs)
+    result = subprocess.run(
+        [str(pip_bin), "install", "-r", str(reqs), "-q", "--disable-pip-version-check"],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise AppError(
+            "VENV_INSTALL_FAILED",
+            f"pip install failed: {result.stderr.strip()}",
+        )
+
+    return str(python_bin)
+
+
 # ── exec_skill_script ─────────────────────────────────────────────────────
 
 def _make_exec_skill_script() -> ToolDefinition:
@@ -340,10 +390,13 @@ def _make_exec_skill_script() -> ToolDefinition:
         except ValueError:
             raise AppError("INVALID_ARGUMENT", f"Script path escapes skill directory")
 
-        if script_path.suffix == ".py":
-            command = f"python {script_path} {args}".strip()
+        abs_script_path = script_path.resolve()
+        abs_skill_dir = metadata.skill_dir.resolve()
+        if abs_script_path.suffix == ".py":
+            python_exe = _venv_python(abs_skill_dir)
+            command = f'"{python_exe}" "{abs_script_path}" {args}'.strip()
         else:
-            command = f"{script_path} {args}".strip()
+            command = f'"{abs_script_path}" {args}'.strip()
 
         for pattern in _BASH_BLACKLIST:
             if re.search(pattern, command):
@@ -359,7 +412,7 @@ def _make_exec_skill_script() -> ToolDefinition:
                 capture_output=True,
                 text=True,
                 timeout=timeout_sec,
-                cwd=str(metadata.skill_dir),
+                cwd=str(abs_skill_dir),
             )
             output = proc.stdout + proc.stderr
             limit = settings.bash_exec_output_limit_bytes

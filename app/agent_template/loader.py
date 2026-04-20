@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.agent_def.definition import AgentDefContent, AgentDefMetadata, ToolSpec
+from app.agent_template.definition import AgentDefContent, AgentDefMetadata, ToolSpec
 
 logger = logging.getLogger(__name__)
 

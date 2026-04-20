@@ -91,6 +91,7 @@ class LifecycleManager:
         max_retries: int = 1,
         template_svc: "AgentTemplateService | None" = None,
         memory_svc: "MemoryService | None" = None,
+        template_registry=None,
     ) -> None:
         self._session_svc = session_svc
         self._task_svc = task_svc
@@ -103,6 +104,7 @@ class LifecycleManager:
         self._max_retries = max_retries
         self._template_svc = template_svc
         self._memory_svc = memory_svc
+        self._template_registry = template_registry
 
         self._agent_loop: "AgentLoop | None" = None
 
@@ -637,41 +639,30 @@ class LifecycleManager:
         if template_name and self._template_svc is not None:
             tpl = self._template_svc.get_by_name(template_name)
             if tpl is not None:
-                system_prompt = tpl.system_prompt
-                soul_md = tpl.soul_md
-                role_md = tpl.role_md
                 act_tool_list = tpl.act_tool_list
                 observe_tool_list = tpl.observe_tool_list
-                skill_list = tpl.skill_list
                 template_id = tpl.id
                 agent_name = f"sub-agent-{template_name}"
-                logger.debug(
-                    "LM: sub-agent will use template '%s'", template_name
-                )
+                content = self._template_registry.load_content(template_name) if self._template_registry else None
+                soul_md = content.soul_md if content else ""
+                role_md = content.role_md if content else ""
+                logger.debug("LM: sub-agent will use template '%s'", template_name)
             else:
                 logger.warning(
                     "LM: template '%s' not found, falling back to parent config",
                     template_name,
                 )
-                system_prompt = parent_data.get(
-                    "system_prompt", settings.agent_default_system_prompt
-                )
                 soul_md = parent_data.get("soul_md", "")
                 role_md = parent_data.get("role_md", "")
                 act_tool_list = parent_data.get("act_tool_list", [])
                 observe_tool_list = parent_data.get("observe_tool_list", [])
-                skill_list = parent_data.get("skill_list", [])
                 template_id = parent_data.get("template_id")
                 agent_name = f"sub-agent-{template_name}"
         else:
-            system_prompt = parent_data.get(
-                "system_prompt", settings.agent_default_system_prompt
-            )
             soul_md = parent_data.get("soul_md", "")
             role_md = parent_data.get("role_md", "")
             act_tool_list = parent_data.get("act_tool_list", [])
             observe_tool_list = parent_data.get("observe_tool_list", [])
-            skill_list = parent_data.get("skill_list", [])
             template_id = parent_data.get("template_id")
             agent_name = f"sub-agent-d{spawn_depth}"
 
@@ -687,7 +678,7 @@ class LifecycleManager:
             role_md=role_md,
             act_tool_list=act_tool_list,
             observe_tool_list=observe_tool_list,
-            skill_list=skill_list,
+            skill_list=parent_data.get("skill_list", []),
             soul_path=parent_data.get("soul_path"),
             loop_guard=LoopGuard(
                 turns_used=0,

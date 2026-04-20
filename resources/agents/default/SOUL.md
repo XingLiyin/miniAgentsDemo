@@ -8,6 +8,9 @@ tools:
     - read
     - write
     - glob
+    - load_skill_reference
+    - exec_skill_script
+    - submit_task
   forbidden: []
 mcp_servers:
   - web-search

@@ -21,25 +21,19 @@ class AgentTemplateService:
     def create(
         self,
         name: str,
-        system_prompt: str = "",
         act_tool_list: list[str] | None = None,
         observe_tool_list: list[str] | None = None,
         description: str = "",
         source_dir: str = "",
-        summary_threshold: int = 20,
-        short_window_size: int = 20,
     ) -> AgentTemplate:
         now = now_iso()
         tpl = AgentTemplate(
             id=new_template_id(),
             name=name,
-            system_prompt=system_prompt,
             act_tool_list=act_tool_list or [],
             observe_tool_list=observe_tool_list or [],
             description=description,
             source_dir=source_dir,
-            summary_threshold=summary_threshold,
-            short_window_size=short_window_size,
             created_at=now,
             updated_at=now,
         )
@@ -69,30 +63,19 @@ class AgentTemplateService:
         name: str,
         version: str,
         description: str,
-        soul_md: str,
-        role_md: str,
-        tools_md: str,
-        style_md: str,
         act_tool_list: list[str],
         observe_tool_list: list[str],
         mcp_act_servers: list[str] | None = None,
         mcp_observe_servers: list[str] | None = None,
         source_dir: str = "",
     ) -> AgentTemplate:
-        """按 name 做 upsert（目录扫描时调用）。
-
-        name 已存在则更新各 md 字段；不存在则新建并分配 template_id。
-        """
+        """按 name 做 upsert（目录扫描时调用）。"""
         existing = self._find_by_name(name)
         now = now_iso()
 
         if existing is not None:
             existing.version = version
             existing.description = description
-            existing.soul_md = soul_md
-            existing.role_md = role_md
-            existing.tools_md = tools_md
-            existing.style_md = style_md
             existing.act_tool_list = act_tool_list
             existing.observe_tool_list = observe_tool_list
             existing.mcp_act_servers = mcp_act_servers or []
@@ -108,10 +91,6 @@ class AgentTemplateService:
             name=name,
             version=version,
             description=description,
-            soul_md=soul_md,
-            role_md=role_md,
-            tools_md=tools_md,
-            style_md=style_md,
             act_tool_list=act_tool_list,
             observe_tool_list=observe_tool_list,
             mcp_act_servers=mcp_act_servers or [],

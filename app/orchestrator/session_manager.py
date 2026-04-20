@@ -26,24 +26,19 @@ from app.storage.file.task_store import TaskStore
 from app.storage.file.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
+    from app.agent_template.definition import AgentDefContent
     from app.orchestrator.lifecycle_manager import LifecycleManager
 
 logger = logging.getLogger(__name__)
 
 
-def _apply_template_to_agent(tpl: "AgentTemplate", agent: Agent) -> None:  # type: ignore[name-defined]
-    """从 AgentTemplate 独立填充 soul_md / role_md / system_prompt，互不污染。
-
-    - soul_md → 驱动 Actor 阶段 system prompt（执行人格）
-    - role_md → 驱动 Observer 阶段 system prompt（评判准则）
-    - system_prompt → legacy fallback（soul_md 为空时由 Actor 使用）
-    """
-    agent.soul_md = getattr(tpl, "soul_md", "")
-    agent.role_md = getattr(tpl, "role_md", "")
-    agent.act_tool_list = getattr(tpl, "act_tool_list", [])
-    agent.observe_tool_list = getattr(tpl, "observe_tool_list", [])
-    agent.mcp_act_servers = getattr(tpl, "mcp_act_servers", [])
-    agent.mcp_observe_servers = getattr(tpl, "mcp_observe_servers", [])
+def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent) -> None:  # type: ignore[name-defined]
+    agent.soul_md = content.soul_md if content else ""
+    agent.role_md = content.role_md if content else ""
+    agent.act_tool_list = tpl.act_tool_list
+    agent.observe_tool_list = tpl.observe_tool_list
+    agent.mcp_act_servers = tpl.mcp_act_servers
+    agent.mcp_observe_servers = tpl.mcp_observe_servers
 
 
 class SessionManager:
@@ -60,6 +55,7 @@ class SessionManager:
         task_store: TaskStore | None = None,
         tool_call_store: ToolCallStore | None = None,
         blackboard_store: BlackboardStore | None = None,
+        template_registry=None,
     ) -> None:
         self._session_svc = session_svc
         self._template_svc = template_svc
@@ -70,6 +66,7 @@ class SessionManager:
         self._task_store = task_store
         self._tool_call_store = tool_call_store
         self._blackboard_store = blackboard_store
+        self._template_registry = template_registry
         self._lifecycle_manager: "LifecycleManager | None" = None
 
     def set_lifecycle_manager(self, lm: "LifecycleManager") -> None:
@@ -97,11 +94,6 @@ class SessionManager:
         )
 
         # 构建 root Agent
-        # TODO: skill_list 需要改成后续动态查询，当前默认空列表
-        act_tool_list: list[str] = []
-        observe_tool_list: list[str] = []
-        skill_list: list[str] = []
-        soul_path: str | None = None
         tpl = None
         if template_id:
             try:
@@ -115,11 +107,6 @@ class SessionManager:
                     "Default template '%s' not found, using settings fallback",
                     settings.default_agent_template_name,
                 )
-        if tpl is not None:
-            act_tool_list = tpl.act_tool_list
-            observe_tool_list = tpl.observe_tool_list
-            skill_list = tpl.skill_list
-            soul_path = tpl.source_dir or None
 
         now = now_iso()
         agent = Agent(
@@ -128,19 +115,19 @@ class SessionManager:
             template_id=template_id,
             name="root",
             status="IDLE",
-            act_tool_list=act_tool_list,
-            observe_tool_list=observe_tool_list,
-            skill_list=skill_list,
-            soul_path=soul_path,
+            act_tool_list=tpl.act_tool_list if tpl else [],
+            observe_tool_list=tpl.observe_tool_list if tpl else [],
+            soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
             llm_name=llm_name or settings.agent_default_llm_name,
-            has_spawn_permission=True,   # root agent 默认可以 spawn
+            has_spawn_permission=True,
             spawn_depth=0,
             created_at=now,
             updated_at=now,
         )
         if tpl is not None:
-            _apply_template_to_agent(tpl, agent)
+            content = self._template_registry.load_content(tpl.name) if self._template_registry else None
+            _apply_template_to_agent(tpl, content, agent)
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 

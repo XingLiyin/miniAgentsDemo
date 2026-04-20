@@ -89,7 +89,7 @@ def get_tool_gateway() -> ToolGateway:
 
 def get_agent_template_registry():
     """获取全局 AgentTemplateRegistry（首次调用时从 settings.agents_dir 扫描）。"""
-    from app.agent_def.registry import get_agent_template_registry as _get
+    from app.agent_template.registry import get_agent_template_registry as _get
     return _get()
 
 
@@ -154,6 +154,7 @@ def get_lifecycle_manager() -> LifecycleManager:
         max_retries=settings.max_retries,
         template_svc=get_agent_template_service(),
         memory_svc=get_memory_service(),
+        template_registry=get_agent_template_registry(),
     )
     lm.set_agent_loop(get_agent_loop())
     return lm
@@ -171,6 +172,7 @@ def get_session_manager() -> SessionManager:
         task_store=TaskStore(),
         tool_call_store=ToolCallStore(),
         blackboard_store=BlackboardStore(),
+        template_registry=get_agent_template_registry(),
     )
     mgr.set_lifecycle_manager(get_lifecycle_manager())
     return mgr

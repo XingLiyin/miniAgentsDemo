@@ -17,9 +17,9 @@ scripts:
 
 # OLT HLD 设备配置建议方案生成
 
-读取 `skills/olt-hld/references/background.md` 了解搬迁背景与业务单板知识。
+读取 `resources/skills/olt-hld/references/background.md` 了解搬迁背景与业务单板知识。
 
-读取 `skills/olt-hld/references/design_principles.md` 了解设计原则。
+读取 `resources/skills/olt-hld/references/design_principles.md` 了解设计原则。
 
 ---
 
@@ -31,7 +31,7 @@ cfg 文件路径已在 prompt 的"用户上传的原始文件"中提供，直接
 
 ### Step 2：推理生成B机房配置表
 
-读取 `skills/olt-hld/references/merge_algorithm.md`，根据 `{{ROOM_A_TABLE}}` 和设计原则推理计算，生成 `{{ROOM_B_TABLE}}`。
+读取 `resources/olt-hld/references/merge_algorithm.md`，根据 `{{ROOM_A_TABLE}}` 和设计原则推理计算，生成 `{{ROOM_B_TABLE}}`。
 
 ### Step 3：生成搬迁变更说明
 
@@ -47,10 +47,10 @@ cfg 文件路径已在 prompt 的"用户上传的原始文件"中提供，直接
 
 ### Step 4：按模板输出
 
-读取 `skills/olt-hld/outputs/output_template.md`，替换所有占位符后原样输出，不得增删任何内容：
+读取 `resources/skills/olt-hld/outputs/output_template.md`，替换所有占位符后原样输出，不得增删任何内容：
 
 - `{{ROOM_A_TABLE}}` → Step 1 结果
 - `{{ROOM_B_TABLE}}` → Step 2 结果
 - `{{CHANGE_LIST}}` → Step 3 结果（每条以 `- ` 开头）
 
-生成完成后读取 `skills/olt-hld/checks/self_check.md` 进行自校验，不满足则重新推理生成。
+生成完成后读取 `resources/skills/olt-hld/checks/self_check.md` 进行自校验，不满足则重新推理生成。

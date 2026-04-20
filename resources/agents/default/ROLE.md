@@ -4,6 +4,8 @@ tools:
     - submit_task_assessment
     - submit_task_reviews
     - replan
+    - load_skill_reference
+    - exec_skill_script
   forbidden: []
 ---
 
