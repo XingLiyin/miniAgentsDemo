@@ -95,6 +95,12 @@ class AgentLoop:
 
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
+
+            task = self._task_svc.get(task_id)
+            if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
+                self._task_svc.to_be_observed(task_id)
+                task.status = "TO_BE_OBSERVED"
+
             task_list = self._task_svc.list_by_agent(session_id, agent_id)
             verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
 

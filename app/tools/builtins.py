@@ -1,4 +1,5 @@
-"""内置工具实现：bash_exec、http_request、search_tools、read、write、glob。
+"""内置工具实现：bash_exec、http_request、search_tools、read、write、glob、
+load_skill_reference、exec_skill_script。
 
 新增内置工具步骤：
 1. 用 @tool_result 装饰函数，参数用 Annotated[type, "描述"] 声明
@@ -13,13 +14,14 @@ import logging
 import re
 import subprocess
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 
 from app.common.errors import AppError
 from app.config.settings import get_settings
-from app.tools.definition import ToolResult
+from app.llm.types import InputSchema
+from app.tools.definition import CallContext, ToolDefinition, ToolResult
 from app.tools.provider import BuiltinToolProvider
 from app.tools.tool_decorator import tool_result
 
@@ -250,8 +252,160 @@ def glob(
     )
 
 
+# ── load_skill_reference ──────────────────────────────────────────────────
+
+def _make_load_skill_reference() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        reference_path: str = arguments.get("reference_path", "")
+        if not reference_path:
+            raise AppError("INVALID_ARGUMENT", "reference_path is required")
+
+        skill_name = ctx.task.settings.get("skill_name") if (ctx and ctx.task and ctx.task.settings) else None
+        if not skill_name:
+            raise AppError("MISSING_SKILL_NAME", "Task has no skill assigned; cannot load skill reference")
+
+        from app.skills.registry import get_skill_registry
+        from app.skills.loader import SkillLoader
+
+        metadata = get_skill_registry().get_metadata(skill_name)
+        if metadata is None:
+            raise AppError("SKILL_NOT_FOUND", f"Skill '{skill_name}' not found in registry")
+
+        try:
+            content = SkillLoader().load_resource(metadata.skill_dir, reference_path)
+        except ValueError as e:
+            raise AppError("INVALID_ARGUMENT", str(e))
+        except FileNotFoundError:
+            raise AppError("FILE_NOT_FOUND", f"Reference '{reference_path}' not found in skill '{skill_name}'")
+
+        return ToolResult(
+            content=content,
+            metadata={"skill": skill_name, "path": reference_path},
+        )
+
+    return ToolDefinition(
+        name="load_skill_reference",
+        description=(
+            "Read a reference file from the current task's skill directory. "
+            "Use the relative path as shown in the skill instructions "
+            "(e.g. 'references/background.md', 'checks/self_check.md')."
+        ),
+        input_schema=InputSchema(
+            properties={
+                "reference_path": {
+                    "type": "string",
+                    "description": "Relative path to the reference file within the skill directory",
+                }
+            },
+            require=["reference_path"],
+        ),
+        handler=handler,
+    )
+
+
+# ── exec_skill_script ─────────────────────────────────────────────────────
+
+def _make_exec_skill_script() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        script_name: str = arguments.get("script_name", "")
+        args: str = arguments.get("args", "")
+
+        if not script_name:
+            raise AppError("INVALID_ARGUMENT", "script_name is required")
+
+        skill_name = ctx.task.settings.get("skill_name") if (ctx and ctx.task and ctx.task.settings) else None
+        if not skill_name:
+            raise AppError("MISSING_SKILL_NAME", "Task has no skill assigned; cannot execute skill script")
+
+        from app.skills.registry import get_skill_registry
+
+        metadata = get_skill_registry().get_metadata(skill_name)
+        if metadata is None:
+            raise AppError("SKILL_NOT_FOUND", f"Skill '{skill_name}' not found in registry")
+
+        scripts_dir = metadata.skill_dir / "scripts"
+        script_path: Path | None = None
+        for ext in (".py", ".sh", ""):
+            candidate = scripts_dir / f"{script_name}{ext}"
+            if candidate.is_file():
+                script_path = candidate
+                break
+
+        if script_path is None:
+            raise AppError("SCRIPT_NOT_FOUND", f"Script '{script_name}' not found in skill '{skill_name}'")
+
+        # 路径安全检查：禁止逃出 skill_dir
+        try:
+            script_path.resolve().relative_to(metadata.skill_dir.resolve())
+        except ValueError:
+            raise AppError("INVALID_ARGUMENT", f"Script path escapes skill directory")
+
+        if script_path.suffix == ".py":
+            command = f"python {script_path} {args}".strip()
+        else:
+            command = f"{script_path} {args}".strip()
+
+        for pattern in _BASH_BLACKLIST:
+            if re.search(pattern, command):
+                raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
+
+        settings = get_settings()
+        timeout_sec = settings.bash_exec_timeout_ms / 1000
+
+        try:
+            proc = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                cwd=str(metadata.skill_dir),
+            )
+            output = proc.stdout + proc.stderr
+            limit = settings.bash_exec_output_limit_bytes
+            if len(output.encode("utf-8")) > limit:
+                output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
+                output += f"\n[output truncated at {limit} bytes]"
+            is_error = proc.returncode != 0
+            return ToolResult(
+                content=output,
+                is_error=is_error,
+                error_code="SCRIPT_NONZERO_EXIT" if is_error else None,
+                metadata={"exit_code": proc.returncode, "skill": skill_name, "script": script_name},
+            )
+        except subprocess.TimeoutExpired:
+            raise AppError("TOOL_TIMEOUT", f"exec_skill_script timed out after {timeout_sec}s")
+
+    return ToolDefinition(
+        name="exec_skill_script",
+        description=(
+            "Execute a script from the current task's skill directory. "
+            "The working directory is set to the skill root. "
+            "Construct args as described in the skill instructions."
+        ),
+        input_schema=InputSchema(
+            properties={
+                "script_name": {
+                    "type": "string",
+                    "description": "Script filename without extension (e.g. 'extract_olt_config')",
+                },
+                "args": {
+                    "type": "string",
+                    "description": "Command-line argument string appended after the script path",
+                },
+            },
+            require=["script_name"],
+        ),
+        handler=handler,
+    )
+
+
 # ── Provider 入口 ─────────────────────────────────────────────────────────
 
 def get_builtin_provider() -> BuiltinToolProvider:
     """返回包含所有内置工具的 Provider 实例。"""
-    return BuiltinToolProvider([bash_exec, http_request, search_tools, read, write, glob])
+    return BuiltinToolProvider([
+        bash_exec, http_request, search_tools, read, write, glob,
+        _make_load_skill_reference(),
+        _make_exec_skill_script(),
+    ])

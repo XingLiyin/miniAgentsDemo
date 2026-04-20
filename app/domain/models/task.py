@@ -18,7 +18,7 @@ class Task:
     session_id: str
     creator_agent_id: str              # 产生该任务的 agent（不可变）
     assigned_agent_id: str             # 被分配执行该任务的 agent（auto-spawn 时可更新）
-    status: str                        # PENDING | ACTIVE | SUSPENDED | FINISHED | FAILED | CANCELED
+    status: str                        # PENDING | ACTIVE | SUSPENDED | TO_BE_OBSERVED | FINISHED | FAILED | CANCELED
 
     user_prompt: str                   # 用户输入的文本信息，创建 task 的依据，供 Agent 处理，不可为空
     conversation_turns: list[dict[str, Any]] = field(default_factory=list) # 任务相关的对话历史（agent 内部维护，非必需）

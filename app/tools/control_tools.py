@@ -91,7 +91,6 @@ def submit_task_assessment(
         "'needs_user_input' if completion cannot be determined without user confirmation.",
     ],
     task_result: Annotated[str, "What was accomplished, or why the task could not be completed"],
-    summary: Annotated[str, "Concise summary of this turn (1-3 sentences), written to agent memory"],
 ) -> ToolResult:
     """Submit your assessment of the current task's execution result."""
 
@@ -116,6 +115,19 @@ def submit_plan(
     summary: Annotated[str, "Concise summary of this planning turn (1-3 sentences)."] = "",
 ) -> ToolResult:
     """Submit the decomposed task plan. Call exactly once per turn."""
+
+
+@control_tool
+def submit_task(
+    title: Annotated[str, "Short imperative title for the task (≤20 chars)"],
+    description: Annotated[str, "WHAT to achieve — not HOW, no tool names or arguments (≤80 chars)"],
+    skill_name: Annotated[str, "Skill to assign to the task, or empty string if none"] = "",
+    use_subagent: Annotated[bool, "True if the task should run in an independent sub-agent"] = False,
+    inherit_memory: Annotated[bool, "True (default) for sub-agents that need session history"] = True,
+    user_prompt: Annotated[str, "The user prompt that triggered this task, or empty"] = "",
+) -> ToolResult:
+    """Create a single new task in the current session. The current task continues running.
+    Use when you need to delegate work to another task/agent without replacing the current plan."""
 
 
 @control_tool
@@ -249,10 +261,9 @@ class ControlToolProvider:
         if task is not None:
             task.actor_outcome     = task_outcome
             task.actor_result      = task_result
-            task.actor_summary     = args.get("summary") or default_result
             task.proceed_to_review = False
-            outputs = {"progress_text": task.progress_text} if getattr(task, "progress_text", None) else None
-            self._task_svc.finish(task.id, result=task_result, outputs=outputs)
+            self._task_svc.to_be_observed(task.id)
+            task.status = "TO_BE_OBSERVED"
         return ToolResult(content=default_result)
 
     def _handle_replan(self, args: dict, ctx: CallContext | None) -> ToolResult:
@@ -274,9 +285,9 @@ class ControlToolProvider:
         if task is not None:
             task.actor_outcome     = "success"
             task.actor_result      = reason
-            task.actor_summary     = summary
             task.proceed_to_review = False
             self._task_svc.finish(task.id, result=reason)
+            task.status = "FINISHED"
         return ToolResult(content=f"Cancelled {cancelled} tasks. New plan task created.")
 
     def _handle_submit_task_assessment(self, args: dict, ctx: CallContext | None) -> ToolResult:
@@ -285,25 +296,26 @@ class ControlToolProvider:
         if task_outcome not in ("success", "failed", "needs_user_input"):
             task_outcome = "failed"
         task_result = args.get("task_result", "")
-        summary     = args.get("summary", "")
 
         if task is not None:
-            task.actor_outcome     = task_outcome
-            task.actor_result      = task_result
-            task.actor_summary     = summary
+            task.actor_outcome = task_outcome
+            task.actor_result  = task_result
             task.proceed_to_review = True
             outputs = {"progress_text": task.progress_text} if getattr(task, "progress_text", None) else None
 
             if task_outcome == "success":
                 self._task_svc.finish(task.id, result=task_result, outputs=outputs)
+                task.status = "FINISHED"
             elif task_outcome == "failed":
                 self._task_svc.fail(task.id, error=task_result)
+                task.status = "FAILED"
             else:  # needs_user_input
                 task_outcome, task_result = self._confirm_with_user(task, task_result, outputs)
                 task.actor_outcome = task_outcome
                 task.actor_result  = task_result
+                task.status = "FINISHED" if task_outcome == "success" else "FAILED"
 
-        return ToolResult(content="")
+        return ToolResult(content=f"Assessment recorded: outcome={task_outcome}. {task_result}")
 
     def _confirm_with_user(self, task, task_result: str, outputs) -> tuple[str, str]:
         """需要用户确认任务完成状态时阻塞等待，返回 (outcome, result)。"""
@@ -373,18 +385,40 @@ class ControlToolProvider:
             task.actor_summary = ""
         return ToolResult(content="ok")
 
+    def _handle_submit_task(self, args: dict, ctx: CallContext | None) -> ToolResult:
+        task = ctx.task if ctx else None
+        inputs: dict = {}
+        skill_name = args.get("skill_name") or None
+        if skill_name:
+            inputs["skill_name"] = skill_name
+        if bool(args.get("use_subagent", False)):
+            inputs["use_subagent"] = True
+            inputs["inherit_memory"] = bool(args.get("inherit_memory", True))
+        t = self._task_svc.create(
+            session_id=task.session_id if task else "",
+            creator_agent_id=task.assigned_agent_id if task else "",
+            user_prompt=args.get("user_prompt", ""),
+            title=args.get("title", ""),
+            description=args.get("description", ""),
+            inputs=inputs,
+        )
+        return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
+
     def _handle_submit_task_reviews(self, args: dict, ctx: CallContext | None) -> ToolResult:
         import logging
         _log = logging.getLogger(__name__)
 
         session_id = ctx.session_id if ctx else ""
+        agent_id   = ctx.agent_id   if ctx else ""
         current_id = ctx.task.id    if ctx and ctx.task else ""
         reviews    = args.get("reviews") or []
 
         session_tasks = self._task_svc.list_by_session(session_id)
         reviewable = {
             t.title: t for t in session_tasks
-            if t.status in ("FINISHED", "PENDING") and t.id != current_id
+            if t.assigned_agent_id == agent_id
+            and t.status in ("FINISHED", "PENDING")
+            and t.id != current_id
         }
 
         for item in reviews:
@@ -413,7 +447,14 @@ class ControlToolProvider:
             except Exception as e:
                 _log.warning("submit_task_reviews: failed to apply review for %s: %s", matched.id, e)
 
-        return ToolResult(content="")
+        applied = [
+            f"{item.get('task_title')} → {item.get('review_status')}"
+            for item in reviews
+            if isinstance(item, dict)
+            and item.get("review_status") in ("confirmed", "reopen", "skip")
+            and item.get("task_title")
+        ]
+        return ToolResult(content=f"Reviews applied: {', '.join(applied) if applied else 'none'}")
 
 
 # ── 注册函数 ──────────────────────────────────────────────────────────────────

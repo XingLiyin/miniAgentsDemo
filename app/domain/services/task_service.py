@@ -109,6 +109,10 @@ class TaskService:
         self.save(task)
         return self.transition(task_id, "FAILED")
 
+    def to_be_observed(self, task_id: str) -> Task:
+        """Actor 完成后转入待观察状态。"""
+        return self.transition(task_id, "TO_BE_OBSERVED")
+
     def reopen(self, task_id: str) -> Task:
         """将 FINISHED 任务重置为 PENDING（Observer 复核不通过时使用）。"""
         task = self.get(task_id)
