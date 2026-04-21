@@ -46,7 +46,8 @@ class Agent:
     template_id: str
     name: str
     status: str                                 # IDLE | RUNNING | WAITING | FINISHED | FAILED
-    llm_name: str = ""                          # LLM 配置（继承自 template 或 session 创建时指定）
+    llm_provider: str = ""                      # LLM provider 名称
+    llm_model: str = ""                         # 指定模型，空 = 用 provider 的 default_model
 
     # context engineering
     soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
@@ -86,7 +87,8 @@ class Agent:
             "soul_path": self.soul_path,
             "loop_guard": self.loop_guard.to_dict(),
             "inherit_memory": self.inherit_memory,
-            "llm_name": self.llm_name,
+            "llm_provider": self.llm_provider,
+            "llm_model": self.llm_model,
             "has_spawn_permission": self.has_spawn_permission,
             "spawn_depth": self.spawn_depth,
             "parent_task_id": self.parent_task_id,
@@ -112,7 +114,8 @@ class Agent:
             soul_path=d.get("soul_path"),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),
             inherit_memory=d.get("inherit_memory", True),
-            llm_name=d.get("llm_name", ""),
+            llm_provider=d.get("llm_provider", ""),
+            llm_model=d.get("llm_model", ""),
             has_spawn_permission=d.get("has_spawn_permission", False),
             spawn_depth=d.get("spawn_depth", 0),
             parent_task_id=d.get("parent_task_id"),

@@ -18,6 +18,7 @@ from app.llm.base import BaseChatClient
 from app.llm.types import LLMMessage
 from app.tools.definition import CallContext
 from app.domain.services.task_service import TaskService
+from app.runtime.prompt_builder import ObserverPromptBuilder, PromptBuilderFactory
 from app.runtime.types import (
     ActorResult,
     ObserverVerdict,
@@ -30,11 +31,6 @@ if TYPE_CHECKING:
     from app.runtime.tool_gateway import ToolGateway
 
 logger = logging.getLogger(__name__)
-
-# 无 role_md 时的身份兜底
-_OBSERVER_ROLE_FALLBACK = (
-    "You are an objective observer evaluating task execution results."
-)
 
 
 # ── Observer ───────────────────────────────────────────────────────────────────
@@ -50,10 +46,12 @@ class Observer:
         llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
+        prompt_builder: ObserverPromptBuilder | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
+        self._prompt_builder = prompt_builder or PromptBuilderFactory.for_observer()
 
     def observe(
         self,
@@ -90,8 +88,8 @@ class Observer:
     ) -> ObserverVerdict:
         llm_client    = self._resolve_llm_client(agent)
         session_id    = task.session_id
-        system_prompt = self._build_observer_system_prompt(ctx)
-        messages      = self._build_observer_messages(session, result, ctx, task, task_list)
+        system_prompt = self._prompt_builder.build_system_prompt(ctx)
+        messages      = self._prompt_builder.build_messages(session, result, ctx, task, task_list)
         tools         = [r.llm_tool for r in ctx.observer_resources if r.kind == "tool" and r.llm_tool is not None]
         toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task)
         max_rounds    = agent.loop_guard.observer_max_tool_rounds if agent else 5
@@ -113,7 +111,7 @@ class Observer:
             if full_text:
                 last_llm_text = full_text
 
-            tool_calls = _build_obs_tool_calls(tool_call_acc)
+            tool_calls = self._prompt_builder.build_tool_calls_from_stream(tool_call_acc)
 
             if not tool_calls:
                 break
@@ -124,7 +122,7 @@ class Observer:
                 tool_result = self._tool_gateway.call(
                     tool_call.name, tool_call.input, None, task.id, toolcall_ctx
                 )
-                messages = _append_observer_tool_turn(messages, tool_call.name, tool_result)
+                messages = self._prompt_builder.append_tool_result(messages, tool_call.name, tool_result)
 
             if task.status != "TO_BE_OBSERVED" and (not reviewable_count or reviews_submitted):
                 break
@@ -136,97 +134,13 @@ class Observer:
 
     def _resolve_llm_client(self, agent: "Agent | None") -> BaseChatClient:
         """按 agent.llm_name 动态解析 LLM 客户端，缺省用注入的默认客户端。"""
-        if agent is not None and agent.llm_name:
+        if agent is not None and agent.llm_provider:
             try:
                 from app.llm.registry import get_llm_registry
-                return get_llm_registry().get_client(agent.llm_name)
+                return get_llm_registry().get_client(agent.llm_provider)
             except Exception:
                 pass
         return self._llm_client
-
-    # ── 上下文构建 ─────────────────────────────────────────────────────────────
-
-    def _build_observer_system_prompt(self, ctx: ReasoningContext) -> str:
-        """组装 observer system prompt：role + skill instructions（如有）+ 工具列表。"""
-        role  = ctx.role or _OBSERVER_ROLE_FALLBACK
-        tools = [r for r in ctx.observer_resources if r.kind == "tool" and r.llm_tool is not None]
-        parts = [role]
-        if ctx.skill_instructions:
-            parts.append(
-                "## Skill Instructions for This Task\n\n"
-                "The task was executed under the following skill. "
-                "Use these instructions to calibrate your evaluation criteria and emphasis. "
-                "You may also call skill-related tools listed below to gather more information before submitting your assessment.\n\n"
-                + ctx.skill_instructions
-            )
-        if tools:
-            lines = ["## Available Tools"]
-            for r in tools:
-                lines.append(f"- {r.llm_tool.to_prompt_text()}")
-            parts.append("\n".join(lines))
-        return "\n\n---\n\n".join(parts)
-
-    def _build_observer_messages(
-        self,
-        session: Session,
-        result: ActorResult,
-        ctx: ReasoningContext,
-        task: "Task",
-        task_list: list["Task"],
-    ) -> list[LLMMessage]:
-        """组装 observer 初始 user message，包含评估和复核所需的全部上下文。"""
-        transcript = self._build_transcript(result)
-        siblings = [t for t in task_list if t.id != task.id]
-        has_pending = any(t.status == "PENDING" for t in siblings)
-        reviewable = (
-            [t for t in siblings if t.status in ("FINISHED", "PENDING")]
-            if has_pending else []
-        )
-
-        content_parts = [
-            f"Previous progress summary: {ctx.summary_text or 'None'}",
-            (
-                f"Current task: {task.title}\n"
-                f"Task description: {task.description or task.title}"
-            ),
-            f"User prompt that triggered this execution: {session.user_prompt}",
-            f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}",
-        ]
-        if reviewable:
-            content_parts.append(
-                f"Session task list:\n{self._build_task_list_section(reviewable)}"
-            )
-
-        return [LLMMessage(role="user", content="\n\n".join(content_parts))]
-
-    # ── 私有辅助 ──────────────────────────────────────────────────────────────
-
-    def _build_task_list_section(self, tasks: list["Task"]) -> str:
-        """渲染任务列表为可读文本。"""
-        lines: list[str] = []
-        for t in tasks:
-            result_hint = f" | result: {t.result[:120]}" if t.status == "FINISHED" and t.result else ""
-            lines.append(f"  [{t.status}] {t.title}{result_hint}")
-        return "\n".join(lines)
-
-    def _build_transcript(self, result: ActorResult) -> str:
-        """将 conversation_turns 展开为可读文本，供 LLM 评估。"""
-        if not result.conversation_turns:
-            if result.output:
-                return f"[No tool calls] Agent response: {result.output}"
-            return "[No conversation recorded]"
-
-        lines: list[str] = []
-        for turn in result.conversation_turns:
-            lines.append(f"--- Round {turn.round + 1} ---")
-            if turn.tool_calls:
-                for tc in turn.tool_calls:
-                    status = "ERROR" if tc.is_error else "OK"
-                    lines.append(f"  Tool call: {tc.tool_name}({tc.arguments})")
-                    lines.append(f"  Result [{status}]: {tc.result[:500]}")
-            if turn.llm_text:
-                lines.append(f"  Agent reply: {turn.llm_text}")
-        return "\n".join(lines)
 
     def _rule_observe(
         self,
@@ -255,21 +169,6 @@ class Observer:
         return ObserverVerdict(summary=summary)
 
 
-# ── 模块级工具 ─────────────────────────────────────────────────────────────────
-
-def _append_observer_tool_turn(
-    messages: list[LLMMessage],
-    tool_name: str,
-    tool_result: object,
-) -> list[LLMMessage]:
-    """将工具调用结果追加到消息历史，供下一轮 LLM 决策。"""
-    is_error = getattr(tool_result, "is_error", False)
-    content  = getattr(tool_result, "content", "") or ""
-    prefix   = f"Tool '{tool_name}' error" if is_error else f"Tool '{tool_name}' result"
-    messages.append(LLMMessage(role="user", content=f"{prefix}:\n{content}"))
-    return messages
-
-
 def _push_llm_event(
     session_id: str,
     round_label: str,
@@ -281,7 +180,7 @@ def _push_llm_event(
     if not session_id:
         return
     try:
-        from app.runtime.sse_bus import get_sse_bus
+        from app.common.sse_bus import get_sse_bus
         get_sse_bus().push(session_id, {
             "type": "llm_prompt",
             "source": "observer",
@@ -307,7 +206,7 @@ def _stream_observer(
     tool_call_acc: dict[int, dict] = {}
 
     try:
-        from app.runtime.sse_bus import get_sse_bus
+        from app.common.sse_bus import get_sse_bus
         _sse = get_sse_bus() if session_id else None
     except Exception:
         _sse = None
@@ -340,23 +239,3 @@ def _stream_observer(
     return full_text, tool_call_acc
 
 
-def _build_obs_tool_calls(acc: dict[int, dict]) -> list:
-    """将流式 tool_call 累积缓冲区转换为 ToolCallBlock 列表。"""
-    import json
-    from app.llm.types import ToolCallBlock
-
-    result = []
-    for idx in sorted(acc.keys()):
-        buf = acc[idx]
-        args_raw = buf.get("arguments") or ""
-        try:
-            args = json.loads(args_raw) if args_raw else {}
-        except json.JSONDecodeError:
-            args = {"_raw": args_raw}
-        result.append(ToolCallBlock(
-            type="tool_call",
-            id=buf.get("id", ""),
-            name=buf.get("name", ""),
-            input=args,
-        ))
-    return result

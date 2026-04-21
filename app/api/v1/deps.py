@@ -96,7 +96,7 @@ def get_agent_template_registry():
 def _get_llm_client():
     """获取 LLM 客户端，注册表中无匹配时降级为 MockChatClient。"""
     from app.config.settings import get_settings
-    llm_name = get_settings().agent_default_llm_name
+    llm_name = get_settings().default_llm_provider
     try:
         return get_llm_registry().get_client(llm_name)
     except Exception:

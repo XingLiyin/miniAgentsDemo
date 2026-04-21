@@ -205,7 +205,7 @@ class ControlToolProvider:
 
     def _handle_request_human_input(self, args: dict, ctx: CallContext | None) -> ToolResult:
         from app.runtime.hitl_store import get_hitl_store
-        from app.runtime.sse_bus import get_sse_bus
+        from app.common.sse_bus import get_sse_bus
         from app.common.utils import now_iso
 
         prompt     = args.get("prompt", "")
@@ -320,7 +320,7 @@ class ControlToolProvider:
     def _confirm_with_user(self, task, task_result: str, outputs) -> tuple[str, str]:
         """需要用户确认任务完成状态时阻塞等待，返回 (outcome, result)。"""
         from app.runtime.hitl_store import get_hitl_store
-        from app.runtime.sse_bus import get_sse_bus
+        from app.common.sse_bus import get_sse_bus
         from app.common.utils import now_iso
 
         session_id = task.session_id
@@ -368,7 +368,7 @@ class ControlToolProvider:
                     target.description = description
                 self._task_svc.save(target)
                 try:
-                    from app.runtime.sse_bus import get_sse_bus
+                    from app.common.sse_bus import get_sse_bus
                     get_sse_bus().push(target.session_id,
                                        {"type": "task_updated", "task": target.to_dict()})
                 except Exception:

@@ -1,83 +1,109 @@
-"""LLM Provider 管理路由（Phase 1）。"""
+"""LLM Provider 管理路由。"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.v1.schemas.llm import LLMRegisterRequest, LLMRegisterResponse
-from app.llm.registry import SUPPORTED_LLM_STYLES
-from app.llm.registry import LLMProviderConfig, get_llm_registry
+from app.api.v1.schemas.llm import (
+    AddModelRequest,
+    LLMProviderResponse,
+    RegisterLLMRequest,
+    SetDefaultModelRequest,
+)
+from app.config.settings import get_settings
+from app.llm.registry import LLMProvider, SUPPORTED_LLM_STYLES, get_llm_registry
 
 router = APIRouter()
 
 
-@router.post("", response_model=LLMRegisterResponse, status_code=201)
-def register_llm(req: LLMRegisterRequest) -> LLMRegisterResponse:
-    """注册 LLM Provider（持久化到 data/llm_configs/）。"""
+def _to_response(p: LLMProvider) -> LLMProviderResponse:
+    return LLMProviderResponse(
+        name=p.name,
+        style=p.style,
+        base_url=p.base_url,
+        models=p.models,
+        default_model=p.default_model,
+        timeout_sec=p.timeout_sec,
+        max_tokens=p.max_tokens,
+    )
+
+
+# ── Provider CRUD ─────────────────────────────────────────────────────────────
+
+@router.post("", response_model=LLMProviderResponse, status_code=201)
+def register_provider(req: RegisterLLMRequest) -> LLMProviderResponse:
     registry = get_llm_registry()
     if registry.is_registered(req.name):
-        raise HTTPException(status_code=409, detail={"code": "LLM_ALREADY_EXISTS", "message": f"LLM '{req.name}' already registered"})
+        raise HTTPException(409, {"code": "LLM_ALREADY_EXISTS", "message": f"Provider '{req.name}' already registered"})
     if req.style not in SUPPORTED_LLM_STYLES:
-        raise HTTPException(status_code=400, detail={"code": "INVALID_LLM_STYLE", "message": f"Unsupported LLM style: {req.style}"})
-    from app.config.settings import get_settings
-    timeout_sec = req.timeout_sec or get_settings().default_llm_timeout_sec
-    config = LLMProviderConfig(
+        raise HTTPException(400, {"code": "INVALID_LLM_STYLE", "message": f"Unsupported style: {req.style}"})
+
+    settings = get_settings()
+    provider = LLMProvider(
         name=req.name,
         style=req.style,
         api_key=req.api_key,
         base_url=req.base_url,
-        model=req.model,
-        timeout_sec=timeout_sec,
+        models=req.models,
+        default_model=req.default_model,
+        timeout_sec=req.timeout_sec or settings.default_llm_timeout_sec,
+        max_tokens=req.max_tokens or 8096,
     )
     try:
-        registry.register(config)
-    except KeyError as e:
-        raise HTTPException(status_code=409, detail={"code": "LLM_ALREADY_EXISTS", "message": str(e)})
-    return LLMRegisterResponse(
-        name=config.name,
-        style=config.style,
-        base_url=config.base_url,
-        model=config.model,
-        timeout_sec=config.timeout_sec,
-    )
+        registry.register(provider)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(400, {"code": "REGISTER_FAILED", "message": str(e)})
+    return _to_response(provider)
 
 
-# 保持旧路径兼容
-@router.post("/register", response_model=LLMRegisterResponse, include_in_schema=False)
-def register_llm_compat(req: LLMRegisterRequest) -> LLMRegisterResponse:
-    return register_llm(req)
+@router.get("", response_model=list[LLMProviderResponse])
+def list_providers() -> list[LLMProviderResponse]:
+    return [_to_response(p) for p in get_llm_registry().list_providers()]
 
 
-@router.get("", response_model=list[LLMRegisterResponse])
-def list_llms() -> list[LLMRegisterResponse]:
-    """列出所有已注册的 LLM Provider（不含 api_key）。"""
-    registry = get_llm_registry()
-    return [
-        LLMRegisterResponse(
-            name=c.name,
-            style=c.style,
-            base_url=c.base_url,
-            model=c.model,
-            timeout_sec=c.timeout_sec,
-        )
-        for c in registry.list_configs()
-    ]
-
-
-@router.get("/{name}", response_model=LLMRegisterResponse)
-def get_llm(name: str) -> LLMRegisterResponse:
-    """获取指定 LLM Provider 信息（不含 api_key）。"""
+@router.get("/{name}", response_model=LLMProviderResponse)
+def get_provider(name: str) -> LLMProviderResponse:
     registry = get_llm_registry()
     if not registry.is_registered(name):
-        raise HTTPException(status_code=404, detail={"code": "LLM_NOT_FOUND", "message": f"LLM '{name}' not found"})
-    c = registry.get_config(name)
-    return LLMRegisterResponse(name=c.name, style=c.style, base_url=c.base_url, model=c.model, timeout_sec=c.timeout_sec)
+        raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
+    return _to_response(registry.get_provider(name))
 
 
 @router.delete("/{name}", status_code=204)
-def delete_llm(name: str) -> None:
-    """删除 LLM Provider（同时删除持久化文件）。"""
+def delete_provider(name: str) -> None:
     registry = get_llm_registry()
     if not registry.is_registered(name):
-        raise HTTPException(status_code=404, detail={"code": "LLM_NOT_FOUND", "message": f"LLM '{name}' not found"})
+        raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
     registry.delete(name)
+
+
+# ── 模型管理 ──────────────────────────────────────────────────────────────────
+
+@router.post("/{name}/models", response_model=LLMProviderResponse)
+def add_model(name: str, req: AddModelRequest) -> LLMProviderResponse:
+    registry = get_llm_registry()
+    if not registry.is_registered(name):
+        raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
+    provider = registry.add_model(name, req.model)
+    return _to_response(provider)
+
+
+@router.delete("/{name}/models", response_model=LLMProviderResponse)
+def remove_model(name: str, req: AddModelRequest) -> LLMProviderResponse:
+    registry = get_llm_registry()
+    if not registry.is_registered(name):
+        raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
+    provider = registry.remove_model(name, req.model)
+    return _to_response(provider)
+
+
+@router.put("/{name}/default_model", response_model=LLMProviderResponse)
+def set_default_model(name: str, req: SetDefaultModelRequest) -> LLMProviderResponse:
+    registry = get_llm_registry()
+    if not registry.is_registered(name):
+        raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
+    try:
+        provider = registry.set_default_model(name, req.model)
+    except ValueError as e:
+        raise HTTPException(400, {"code": "INVALID_MODEL", "message": str(e)})
+    return _to_response(provider)

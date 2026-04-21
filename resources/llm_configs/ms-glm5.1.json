@@ -1,0 +1,1 @@
+{"name": "ms-glm5.1", "style": "openai", "api_key": "ms-b7b41a2f-30d3-47e7-b8da-d335d1b2ff02", "base_url": "https://api-inference.modelscope.cn", "model": "ZhipuAI/GLM-5.1", "timeout_sec": 60}

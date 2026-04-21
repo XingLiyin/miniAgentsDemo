@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, AlertTriangle, KeyRound, CheckCircle, Cpu } from 'lucide-react'
+import { Plus, Trash2, AlertTriangle, KeyRound, Cpu, Star, X } from 'lucide-react'
 import { llmsApi } from '@/api/llms'
 import type { LLMProvider, RegisterLLMRequest, LLMStyle } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -10,60 +10,82 @@ import { Dialog } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 
-function RegisterLLMDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
+// ── 注册 Provider 弹窗 ────────────────────────────────────────────────────────
+
+function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const queryClient = useQueryClient()
   const [form, setForm] = useState<RegisterLLMRequest>({
     name: '',
     style: 'openai',
     api_key: '',
     base_url: '',
-    model: '',
+    models: [],
+    default_model: '',
     timeout_sec: 60,
   })
-  const [errors, setErrors] = useState<Partial<Record<keyof RegisterLLMRequest, string>>>({})
+  const [modelInput, setModelInput] = useState('')
+  const [errors, setErrors] = useState<Partial<Record<string, string>>>({})
 
   const mutation = useMutation({
     mutationFn: llmsApi.register,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['llms'] })
       onClose()
-      setForm({ name: '', style: 'openai', api_key: '', base_url: '', model: '', timeout_sec: 60 })
+      setForm({ name: '', style: 'openai', api_key: '', base_url: '', models: [], default_model: '', timeout_sec: 60 })
+      setModelInput('')
       setErrors({})
     },
   })
+
+  function addModel() {
+    const m = modelInput.trim()
+    if (!m || form.models?.includes(m)) return
+    const models = [...(form.models ?? []), m]
+    setForm(f => ({
+      ...f,
+      models,
+      default_model: f.default_model || m,
+    }))
+    setModelInput('')
+  }
+
+  function removeModel(m: string) {
+    const models = (form.models ?? []).filter(x => x !== m)
+    setForm(f => ({
+      ...f,
+      models,
+      default_model: f.default_model === m ? (models[0] ?? '') : f.default_model,
+    }))
+  }
 
   function validate() {
     const errs: typeof errors = {}
     if (!form.name.trim()) errs.name = '请输入名称'
     if (!form.api_key.trim()) errs.api_key = '请输入 API Key'
-    if (!form.model.trim()) errs.model = '请输入模型名称'
+    if (!form.models?.length) errs.models = '至少添加一个模型'
     setErrors(errs)
     return Object.keys(errs).length === 0
   }
 
   function handleSubmit() {
     if (!validate()) return
-    const payload = { ...form }
-    if (!payload.base_url) delete payload.base_url
-    mutation.mutate(payload)
+    mutation.mutate(form)
   }
-
-  const modelPlaceholder = form.style === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'
 
   return (
     <Dialog open={open} onClose={onClose} title="注册 LLM Provider" size="md">
       <div className="flex flex-col gap-4">
         <Input
           label="名称 *"
-          placeholder="my-gpt4o"
+          placeholder="my-provider"
           value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+          onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))}
           error={errors.name}
         />
         <Select
           label="类型 *"
           value={form.style}
-          onChange={(e) => setForm((f) => ({ ...f, style: e.target.value as LLMStyle }))}
+          onChange={(e) => setForm(f => ({ ...f, style: e.target.value as LLMStyle }))}
         >
           <option value="openai">OpenAI 兼容</option>
           <option value="anthropic">Anthropic</option>
@@ -73,33 +95,63 @@ function RegisterLLMDialog({ open, onClose }: { open: boolean; onClose: () => vo
           type="password"
           placeholder="sk-..."
           value={form.api_key}
-          onChange={(e) => setForm((f) => ({ ...f, api_key: e.target.value }))}
+          onChange={(e) => setForm(f => ({ ...f, api_key: e.target.value }))}
           error={errors.api_key}
           hint="提交后不可查看"
         />
         <Input
           label="Base URL"
-          placeholder="留空使用默认（https://api.openai.com/v1）"
+          placeholder="留空使用官方默认地址"
           value={form.base_url ?? ''}
-          onChange={(e) => setForm((f) => ({ ...f, base_url: e.target.value }))}
+          onChange={(e) => setForm(f => ({ ...f, base_url: e.target.value }))}
         />
-        <Input
-          label="模型 *"
-          placeholder={modelPlaceholder}
-          value={form.model}
-          onChange={(e) => setForm((f) => ({ ...f, model: e.target.value }))}
-          error={errors.model}
-        />
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">模型 *</label>
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder={form.style === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'}
+              value={modelInput}
+              onChange={(e) => setModelInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addModel())}
+            />
+            <Button size="sm" variant="secondary" onClick={addModel}>添加</Button>
+          </div>
+          {errors.models && <p className="text-xs text-red-500 mt-1">{errors.models}</p>}
+          {!!form.models?.length && (
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {form.models.map(m => (
+                <span
+                  key={m}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border cursor-pointer
+                    ${m === form.default_model
+                      ? 'bg-blue-50 border-blue-300 text-blue-700'
+                      : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300'}`}
+                  onClick={() => setForm(f => ({ ...f, default_model: m }))}
+                  title="点击设为默认"
+                >
+                  {m === form.default_model && <Star size={10} className="text-blue-500" />}
+                  {m}
+                  <button
+                    className="ml-0.5 hover:text-red-500"
+                    onClick={(e) => { e.stopPropagation(); removeModel(m) }}
+                  >
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <p className="text-xs text-gray-400 mt-1">点击模型标签设为默认（蓝色 ★）</p>
+        </div>
         <Input
           label="超时（秒）"
           type="number"
           value={form.timeout_sec}
-          onChange={(e) => setForm((f) => ({ ...f, timeout_sec: Number(e.target.value) }))}
+          onChange={(e) => setForm(f => ({ ...f, timeout_sec: Number(e.target.value) }))}
         />
         {mutation.error instanceof Error && (
-          <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md">
-            {mutation.error.message}
-          </p>
+          <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md">{mutation.error.message}</p>
         )}
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>取消</Button>
@@ -110,65 +162,140 @@ function RegisterLLMDialog({ open, onClose }: { open: boolean; onClose: () => vo
   )
 }
 
+// ── Provider 卡片 ─────────────────────────────────────────────────────────────
+
 function LLMCard({ provider }: { provider: LLMProvider }) {
   const queryClient = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [modelInput, setModelInput] = useState('')
+  const [showAddModel, setShowAddModel] = useState(false)
+
+  const invalidate = () => queryClient.invalidateQueries({ queryKey: ['llms'] })
 
   const deleteMutation = useMutation({
     mutationFn: () => llmsApi.delete(provider.name),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['llms'] })
-    },
+    onSuccess: invalidate,
   })
 
+  const addModelMutation = useMutation({
+    mutationFn: (model: string) => llmsApi.addModel(provider.name, model),
+    onSuccess: () => { invalidate(); setModelInput(''); setShowAddModel(false) },
+  })
+
+  const removeModelMutation = useMutation({
+    mutationFn: (model: string) => llmsApi.removeModel(provider.name, model),
+    onSuccess: invalidate,
+  })
+
+  const setDefaultMutation = useMutation({
+    mutationFn: (model: string) => llmsApi.setDefaultModel(provider.name, model),
+    onSuccess: invalidate,
+  })
+
+  function handleAddModel() {
+    const m = modelInput.trim()
+    if (m) addModelMutation.mutate(m)
+  }
+
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-4">
-      <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
-        <Cpu size={18} className="text-blue-600" />
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2">
-          <span className="font-medium text-gray-900 text-sm">{provider.name}</span>
-          <Badge variant="info">{provider.style}</Badge>
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
+      <div className="flex items-start gap-4">
+        <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+          <Cpu size={18} className="text-blue-600" />
         </div>
-        <p className="text-xs text-gray-500 mt-0.5">{provider.model}</p>
-        <div className="flex items-center gap-1 mt-1 text-xs text-gray-400">
-          <KeyRound size={11} />
-          <span>API Key 已配置</span>
-          <span className="mx-1">·</span>
-          <span>超时 {provider.timeout_sec}s</span>
-        </div>
-      </div>
-      <div className="flex items-center gap-2 flex-shrink-0">
-        <CheckCircle size={14} className="text-green-500" />
-        {confirmDelete ? (
-          <div className="flex gap-1">
-            <Button
-              size="sm"
-              variant="danger"
-              loading={deleteMutation.isPending}
-              onClick={() => deleteMutation.mutate()}
-            >
-              确认删除
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>
-              取消
-            </Button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-gray-900 text-sm">{provider.name}</span>
+            <Badge variant="info">{provider.style}</Badge>
           </div>
-        ) : (
-          <Button
-            size="sm"
-            variant="ghost"
-            className="text-gray-400 hover:text-red-500"
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 size={13} />
-          </Button>
-        )}
+          <div className="flex items-center gap-1 mt-0.5 text-xs text-gray-400">
+            <KeyRound size={11} />
+            <span>API Key 已配置</span>
+            {provider.base_url && <><span className="mx-1">·</span><span className="truncate max-w-[200px]">{provider.base_url}</span></>}
+            <span className="mx-1">·</span>
+            <span>超时 {provider.timeout_sec}s</span>
+          </div>
+
+          {/* 模型列表 */}
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {provider.models.map(m => (
+              <span
+                key={m}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border group
+                  ${m === provider.default_model
+                    ? 'bg-blue-50 border-blue-300 text-blue-700'
+                    : 'bg-gray-50 border-gray-200 text-gray-600'}`}
+              >
+                {m === provider.default_model && <Star size={10} className="text-blue-500" />}
+                <button
+                  className="hover:underline"
+                  onClick={() => m !== provider.default_model && setDefaultMutation.mutate(m)}
+                  title={m === provider.default_model ? '当前默认' : '设为默认'}
+                >
+                  {m}
+                </button>
+                <button
+                  className="ml-0.5 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                  onClick={() => removeModelMutation.mutate(m)}
+                  title="移除模型"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))}
+
+            {showAddModel ? (
+              <span className="inline-flex items-center gap-1">
+                <input
+                  autoFocus
+                  className="border border-blue-300 rounded-full px-2 py-0.5 text-xs w-36 focus:outline-none"
+                  placeholder="输入模型名后回车"
+                  value={modelInput}
+                  onChange={(e) => setModelInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddModel()
+                    if (e.key === 'Escape') { setShowAddModel(false); setModelInput('') }
+                  }}
+                />
+                <button
+                  className="text-gray-400 hover:text-gray-600"
+                  onClick={() => { setShowAddModel(false); setModelInput('') }}
+                >
+                  <X size={12} />
+                </button>
+              </span>
+            ) : (
+              <button
+                className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs border border-dashed border-gray-300 text-gray-400 hover:border-blue-400 hover:text-blue-500 transition-colors"
+                onClick={() => setShowAddModel(true)}
+              >
+                <Plus size={10} />
+                添加模型
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {confirmDelete ? (
+            <div className="flex gap-1">
+              <Button size="sm" variant="danger" loading={deleteMutation.isPending} onClick={() => deleteMutation.mutate()}>
+                确认删除
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>取消</Button>
+            </div>
+          ) : (
+            <Button size="sm" variant="ghost" className="text-gray-400 hover:text-red-500" onClick={() => setConfirmDelete(true)}>
+              <Trash2 size={13} />
+            </Button>
+          )}
+        </div>
       </div>
     </div>
   )
 }
+
+// ── 页面 ──────────────────────────────────────────────────────────────────────
 
 export function LLMsPage() {
   const [showRegister, setShowRegister] = useState(false)
@@ -196,31 +323,23 @@ export function LLMsPage() {
           <AlertTriangle size={16} className="text-yellow-600 mt-0.5 flex-shrink-0" />
           <div>
             <p className="text-sm font-medium text-yellow-800">尚未配置 LLM Provider</p>
-            <p className="text-xs text-yellow-700 mt-0.5">
-              至少需要注册一个 Provider 才能启动 Session。
-            </p>
+            <p className="text-xs text-yellow-700 mt-0.5">至少需要注册一个 Provider 才能启动 Session。</p>
           </div>
-          <Button size="sm" onClick={() => setShowRegister(true)} className="ml-auto flex-shrink-0">
-            立即配置
-          </Button>
+          <Button size="sm" onClick={() => setShowRegister(true)} className="ml-auto flex-shrink-0">立即配置</Button>
         </div>
       )}
 
       {isLoading ? (
-        <div className="flex justify-center py-12">
-          <Spinner />
-        </div>
+        <div className="flex justify-center py-12"><Spinner /></div>
       ) : error ? (
-        <div className="text-sm text-red-600 bg-red-50 rounded-xl p-4">
-          加载失败：{(error as Error).message}
-        </div>
+        <div className="text-sm text-red-600 bg-red-50 rounded-xl p-4">加载失败：{(error as Error).message}</div>
       ) : (
         <div className="flex flex-col gap-3">
-          {providers?.map((p) => <LLMCard key={p.name} provider={p} />)}
+          {providers?.map(p => <LLMCard key={p.name} provider={p} />)}
         </div>
       )}
 
-      <RegisterLLMDialog open={showRegister} onClose={() => setShowRegister(false)} />
+      <RegisterProviderDialog open={showRegister} onClose={() => setShowRegister(false)} />
     </div>
   )
 }

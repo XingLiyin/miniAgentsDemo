@@ -1,0 +1,1 @@
+{"name": "deepseek-rj", "style": "openai", "api_key": "sk-9a3802900f114b158f93aa8d67898042", "base_url": "https://api.deepseek.com", "model": "deepseek-reasoner", "timeout_sec": 60, "max_tokens": 8096}

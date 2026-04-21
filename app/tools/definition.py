@@ -25,6 +25,7 @@ class CallContext:
     agent_id: str = ""
     agent: "Agent | None" = field(default=None, repr=False)
     task: "Task | None" = field(default=None, repr=False)
+    working_dir: str = ""  # 解析后的绝对路径，空 = 进程 cwd
 
 
 # 工具处理器签名：接收 arguments 字典和调用上下文，返回 ToolResult

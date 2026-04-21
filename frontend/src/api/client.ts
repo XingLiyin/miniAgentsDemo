@@ -39,8 +39,10 @@ export const http = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'POST', body: JSON.stringify(body) }),
-  delete: <T = void>(path: string) =>
-    request<T>(path, { method: 'DELETE' }),
+  put: <T>(path: string, body?: unknown) =>
+    request<T>(path, { method: 'PUT', body: JSON.stringify(body) }),
+  delete: <T = void>(path: string, body?: unknown) =>
+    request<T>(path, { method: 'DELETE', body: body ? JSON.stringify(body) : undefined }),
 }
 
 export { ApiException }

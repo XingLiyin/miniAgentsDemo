@@ -79,7 +79,8 @@ class SessionManager:
         template_id: str | None = None,
         token_budget: int | None = None,
         root_max_turns: int | None = None,
-        llm_name: str | None = None,
+        llm_provider: str | None = None,
+        llm_model: str | None = None,
         initial_task: InitialTaskConfig | None = None,
     ) -> tuple[Session, str]:
         """创建 Session + root Agent，返回 (Session, root_agent_id)。
@@ -119,7 +120,8 @@ class SessionManager:
             observe_tool_list=tpl.observe_tool_list if tpl else [],
             soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
-            llm_name=llm_name or settings.agent_default_llm_name,
+            llm_provider=llm_provider or settings.default_llm_provider,
+            llm_model=llm_model or "",
             has_spawn_permission=True,
             spawn_depth=0,
             created_at=now,
@@ -133,7 +135,7 @@ class SessionManager:
 
         # Push SSE user message event
         try:
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session.id, {
                 "type": "message",
                 "role": "user",
@@ -229,7 +231,7 @@ class SessionManager:
 
         # Push SSE user message event
         try:
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {
                 "type": "message",
                 "role": "user",
@@ -296,7 +298,7 @@ class SessionManager:
         # 推送用户回答气泡
         try:
             from app.common.utils import now_iso
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {
                 "type": "message",
                 "role": "user",
@@ -345,7 +347,7 @@ class SessionManager:
 
         # 删除事件日志（SSE 历史回放）
         try:
-            from app.runtime.event_store import get_event_store
+            from app.storage.file.event_store import get_event_store
             get_event_store().delete(session_id)
         except Exception:
             pass

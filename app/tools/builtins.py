@@ -28,6 +28,22 @@ from app.tools.tool_decorator import tool_result
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_cwd(ctx: CallContext | None) -> str | None:
+    """从 CallContext 中提取工作目录，空或无则返回 None（沿用进程 cwd）。"""
+    wd = ctx.working_dir if ctx else ""
+    return wd or None
+
+
+def _resolve_path(path: str, ctx: CallContext | None) -> Path:
+    """将相对路径解析到 working_dir；绝对路径直接返回。"""
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    cwd = _resolve_cwd(ctx)
+    return (Path(cwd) / p) if cwd else p
+
+
 # ── bash_exec ─────────────────────────────────────────────────────────────
 
 _BASH_BLACKLIST = [
@@ -44,36 +60,46 @@ _BASH_BLACKLIST = [
 ]
 
 
-@tool_result
-def bash_exec(
-    command: Annotated[str, "Shell command to execute"],
-) -> ToolResult:
-    """Execute a shell command in a restricted environment. Returns stdout+stderr. Non-zero exit code sets is_error=true."""
-    for pattern in _BASH_BLACKLIST:
-        if re.search(pattern, command):
-            raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
+def _make_bash_exec() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        command: str = arguments.get("command", "")
+        for pattern in _BASH_BLACKLIST:
+            if re.search(pattern, command):
+                raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
 
-    settings = get_settings()
-    timeout_sec = settings.bash_exec_timeout_ms / 1000
+        settings = get_settings()
+        timeout_sec = settings.bash_exec_timeout_ms / 1000
+        cwd = _resolve_cwd(ctx)
 
-    try:
-        proc = subprocess.run(
-            command, shell=True, capture_output=True, text=True, timeout=timeout_sec
-        )
-        output = proc.stdout + proc.stderr
-        limit = settings.bash_exec_output_limit_bytes
-        if len(output.encode("utf-8")) > limit:
-            output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
-            output += f"\n[output truncated at {limit} bytes]"
-        is_error = proc.returncode != 0
-        return ToolResult(
-            content=output,
-            is_error=is_error,
-            error_code="BASH_NONZERO_EXIT" if is_error else None,
-            metadata={"exit_code": proc.returncode},
-        )
-    except subprocess.TimeoutExpired:
-        raise AppError("TOOL_TIMEOUT", f"bash_exec timed out after {timeout_sec}s")
+        try:
+            proc = subprocess.run(
+                command, shell=True, capture_output=True, text=True,
+                timeout=timeout_sec, cwd=cwd,
+            )
+            output = proc.stdout + proc.stderr
+            limit = settings.bash_exec_output_limit_bytes
+            if len(output.encode("utf-8")) > limit:
+                output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
+                output += f"\n[output truncated at {limit} bytes]"
+            is_error = proc.returncode != 0
+            return ToolResult(
+                content=output,
+                is_error=is_error,
+                error_code="BASH_NONZERO_EXIT" if is_error else None,
+                metadata={"exit_code": proc.returncode, "cwd": cwd or ""},
+            )
+        except subprocess.TimeoutExpired:
+            raise AppError("TOOL_TIMEOUT", f"bash_exec timed out after {timeout_sec}s")
+
+    return ToolDefinition(
+        name="bash_exec",
+        description="Execute a shell command in a restricted environment. Returns stdout+stderr. Non-zero exit code sets is_error=true.",
+        input_schema=InputSchema(
+            properties={"command": {"type": "string", "description": "Shell command to execute"}},
+            require=["command"],
+        ),
+        handler=handler,
+    )
 
 
 # ── http_request ──────────────────────────────────────────────────────────
@@ -167,89 +193,128 @@ def search_tools(
 
 # ── read ──────────────────────────────────────────────────────────────────
 
-@tool_result
-def read(
-    path: Annotated[str, "Absolute or relative path to the file to read"],
-    encoding: Annotated[str, "File encoding (default: utf-8)"] = "utf-8",
-) -> ToolResult:
-    """Read a file from the filesystem and return its content as text."""
-    settings = get_settings()
-    limit = settings.http_response_limit_bytes  # reuse response limit as file size cap
+def _make_read() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        path: str = arguments.get("path", "")
+        encoding: str = arguments.get("encoding", "utf-8")
 
-    file_path = Path(path)
-    if not file_path.exists():
-        raise AppError("FILE_NOT_FOUND", f"File not found: {path}")
-    if not file_path.is_file():
-        raise AppError("NOT_A_FILE", f"Path is not a file: {path}")
+        settings = get_settings()
+        limit = settings.http_response_limit_bytes
 
-    size = file_path.stat().st_size
-    if size > limit:
-        raise AppError("FILE_TOO_LARGE", f"File size {size} bytes exceeds limit {limit} bytes")
+        file_path = _resolve_path(path, ctx)
+        if not file_path.exists():
+            raise AppError("FILE_NOT_FOUND", f"File not found: {path}")
+        if not file_path.is_file():
+            raise AppError("NOT_A_FILE", f"Path is not a file: {path}")
 
-    try:
-        content = file_path.read_text(encoding=encoding)
-    except UnicodeDecodeError as e:
-        raise AppError("DECODE_ERROR", f"Failed to decode file with encoding '{encoding}': {e}")
+        size = file_path.stat().st_size
+        if size > limit:
+            raise AppError("FILE_TOO_LARGE", f"File size {size} bytes exceeds limit {limit} bytes")
 
-    return ToolResult(content=content, metadata={"path": str(file_path.resolve()), "size": size})
+        try:
+            content = file_path.read_text(encoding=encoding)
+        except UnicodeDecodeError as e:
+            raise AppError("DECODE_ERROR", f"Failed to decode file with encoding '{encoding}': {e}")
+
+        return ToolResult(content=content, metadata={"path": str(file_path.resolve()), "size": size})
+
+    return ToolDefinition(
+        name="read",
+        description="Read a file from the filesystem and return its content as text.",
+        input_schema=InputSchema(
+            properties={
+                "path": {"type": "string", "description": "Absolute or relative path to the file to read"},
+                "encoding": {"type": "string", "description": "File encoding (default: utf-8)"},
+            },
+            require=["path"],
+        ),
+        handler=handler,
+    )
 
 
 # ── write ─────────────────────────────────────────────────────────────────
 
-@tool_result
-def write(
-    path: Annotated[str, "Absolute or relative path to the file to write"],
-    content: Annotated[str, "Text content to write to the file"],
-    encoding: Annotated[str, "File encoding (default: utf-8)"] = "utf-8",
-    overwrite: Annotated[bool, "Allow overwriting an existing file (default: true)"] = True,
-) -> ToolResult:
-    """Write text content to a file. Creates parent directories if they don't exist."""
-    file_path = Path(path)
+def _make_write() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        path: str = arguments.get("path", "")
+        content: str = arguments.get("content", "")
+        encoding: str = arguments.get("encoding", "utf-8")
+        overwrite: bool = arguments.get("overwrite", True)
 
-    if file_path.exists() and not overwrite:
-        raise AppError("FILE_EXISTS", f"File already exists and overwrite=false: {path}")
+        file_path = _resolve_path(path, ctx)
 
-    file_path.parent.mkdir(parents=True, exist_ok=True)
+        if file_path.exists() and not overwrite:
+            raise AppError("FILE_EXISTS", f"File already exists and overwrite=false: {path}")
 
-    try:
-        file_path.write_text(content, encoding=encoding)
-    except OSError as e:
-        raise AppError("WRITE_ERROR", f"Failed to write file: {e}")
+        file_path.parent.mkdir(parents=True, exist_ok=True)
 
-    return ToolResult(
-        content=f"Write successfully: Written {len(content.encode(encoding))} bytes to {file_path.resolve()}",
-        metadata={"path": str(file_path.resolve()), "bytes": len(content.encode(encoding))},
+        try:
+            file_path.write_text(content, encoding=encoding)
+        except OSError as e:
+            raise AppError("WRITE_ERROR", f"Failed to write file: {e}")
+
+        return ToolResult(
+            content=f"Write successfully: Written {len(content.encode(encoding))} bytes to {file_path.resolve()}",
+            metadata={"path": str(file_path.resolve()), "bytes": len(content.encode(encoding))},
+        )
+
+    return ToolDefinition(
+        name="write",
+        description="Write text content to a file. Creates parent directories if they don't exist.",
+        input_schema=InputSchema(
+            properties={
+                "path": {"type": "string", "description": "Absolute or relative path to the file to write"},
+                "content": {"type": "string", "description": "Text content to write to the file"},
+                "encoding": {"type": "string", "description": "File encoding (default: utf-8)"},
+                "overwrite": {"type": "boolean", "description": "Allow overwriting an existing file (default: true)"},
+            },
+            require=["path", "content"],
+        ),
+        handler=handler,
     )
 
 
 # ── glob ──────────────────────────────────────────────────────────────────
 
-@tool_result
-def glob(
-    pattern: Annotated[str, "Glob pattern to match files, e.g. 'src/**/*.py'"],
-    root: Annotated[str, "Root directory to search from (default: current working directory)"] = ".",
-    limit: Annotated[int, "Maximum number of results to return (default: 200)"] = 200,
-) -> ToolResult:
-    """Find files matching a glob pattern. Returns a newline-separated list of matching paths."""
-    root_path = Path(root).resolve()
-    if not root_path.is_dir():
-        raise AppError("NOT_A_DIRECTORY", f"Root path is not a directory: {root}")
+def _make_glob() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        pattern: str = arguments.get("pattern", "")
+        root: str = arguments.get("root", ".")
+        limit: int = arguments.get("limit", 200)
 
-    matches = _glob.glob(pattern, root_dir=str(root_path), recursive=True)
-    matches.sort()
+        root_path = _resolve_path(root, ctx).resolve()
+        if not root_path.is_dir():
+            raise AppError("NOT_A_DIRECTORY", f"Root path is not a directory: {root}")
 
-    truncated = False
-    if len(matches) > limit:
-        matches = matches[:limit]
-        truncated = True
+        matches = _glob.glob(pattern, root_dir=str(root_path), recursive=True)
+        matches.sort()
 
-    output = "\n".join(matches) if matches else "(no matches)"
-    if truncated:
-        output += f"\n[truncated at {limit} results]"
+        truncated = False
+        if len(matches) > limit:
+            matches = matches[:limit]
+            truncated = True
 
-    return ToolResult(
-        content=output,
-        metadata={"count": len(matches), "truncated": truncated, "root": str(root_path)},
+        output = "\n".join(matches) if matches else "(no matches)"
+        if truncated:
+            output += f"\n[truncated at {limit} results]"
+
+        return ToolResult(
+            content=output,
+            metadata={"count": len(matches), "truncated": truncated, "root": str(root_path)},
+        )
+
+    return ToolDefinition(
+        name="glob",
+        description="Find files matching a glob pattern. Returns a newline-separated list of matching paths.",
+        input_schema=InputSchema(
+            properties={
+                "pattern": {"type": "string", "description": "Glob pattern to match files, e.g. 'src/**/*.py'"},
+                "root": {"type": "string", "description": "Root directory to search from (default: current working directory)"},
+                "limit": {"type": "integer", "description": "Maximum number of results to return (default: 200)"},
+            },
+            require=["pattern"],
+        ),
+        handler=handler,
     )
 
 
@@ -405,6 +470,7 @@ def _make_exec_skill_script() -> ToolDefinition:
         settings = get_settings()
         timeout_sec = settings.bash_exec_timeout_ms / 1000
 
+        cwd = _resolve_cwd(ctx) or str(Path.cwd())
         try:
             proc = subprocess.run(
                 command,
@@ -414,7 +480,7 @@ def _make_exec_skill_script() -> ToolDefinition:
                 encoding="utf-8",
                 errors="replace",
                 timeout=timeout_sec,
-                cwd=str(Path.cwd()),
+                cwd=cwd,
             )
             output = (proc.stdout or "") + (proc.stderr or "")
             limit = settings.bash_exec_output_limit_bytes
@@ -467,7 +533,12 @@ def _make_exec_skill_script() -> ToolDefinition:
 def get_builtin_provider() -> BuiltinToolProvider:
     """返回包含所有内置工具的 Provider 实例。"""
     return BuiltinToolProvider([
-        bash_exec, http_request, search_tools, read, write, glob,
+        _make_bash_exec(),
+        http_request,
+        search_tools,
+        _make_read(),
+        _make_write(),
+        _make_glob(),
         _make_load_skill_reference(),
         _make_exec_skill_script(),
     ])

@@ -22,6 +22,7 @@ class CreateSessionRequest(BaseModel):
     token_budget: Optional[int] = None
     root_max_turns: Optional[int] = None
     llm_name: Optional[str] = None
+    llm_model: Optional[str] = None
     initial_task: Optional[InitialTaskConfig] = None
 
 

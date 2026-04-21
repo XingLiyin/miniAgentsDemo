@@ -37,6 +37,7 @@ export interface CreateSessionRequest {
   token_budget?: number
   root_max_turns?: number
   llm_name?: string | null
+  llm_model?: string | null
   initial_task?: InitialTaskConfig | null
 }
 
@@ -104,10 +105,11 @@ export type LLMStyle = 'openai' | 'anthropic'
 export interface LLMProvider {
   name: string
   style: LLMStyle
-  base_url: string | null
-  model: string
+  base_url: string
+  models: string[]
+  default_model: string
   timeout_sec: number
-  created_at?: string
+  max_tokens: number
 }
 
 export interface RegisterLLMRequest {
@@ -115,8 +117,10 @@ export interface RegisterLLMRequest {
   style: LLMStyle
   api_key: string
   base_url?: string
-  model: string
+  models?: string[]
+  default_model?: string
   timeout_sec?: number
+  max_tokens?: number
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────

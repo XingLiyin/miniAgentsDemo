@@ -1,26 +1,33 @@
 """LLM API Schema 定义。"""
 
 from typing import Optional
-
 from pydantic import BaseModel
 
 
-class LLMRegisterRequest(BaseModel):
-    """LLM 注册请求。"""
-
+class RegisterLLMRequest(BaseModel):
     name: str
-    style: str  # openai / anthropic
+    style: str
     api_key: str
-    base_url: str
-    model: str
+    base_url: str = ""
+    models: list[str] = []
+    default_model: str = ""
     timeout_sec: Optional[int] = None
+    max_tokens: Optional[int] = None
 
 
-class LLMRegisterResponse(BaseModel):
-    """LLM 注册响应（不返回敏感字段）。"""
+class AddModelRequest(BaseModel):
+    model: str
 
+
+class SetDefaultModelRequest(BaseModel):
+    model: str
+
+
+class LLMProviderResponse(BaseModel):
     name: str
     style: str
     base_url: str
-    model: str
+    models: list[str]
+    default_model: str
     timeout_sec: int
+    max_tokens: int

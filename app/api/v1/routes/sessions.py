@@ -46,7 +46,8 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             template_id=req.template_id,
             token_budget=req.token_budget,
             root_max_turns=req.root_max_turns,
-            llm_name=req.llm_name,
+            llm_provider=req.llm_name,
+            llm_model=req.llm_model,
             initial_task=req.initial_task,
         )
         # 异步启动 AgentLoop（在当前 asyncio event loop 中）
@@ -120,7 +121,7 @@ async def answer_input(session_id: str, req: AnswerInputRequest) -> SessionRespo
 async def stream_session_events(session_id: str, request: Request) -> StreamingResponse:
     """SSE stream：实时推送 session 下的所有事件。"""
     from app.api.v1.deps import get_memory_service
-    from app.runtime.sse_bus import get_sse_bus
+    from app.common.sse_bus import get_sse_bus
 
     try:
         svc = get_session_service()
@@ -154,7 +155,7 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             yield f"data: {json.dumps(init_event, default=str)}\n\n"
 
             # 发送历史事件快照（用于断线重连后恢复完整聊天记录）
-            from app.runtime.event_store import get_event_store
+            from app.storage.file.event_store import get_event_store
             history = get_event_store().load(session_id)
             if history:
                 history_event = {"type": "history", "events": history}

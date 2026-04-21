@@ -701,8 +701,8 @@ class LifecycleManager:
                 actor_max_tool_rounds=50,
             ),
             inherit_memory=inherit_memory,
-            llm_name=parent_data.get(
-                "llm_name", settings.agent_default_llm_name
+            llm_provider=parent_data.get(
+                "llm_provider", settings.default_llm_provider
             ),
             has_spawn_permission=False,
             spawn_depth=spawn_depth,

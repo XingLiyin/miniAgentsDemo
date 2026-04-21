@@ -75,7 +75,7 @@ class SessionService:
             self._bus.publish(event_map[to_status], {"session_id": session_id})
         # Push SSE event
         try:
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             sse_event: dict = {
                 "type": "session_update",
                 "session_id": session_id,

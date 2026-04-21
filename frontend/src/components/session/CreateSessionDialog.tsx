@@ -22,6 +22,7 @@ const DEFAULT_FORM: CreateSessionRequest = {
   token_budget: 200000,
   root_max_turns: 20,
   llm_name: null,
+  llm_model: null,
   initial_task: null,
 }
 
@@ -95,19 +96,36 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
         </Select>
 
         <Select
-          label="模型"
+          label="Provider"
           value={form.llm_name ?? ''}
           onChange={(e) =>
-            setForm((f) => ({ ...f, llm_name: e.target.value || null }))
+            setForm((f) => ({ ...f, llm_name: e.target.value || null, llm_model: null }))
           }
         >
-          <option value="">使用默认模型</option>
+          <option value="">使用默认 Provider</option>
           {llms?.map((l) => (
-            <option key={l.name} value={l.name}>
-              {l.name} — {l.model}
-            </option>
+            <option key={l.name} value={l.name}>{l.name}</option>
           ))}
         </Select>
+
+        {form.llm_name && (() => {
+          const provider = llms?.find(l => l.name === form.llm_name)
+          if (!provider?.models.length) return null
+          return (
+            <Select
+              label="模型"
+              value={form.llm_model ?? ''}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, llm_model: e.target.value || null }))
+              }
+            >
+              <option value="">默认（{provider.default_model}）</option>
+              {provider.models.map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </Select>
+          )
+        })()}
 
         <div className="grid grid-cols-2 gap-3">
           <Input

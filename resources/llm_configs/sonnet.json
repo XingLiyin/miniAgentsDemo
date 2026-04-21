@@ -1,0 +1,1 @@
+{"name": "sonnet", "style": "anthropic", "api_key": "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", "base_url": "https://api.anthropic.com", "model": "claude-sonnet-4-6", "timeout_sec": 60}

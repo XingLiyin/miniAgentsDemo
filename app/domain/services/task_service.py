@@ -58,7 +58,7 @@ class TaskService:
         self._bus.publish(TASK_CREATED, {"task_id": task.id, "session_id": session_id})
         # Push SSE event
         try:
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {"type": "task_created", "task": task.to_dict()})
         except Exception:
             pass
@@ -89,7 +89,7 @@ class TaskService:
             self._bus.publish(event_map[to_status], {"task_id": task_id, "session_id": task.session_id})
         # Push SSE event
         try:
-            from app.runtime.sse_bus import get_sse_bus
+            from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(task.session_id, {"type": "task_updated", "task": task.to_dict()})
         except Exception:
             pass
