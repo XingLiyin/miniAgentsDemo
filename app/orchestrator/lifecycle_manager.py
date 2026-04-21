@@ -326,6 +326,21 @@ class LifecycleManager:
                         },
                     )
                 else:
+                    # 若刚完成的子任务有挂起的父任务，先将其恢复入队
+                    finished_task_id = payload.get("task_id", "")
+                    if finished_task_id:
+                        try:
+                            finished_task = self._task_svc.get(finished_task_id)
+                            if finished_task.parent_task_id:
+                                parent = self._task_svc.get(finished_task.parent_task_id)
+                                if parent.status == "SUSPENDED":
+                                    self._task_svc.resume(parent.id)
+                        except Exception:
+                            logger.exception(
+                                "LM: failed to resume parent task for finished task %s",
+                                finished_task_id,
+                            )
+
                     pending = self._task_svc.list_pending(session_id)
                     if not pending:
                         # Plan A: task succeeded + no pending tasks → session complete
@@ -683,7 +698,7 @@ class LifecycleManager:
             loop_guard=LoopGuard(
                 turns_used=0,
                 max_turns=10,
-                actor_max_tool_rounds=5,
+                actor_max_tool_rounds=50,
             ),
             inherit_memory=inherit_memory,
             llm_name=parent_data.get(

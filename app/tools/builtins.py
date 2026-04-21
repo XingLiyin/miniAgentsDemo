@@ -330,24 +330,24 @@ def _venv_python(skill_dir: Path) -> str:
         logger.info("exec_skill_script: creating venv at '%s'", venv_dir)
         result = subprocess.run(
             [sys.executable, "-m", "venv", str(venv_dir)],
-            capture_output=True, text=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode != 0:
             raise AppError(
                 "VENV_CREATE_FAILED",
-                f"Failed to create venv: {result.stderr.strip()}",
+                f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
             )
 
     # Always sync requirements so new packages are picked up
     logger.info("exec_skill_script: installing requirements from '%s'", reqs)
     result = subprocess.run(
-        [str(pip_bin), "install", "-r", str(reqs), "-q", "--disable-pip-version-check"],
-        capture_output=True, text=True,
+        [str(pip_bin), "install", "-r", str(reqs), "--disable-pip-version-check"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
     )
     if result.returncode != 0:
         raise AppError(
             "VENV_INSTALL_FAILED",
-            f"pip install failed: {result.stderr.strip()}",
+            f"pip install failed: {((result.stdout or '') + (result.stderr or '')).strip()}",
         )
 
     return str(python_bin)
@@ -411,10 +411,12 @@ def _make_exec_skill_script() -> ToolDefinition:
                 shell=True,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout_sec,
-                cwd=str(abs_skill_dir),
+                cwd=str(Path.cwd()),
             )
-            output = proc.stdout + proc.stderr
+            output = (proc.stdout or "") + (proc.stderr or "")
             limit = settings.bash_exec_output_limit_bytes
             if len(output.encode("utf-8")) > limit:
                 output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
@@ -428,6 +430,13 @@ def _make_exec_skill_script() -> ToolDefinition:
             )
         except subprocess.TimeoutExpired:
             raise AppError("TOOL_TIMEOUT", f"exec_skill_script timed out after {timeout_sec}s")
+        except Exception as e:
+            return ToolResult(
+                content=f"Failed to launch script: {e}",
+                is_error=True,
+                error_code="SCRIPT_LAUNCH_ERROR",
+                metadata={"skill": skill_name, "script": script_name},
+            )
 
     return ToolDefinition(
         name="exec_skill_script",

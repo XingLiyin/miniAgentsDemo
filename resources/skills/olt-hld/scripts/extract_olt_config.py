@@ -11,6 +11,7 @@ OLT CFG 配置提取脚本
 
 import re
 import sys
+from pathlib import Path
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 
@@ -133,6 +134,7 @@ def write_excel(results, output_path):
             c.border = BD
 
     ws.freeze_panes = "A2"
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_path)
 
 

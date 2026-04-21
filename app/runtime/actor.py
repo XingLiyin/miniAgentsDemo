@@ -136,6 +136,9 @@ class Actor:
                 ))
                 break
 
+            # 将本轮 assistant 回复写入消息历史，确保下一轮上下文完整
+            messages.append(LLMMessage(role="assistant", content=full_text))
+
             round_tool_calls: list[ToolCallRecord] = []
             done = False
 

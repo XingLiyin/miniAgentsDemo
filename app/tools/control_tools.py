@@ -401,7 +401,12 @@ class ControlToolProvider:
             title=args.get("title", ""),
             description=args.get("description", ""),
             inputs=inputs,
+            parent_task_id=task.id if task else None,
         )
+        if task is not None:
+            self._task_svc.transition(task.id, "SUSPENDED")
+            task.status = "SUSPENDED"
+            task.actor_done = True
         return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
 
     def _handle_submit_task_reviews(self, args: dict, ctx: CallContext | None) -> ToolResult:

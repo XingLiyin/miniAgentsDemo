@@ -11,8 +11,8 @@ class LoopGuard:
     """Agent Loop Guard 运行时计数。"""
     turns_used: int = 0
     max_turns: int = 20
-    actor_max_tool_rounds: int = 5      # 单个 atomic task 内最多工具调用轮次
-    observer_max_tool_rounds: int = 5   # observer ReAct 循环最多轮次
+    actor_max_tool_rounds: int = 50      # 单个 atomic task 内最多工具调用轮次
+    observer_max_tool_rounds: int = 50   # observer ReAct 循环最多轮次
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -27,8 +27,8 @@ class LoopGuard:
         return cls(
             turns_used=d.get("turns_used", 0),
             max_turns=d.get("max_turns", 20),
-            actor_max_tool_rounds=d.get("actor_max_tool_rounds", 5),
-            observer_max_tool_rounds=d.get("observer_max_tool_rounds", 5),
+            actor_max_tool_rounds=d.get("actor_max_tool_rounds", 50),
+            observer_max_tool_rounds=d.get("observer_max_tool_rounds", 50),
         )
 
 

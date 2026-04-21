@@ -9,10 +9,11 @@ doc_type: hld
 order: 1
 scripts:
   - name: extract_olt_config
-    description: 从cfg文件提取A机房单板业务统计表，输出Markdown表格
-    command: "python scripts/extract_olt_config.py {input_file} {mapping_file} {output_file}"
-    defaults:
-      mapping_file: references/board_port_mapping.xlsx
+    args: '"{cfg_file_abs_path}" "resources/skills/olt-hld/references/board_port_mapping.xlsx" "resources/test_olt/outputs/room_a_config.xlsx"'
+    description: 从cfg文件提取A机房单板业务统计表，输出Markdown表格和Excel
+  - name: generate_b_room_config
+    args: '"resources/test_olt/outputs/room_a_config.xlsx" "resources/test_olt/outputs/room_b_config.xlsx"'
+    description: 根据A机房配置表推算B机房单板方案，输出Excel
 ---
 
 # OLT HLD 设备配置建议方案生成
@@ -27,11 +28,17 @@ scripts:
 
 ### Step 1：提取A机房配置表
 
-cfg 文件路径已在 prompt 的"用户上传的原始文件"中提供，直接使用该路径，无需搜索。调用 `extract_olt_config` 脚本，返回 A 机房业务单板 Markdown 表格，记录为 `{{ROOM_A_TABLE}}`。
+cfg 文件路径已在 prompt 的"用户上传的原始文件"中提供，直接使用该路径，无需搜索。
+
+调用 `exec_skill_script`，参数：
+- `script_name`: `extract_olt_config`
+- `args`: `"<cfg文件绝对路径>" "resources/skills/olt-hld/references/board_port_mapping.xlsx" "resources/test_olt/outputs/room_a_config.xlsx"`
+
+返回 A 机房业务单板 Markdown 表格，记录为 `{{ROOM_A_TABLE}}`。
 
 ### Step 2：推理生成B机房配置表
 
-读取 `resources/olt-hld/references/merge_algorithm.md`，根据 `{{ROOM_A_TABLE}}` 和设计原则推理计算，生成 `{{ROOM_B_TABLE}}`。
+读取 `resources/skills/olt-hld/references/merge_algorithm.md`，根据 `{{ROOM_A_TABLE}}` 和设计原则推理计算，生成 `{{ROOM_B_TABLE}}`。
 
 ### Step 3：生成搬迁变更说明
 

@@ -97,6 +97,10 @@ class AgentLoop:
             result = self._actor.act(task, ctx, agent)
 
             task = self._task_svc.get(task_id)
+
+            if task.status == "SUSPENDED":
+                return
+
             if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
                 self._task_svc.to_be_observed(task_id)
                 task.status = "TO_BE_OBSERVED"

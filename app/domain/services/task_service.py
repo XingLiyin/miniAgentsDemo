@@ -33,6 +33,7 @@ class TaskService:
         description: str = "",
         inputs: dict | None = None,
         assigned_agent_id: str | None = None,
+        parent_task_id: str | None = None,
     ) -> Task:
         """创建新 Task，初始状态 PENDING。
 
@@ -49,6 +50,7 @@ class TaskService:
             description=description,
             settings=inputs or {},
             status="PENDING",
+            parent_task_id=parent_task_id,
             created_at=now,
             updated_at=now,
         )
@@ -126,6 +128,10 @@ class TaskService:
         task = self.get(task_id)
         task.error = None
         self.save(task)
+        return self.transition(task_id, "PENDING")
+
+    def resume(self, task_id: str) -> Task:
+        """将 SUSPENDED 任务打回 PENDING（子任务完成后父任务重新入队）。"""
         return self.transition(task_id, "PENDING")
 
     def list_by_session(self, session_id: str) -> list[Task]:

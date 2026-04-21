@@ -83,11 +83,11 @@ class ToolGateway:
             status = "SUCCEEDED"
             error  = None
         except AppError as e:
-            result = ToolResult(content="", is_error=True, error_code=e.code)
+            result = ToolResult(content=e.message or e.code, is_error=True, error_code=e.code)
             status = "FAILED"
             error  = e.message
         except Exception as e:
-            result = ToolResult(content="", is_error=True, error_code="TOOL_EXEC_ERROR")
+            result = ToolResult(content=str(e), is_error=True, error_code="TOOL_EXEC_ERROR")
             status = "FAILED"
             error  = str(e)
             logger.exception("ToolGateway unexpected error: tool=%s", tool_name)

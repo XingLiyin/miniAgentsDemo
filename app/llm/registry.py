@@ -27,6 +27,7 @@ class LLMProviderConfig:
     base_url: str
     model: str
     timeout_sec: int = 60
+    max_tokens: int = 8096
 
 
 class LLMRegistry:
@@ -91,7 +92,7 @@ class LLMRegistry:
             raise KeyError(f"未注册 LLM: {name}")
         cfg = self._configs[name]
         adapter = self._provider_registry.get(name)
-        return BaseChatClient(adapter=adapter, model=cfg.model)
+        return BaseChatClient(adapter=adapter, model=cfg.model, default_max_tokens=cfg.max_tokens)
 
     def get_config(self, name: str) -> LLMProviderConfig:
         """获取 LLM 配置（含 api_key，注意不要直接暴露给外部）。"""
@@ -136,6 +137,7 @@ class LLMRegistry:
                     base_url=data["base_url"],
                     model=data["model"],
                     timeout_sec=data.get("timeout_sec", 60),
+                    max_tokens=data.get("max_tokens", 8096),
                 )
                 self.register(config, persist=False)   # 已在磁盘，无需再写
                 count += 1
