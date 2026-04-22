@@ -36,6 +36,8 @@ class MemoryService:
         content: str,
         session_id: str = "",
         task_id: str | None = None,
+        tool_call_id: str | None = None,
+        tool_calls: list | None = None,
     ) -> MemoryItem:
         """追加一条消息到该 agent 的 messages.jsonl。"""
         item = MemoryItem(
@@ -46,6 +48,8 @@ class MemoryService:
             content=content,
             task_id=task_id,
             created_at=now_iso(),
+            tool_call_id=tool_call_id,
+            tool_calls=tool_calls,
         )
         self._store.append_message(agent_id, item.to_dict())
         return item

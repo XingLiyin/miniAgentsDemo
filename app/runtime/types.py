@@ -64,6 +64,7 @@ class ToolCallRecord:
     arguments: dict[str, Any]
     result: str
     is_error: bool = False
+    tool_call_id: str = ""
 
 
 @dataclass

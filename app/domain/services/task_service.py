@@ -163,6 +163,10 @@ class TaskService:
                 cancelled += 1
         return cancelled
 
+    def list_children(self, parent_task_id: str, session_id: str) -> list[Task]:
+        """返回 session 下所有 parent_task_id 匹配的子任务。"""
+        return [t for t in self.list_by_session(session_id) if t.parent_task_id == parent_task_id]
+
     def list_pending(self, session_id: str) -> list[Task]:
         """返回 session 下所有 PENDING task，按 created_at 升序排列。"""
         tasks = [t for t in self.list_by_session(session_id) if t.status == "PENDING"]

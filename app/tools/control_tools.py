@@ -88,9 +88,10 @@ def submit_task_assessment(
         "Outcome of the current task: "
         "'success' if completed successfully; "
         "'failed' if it could not be completed (system decides whether to retry); "
+        "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn); "
         "'needs_user_input' if completion cannot be determined without user confirmation.",
     ],
-    task_result: Annotated[str, "What was accomplished, or why the task could not be completed"],
+    task_result: Annotated[str, "What was accomplished, progress made, or why the task could not be completed"],
 ) -> ToolResult:
     """Submit your assessment of the current task's execution result."""
 
@@ -110,11 +111,8 @@ def submit_plan(
             "  inherit_memory: true (default) for sub-agents that need session history."
         ),
     ],
-    task_outcome: Annotated[str, "'success' or 'failed'"] = "success",
-    task_result: Annotated[str, "Brief description of what the plan covers."] = "",
-    summary: Annotated[str, "Concise summary of this planning turn (1-3 sentences)."] = "",
 ) -> ToolResult:
-    """Submit the decomposed task plan. Call exactly once per turn."""
+    """Submit the decomposed task plan. Call exactly once per turn. Each task: title (str, short imperative), description (str, WHAT not HOW), use_subagent (bool), inherit_memory (bool, default true), skill_name (str or null), user_prompt (str or empty)."""
 
 
 @control_tool
@@ -240,31 +238,24 @@ class ControlToolProvider:
                 inputs["template_name"] = spec.get("subagent_template") or None
                 inputs["inherit_memory"] = bool(spec.get("inherit_memory", True))
             t = self._task_svc.create(
-                session_id=task.session_id,
-                creator_agent_id=task.assigned_agent_id,
+                session_id=task.session_id if task else "",
+                creator_agent_id=task.assigned_agent_id if task else "",
                 user_prompt=spec.get("user_prompt", ""),
                 title=spec.get("title", ""),
                 description=spec.get("description", ""),
                 inputs=inputs,
+                parent_task_id=task.id if task else None,
             )
             task_ids.append(t.id)
             titles.append(spec.get("title", ""))
 
-        task_outcome = args.get("task_outcome", "success")
-        if task_outcome not in ("success", "failed", "needs_user_input"):
-            task_outcome = "success"
-        default_result = (
+        result_text = (
             f"Planned {len(task_ids)} tasks: {', '.join(titles)}"
             if task_ids else "No further tasks needed — goal already achieved."
         )
-        task_result = args.get("task_result") or default_result
         if task is not None:
-            task.actor_outcome     = task_outcome
-            task.actor_result      = task_result
-            task.proceed_to_review = False
-            self._task_svc.to_be_observed(task.id)
-            task.status = "TO_BE_OBSERVED"
-        return ToolResult(content=default_result)
+            task.actor_done = True
+        return ToolResult(content=result_text)
 
     def _handle_replan(self, args: dict, ctx: CallContext | None) -> ToolResult:
         task    = ctx.task if ctx else None
@@ -276,7 +267,7 @@ class ControlToolProvider:
         self._task_svc.create(
             session_id=task.session_id if task else "",
             creator_agent_id=task.assigned_agent_id if task else "",
-            user_prompt=args.get("user_prompt", ""),
+            user_prompt=(task.user_prompt if task else "") or "",
             title=f"Replan For: {reason}",
             description=f"{summary}\n\n请基于最新情况重新制定计划。",
             inputs={"use_subagent": True, "inherit_memory": True,
@@ -293,7 +284,7 @@ class ControlToolProvider:
     def _handle_submit_task_assessment(self, args: dict, ctx: CallContext | None) -> ToolResult:
         task = ctx.task if ctx else None
         task_outcome = args.get("task_outcome", "failed")
-        if task_outcome not in ("success", "failed", "needs_user_input"):
+        if task_outcome not in ("success", "failed", "active", "needs_user_input"):
             task_outcome = "failed"
         task_result = args.get("task_result", "")
 
@@ -309,6 +300,10 @@ class ControlToolProvider:
             elif task_outcome == "failed":
                 self._task_svc.fail(task.id, error=task_result)
                 task.status = "FAILED"
+            elif task_outcome == "active":
+                # Task made progress but is not done; re-queue for another actor turn
+                self._task_svc.transition(task.id, "PENDING")
+                task.status = "PENDING"
             else:  # needs_user_input
                 task_outcome, task_result = self._confirm_with_user(task, task_result, outputs)
                 task.actor_outcome = task_outcome

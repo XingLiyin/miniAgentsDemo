@@ -16,9 +16,11 @@ class MemoryItem:
     content: str
     task_id: str | None = None
     created_at: str = ""
+    tool_call_id: str | None = None    # role="tool" 时填充，用于 provider 协议配对
+    tool_calls: list | None = None     # role="assistant" 含工具调用时填充
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.id,
             "session_id": self.session_id,
             "agent_id": self.agent_id,
@@ -27,6 +29,11 @@ class MemoryItem:
             "task_id": self.task_id,
             "created_at": self.created_at,
         }
+        if self.tool_call_id is not None:
+            d["tool_call_id"] = self.tool_call_id
+        if self.tool_calls is not None:
+            d["tool_calls"] = self.tool_calls
+        return d
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MemoryItem":
@@ -38,6 +45,8 @@ class MemoryItem:
             content=d["content"],
             task_id=d.get("task_id"),
             created_at=d.get("created_at", ""),
+            tool_call_id=d.get("tool_call_id"),
+            tool_calls=d.get("tool_calls"),
         )
 
 

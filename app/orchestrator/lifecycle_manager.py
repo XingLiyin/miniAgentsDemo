@@ -326,7 +326,7 @@ class LifecycleManager:
                         },
                     )
                 else:
-                    # 若刚完成的子任务有挂起的父任务，先将其恢复入队
+                    # 若刚完成的子任务有挂起的父任务，检查所有子任务都完成后再恢复
                     finished_task_id = payload.get("task_id", "")
                     if finished_task_id:
                         try:
@@ -334,7 +334,11 @@ class LifecycleManager:
                             if finished_task.parent_task_id:
                                 parent = self._task_svc.get(finished_task.parent_task_id)
                                 if parent.status == "SUSPENDED":
-                                    self._task_svc.resume(parent.id)
+                                    all_tasks = self._task_svc.list_by_session(session_id)
+                                    children = [t for t in all_tasks if t.parent_task_id == parent.id]
+                                    _terminal = {"FINISHED", "FAILED", "CANCELED"}
+                                    if children and all(t.status in _terminal for t in children):
+                                        self._task_svc.resume(parent.id)
                         except Exception:
                             logger.exception(
                                 "LM: failed to resume parent task for finished task %s",

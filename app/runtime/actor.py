@@ -82,7 +82,9 @@ class Actor:
             done = False
 
             if tool_calls_from_stream:
-                messages.append(LLMMessage(role="assistant", content=full_text))
+                messages = self._prompt_builder.append_assistant_tool_calls(
+                    messages, full_text, tool_calls_from_stream
+                )
                 round_tool_calls, messages, done = self._execute_tools(
                     tool_calls_from_stream, agent, task, toolcall_ctx, messages, _sse, session_id
                 )
@@ -178,9 +180,12 @@ class Actor:
                 arguments=tool_call.input,
                 result=result.content or "",
                 is_error=result.is_error,
+                tool_call_id=tool_call.id,
             )
             round_tool_calls.append(record)
-            messages = self._prompt_builder.append_tool_result(messages, tool_call.name, result)
+            messages = self._prompt_builder.append_tool_result(
+                messages, tool_call.name, result, tool_call_id=tool_call.id
+            )
             self._sse_push(_sse, session_id, {
                 "type": "tool_call",
                 "tool_name": record.tool_name,

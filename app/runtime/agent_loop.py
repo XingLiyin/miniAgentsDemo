@@ -110,24 +110,64 @@ class AgentLoop:
 
             # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
             task = self._task_svc.get(task_id)
-            if task.status == "FAILED":
-                raise AppError("TASK_FAILED_BY_OBSERVER", task.result or "")
 
-            # ── memory / blackboard ───────────────────────────────────────────
+            # ── memory 写入在状态判断之前，确保 active 路径也写入 ─────────────
             if task.user_prompt:
                 self._memory_svc.append_message(
                     agent_id=agent_id,
                     role="user",
                     content=task.user_prompt,
                     session_id=session_id,
+                    task_id=task_id,
                 )
+            for turn in result.conversation_turns:
+                if turn.tool_calls:
+                    self._memory_svc.append_message(
+                        agent_id=agent_id,
+                        role="assistant",
+                        content=turn.llm_text,
+                        session_id=session_id,
+                        task_id=task_id,
+                        tool_calls=[
+                            {"id": tc.tool_call_id, "name": tc.tool_name, "input": tc.arguments}
+                            for tc in turn.tool_calls
+                        ],
+                    )
+                    for tc in turn.tool_calls:
+                        self._memory_svc.append_message(
+                            agent_id=agent_id,
+                            role="tool",
+                            content=tc.result,
+                            session_id=session_id,
+                            task_id=task_id,
+                            tool_call_id=tc.tool_call_id,
+                        )
+                elif turn.llm_text:
+                    self._memory_svc.append_message(
+                        agent_id=agent_id,
+                        role="assistant",
+                        content=turn.llm_text,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
             if verdict.summary:
                 self._memory_svc.append_message(
                     agent_id=agent_id,
                     role="assistant",
                     content=verdict.summary,
                     session_id=session_id,
+                    task_id=task_id,
                 )
+
+            if task.status == "FAILED":
+                raise AppError("TASK_FAILED_BY_OBSERVER", task.result or "")
+
+            if task.status == "PENDING":
+                # observer 判定 active：任务重新入队，actor 获得新一轮机会
+                return
+
+            if task.status == "FINISHED" and task.result:
+                self._bb_svc.publish(session_id, task.id, agent_id, task.result)
 
             for result_turn in result.conversation_turns:
                 self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, result_turn.llm_text)

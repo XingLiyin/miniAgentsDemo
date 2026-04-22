@@ -18,7 +18,7 @@ _TASK_TRANSITIONS: dict[str, set[str]] = {
     "PENDING":          {"ACTIVE", "CANCELED", "FINISHED", "TO_BE_OBSERVED"},
     "ACTIVE":           {"FINISHED", "FAILED", "CANCELED", "SUSPENDED", "TO_BE_OBSERVED"},
     "SUSPENDED":        {"ACTIVE", "PENDING", "FAILED", "CANCELED"},
-    "TO_BE_OBSERVED":   {"FINISHED", "FAILED"},
+    "TO_BE_OBSERVED":   {"SUSPENDED", "FINISHED", "FAILED", "PENDING"},
     "FINISHED":         {"PENDING"},   # Observer 复核不通过时 reopen
     "FAILED":           {"PENDING"},   # LifecycleManager 重试时 retry
     "CANCELED":         set(),

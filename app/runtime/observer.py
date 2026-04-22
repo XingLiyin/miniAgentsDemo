@@ -94,12 +94,6 @@ class Observer:
         toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task)
         max_rounds    = agent.loop_guard.observer_max_tool_rounds if agent else 5
 
-        siblings = [t for t in task_list if t.id != task.id]
-        has_pending_siblings = any(t.status == "PENDING" for t in siblings)
-        reviewable_count = (
-            sum(1 for t in siblings if t.status in ("FINISHED", "PENDING"))
-            if has_pending_siblings else 0
-        )
         last_llm_text     = ""
         reviews_submitted = False
 
@@ -116,16 +110,30 @@ class Observer:
             if not tool_calls:
                 break
 
+            messages = self._prompt_builder.append_assistant_tool_calls(
+                messages, full_text, tool_calls
+            )
             for tool_call in tool_calls:
                 if tool_call.name == "submit_task_reviews":
                     reviews_submitted = True
                 tool_result = self._tool_gateway.call(
                     tool_call.name, tool_call.input, None, task.id, toolcall_ctx
                 )
-                messages = self._prompt_builder.append_tool_result(messages, tool_call.name, tool_result)
+                messages = self._prompt_builder.append_tool_result(
+                    messages, tool_call.name, tool_result, tool_call_id=tool_call.id
+                )
 
-            if task.status != "TO_BE_OBSERVED" and (not reviewable_count or reviews_submitted):
-                break
+            if task.status != "TO_BE_OBSERVED":
+                live_siblings = [
+                    t for t in self._task_svc.list_by_session(session_id)
+                    if t.id != task.id and t.assigned_agent_id == task.assigned_agent_id
+                ]
+                has_pending = any(t.status == "PENDING" for t in live_siblings)
+                live_reviewable = has_pending and any(
+                    t.status in ("FINISHED", "PENDING") for t in live_siblings
+                )
+                if not live_reviewable or reviews_submitted:
+                    break
 
         if task.status == "TO_BE_OBSERVED":
             raise RuntimeError("Observer: no assessment submitted by LLM")

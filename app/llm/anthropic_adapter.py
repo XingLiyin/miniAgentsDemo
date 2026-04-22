@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterator, Optional
 
 from app.llm.base import BaseAdapter, StreamTransport, Transport
 from app.llm.types import (
+    LLMMessage,
     LLMRequest,
     LLMResponse,
     LLMTool,
@@ -155,7 +156,7 @@ class AnthropicAdapter(BaseAdapter):
 
         payload: Dict[str, Any] = {
             'model': req.model,
-            'messages': [{'role': m.role, 'content': m.content} for m in messages],
+            'messages': _serialize_messages_anthropic(messages),
             'stream': stream,
         }
         if system_text:
@@ -198,6 +199,59 @@ def _extract_anthropic_usage(resp: Dict[str, Any]) -> Optional[LLMUsage]:
         completion_tokens=output_tokens,
         total_tokens=total,
     )
+
+
+def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
+    """将内部 LLMMessage 列表序列化为 Anthropic Messages API 格式。
+
+    - role="assistant" + tool_calls → content 块列表（text + tool_use）
+    - role="tool" → 合并连续 tool 消息为单条 role="user" 的 tool_result 块列表
+    - role="tool" 且 tool_call_id 为空 → 降级为普通 user 文本（历史记忆回放场景）
+    - 其他 role 原样传递（content 保持字符串）
+    """
+    result: list[dict] = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+
+        if m.role == "assistant":
+            content_blocks: list[dict] = []
+            if m.content:
+                content_blocks.append({"type": "text", "text": m.content})
+            for tc in (m.tool_calls or []):
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["name"],
+                    "input": tc["input"],
+                })
+            result.append({"role": "assistant", "content": content_blocks or m.content})
+            i += 1
+
+        elif m.role == "tool":
+            tool_result_blocks: list[dict] = []
+            fallback_texts: list[str] = []
+            while i < len(messages) and messages[i].role == "tool":
+                tm = messages[i]
+                if tm.tool_call_id:
+                    tool_result_blocks.append({
+                        "type": "tool_result",
+                        "tool_use_id": tm.tool_call_id,
+                        "content": tm.content,
+                    })
+                else:
+                    fallback_texts.append(tm.content)
+                i += 1
+            if tool_result_blocks:
+                result.append({"role": "user", "content": tool_result_blocks})
+            if fallback_texts:
+                result.append({"role": "user", "content": "\n\n".join(fallback_texts)})
+
+        else:
+            result.append({"role": m.role, "content": m.content})
+            i += 1
+
+    return result
 
 
 def _split_system_messages(req: LLMRequest) -> tuple[str, list]:

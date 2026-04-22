@@ -28,28 +28,56 @@ logger = logging.getLogger(__name__)
 class BasePromptBuilder:
     """两个 builder 共用的工具方法。"""
 
+    def append_assistant_tool_calls(
+        self,
+        messages: list[LLMMessage],
+        full_text: str,
+        tool_calls: list[ToolCallBlock],
+    ) -> list[LLMMessage]:
+        """在工具结果之前插入 assistant 工具调用消息（provider 协议要求配对）。"""
+        messages.append(LLMMessage(
+            role="assistant",
+            content=full_text,
+            tool_calls=[
+                {"id": tc.id, "name": tc.name, "input": tc.input}
+                for tc in tool_calls
+            ],
+        ))
+        return messages
+
     def append_tool_result(
         self,
         messages: list[LLMMessage],
         tool_name: str,
         tool_result: object,
+        tool_call_id: str = "",
     ) -> list[LLMMessage]:
         """将工具调用结果追加到消息历史。"""
         is_error = getattr(tool_result, "is_error", False)
         content  = getattr(tool_result, "content", "") or ""
-        prefix   = f"Tool '{tool_name}' error" if is_error else f"Tool '{tool_name}' result"
-        messages.append(LLMMessage(role="user", content=f"{prefix}:\n{content}"))
+        if is_error:
+            content = f"[ERROR] {content}"
+        messages.append(LLMMessage(role="tool", content=content, tool_call_id=tool_call_id))
         return messages
 
     def sanitize_messages(self, messages: list[LLMMessage]) -> list[LLMMessage]:
-        """过滤空白消息，合并连续同角色消息。"""
-        filtered = [m for m in messages if m.content and m.content.strip()]
+        """过滤空白消息，合并连续同角色消息（tool/assistant 不合并）。"""
+        filtered = [
+            m for m in messages
+            if (m.content and m.content.strip()) or m.tool_calls or m.role == "tool"
+        ]
         merged: list[LLMMessage] = []
         for m in filtered:
-            if merged and merged[-1].role == m.role:
+            if (merged and merged[-1].role == m.role
+                    and m.role not in ("tool", "assistant")):
                 merged[-1].content = merged[-1].content + "\n\n" + m.content
             else:
-                merged.append(LLMMessage(role=m.role, content=m.content))
+                merged.append(LLMMessage(
+                    role=m.role,
+                    content=m.content,
+                    tool_call_id=m.tool_call_id,
+                    tool_calls=m.tool_calls,
+                ))
         return merged
 
     def build_tool_calls_from_stream(self, acc: dict[int, dict]) -> list[ToolCallBlock]:
@@ -91,7 +119,12 @@ class ActorPromptBuilder(BasePromptBuilder):
             else ctx.recent_messages
         )
         for m in recent_messages:
-            messages.append(LLMMessage(role=m.get("role", "user"), content=m.get("content", "")))
+            messages.append(LLMMessage(
+                role=m.get("role", "user"),
+                content=m.get("content", ""),
+                tool_call_id=m.get("tool_call_id"),
+                tool_calls=m.get("tool_calls"),
+            ))
 
         parts: list[str] = []
         if ctx.blackboard_snippets:
@@ -132,18 +165,10 @@ class ObserverPromptBuilder(BasePromptBuilder):
     """构建 observer 的 system prompt 和 messages。"""
 
     def build_system_prompt(self, ctx: "ReasoningContext") -> str:
-        """组装 observer system prompt：role + skill instructions + 工具列表。"""
+        """组装 observer system prompt：role + 工具列表。"""
         role  = ctx.role or _OBSERVER_ROLE_FALLBACK
         tools = [r for r in ctx.observer_resources if r.kind == "tool" and r.llm_tool is not None]
         parts = [role]
-        if ctx.skill_instructions:
-            parts.append(
-                "## Skill Instructions for This Task\n\n"
-                "The task was executed under the following skill. "
-                "Use these instructions to calibrate your evaluation criteria and emphasis. "
-                "You may also call skill-related tools listed below to gather more information before submitting your assessment.\n\n"
-                + ctx.skill_instructions
-            )
         if tools:
             lines = ["## Available Tools"]
             for r in tools:

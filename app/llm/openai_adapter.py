@@ -125,7 +125,7 @@ class OpenAIAdapter(BaseAdapter):
         messages = _merge_system_prompt(req)
         payload: Dict[str, Any] = {
             'model': req.model,
-            'messages': [{'role': m.role, 'content': m.content} for m in messages],
+            'messages': _serialize_messages_openai(messages),
             'stream': stream,
         }
         if req.tools:
@@ -198,6 +198,49 @@ def _extract_openai_tool_calls(message: Dict[str, Any]) -> list[ToolCallBlock]:
             raw=call,
         ))
     return blocks
+
+
+def _serialize_messages_openai(messages: list[LLMMessage]) -> list[dict]:
+    """将内部 LLMMessage 列表序列化为 OpenAI Chat Completions API 格式。
+
+    - role="assistant" + tool_calls → tool_calls 数组（arguments JSON 序列化）
+    - role="tool" + tool_call_id → {role:"tool", tool_call_id:..., content:...}
+    - role="tool" 且 tool_call_id 为空 → 降级为 role="user" 文本（历史记忆回放）
+    - 其他 role 原样传递
+    """
+    result: list[dict] = []
+    for m in messages:
+        if m.role == "assistant" and m.tool_calls:
+            entry: dict = {"role": "assistant"}
+            if m.content:
+                entry["content"] = m.content
+            entry["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        "arguments": json.dumps(tc["input"], ensure_ascii=False),
+                    },
+                }
+                for tc in m.tool_calls
+            ]
+            result.append(entry)
+
+        elif m.role == "tool":
+            if m.tool_call_id:
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": m.tool_call_id,
+                    "content": m.content,
+                })
+            else:
+                result.append({"role": "user", "content": m.content})
+
+        else:
+            result.append({"role": m.role, "content": m.content})
+
+    return result
 
 
 def _merge_system_prompt(req: LLMRequest) -> list[LLMMessage]:

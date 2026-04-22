@@ -10,6 +10,7 @@ from app.domain.models.session import Session
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
+from app.domain.services.task_service import TaskService
 from app.runtime.types import ContextResource, ReasoningContext
 
 if TYPE_CHECKING:
@@ -35,17 +36,19 @@ class Reasoner:
         blackboard_svc: BlackboardService,
         tool_registry: "ToolRegistry | None" = None,
         skill_registry: "SkillRegistry | None" = None,
+        task_svc: TaskService | None = None,
     ) -> None:
         self._memory_svc = memory_svc
         self._bb_svc = blackboard_svc
         self._tool_registry = tool_registry
         self._skill_registry = skill_registry
+        self._task_svc = task_svc
 
     def reason(
         self, session: Session, agent: Agent, task: Task
     ) -> ReasoningContext:
         """构建本轮 ReasoningContext。"""
-        messages, summary_text, bb_snippets, token_estimate = self._fetch_base(session, agent)
+        messages, summary_text, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
         soul, role, skill_instructions = self._extract_agent_identity(agent, task)
 
         return ReasoningContext(
@@ -76,17 +79,19 @@ class Reasoner:
 
     # ── 私有：共享数据获取 ──────────────────────────────────────────────────
 
-    def _fetch_base(self, session: Session, agent: Agent) -> tuple:
-        """获取 memory、blackboard、token 估算等共享数据，返回 tuple。
-
-        
-        """
+    def _fetch_base(self, session: Session, agent: Agent, task: Task) -> tuple:
+        """获取 memory、blackboard、token 估算等共享数据，返回 tuple。"""
         messages = self._memory_svc.get_window(agent.id)
         summary = self._memory_svc.get_summary(agent.id)
         summary_text = summary.summary_text if summary else ""
 
         bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
         bb_snippets = [entry.content for entry in bb_entries]
+
+        if self._task_svc:
+            for child in self._task_svc.list_children(task.id, session.id):
+                for entry in self._bb_svc.pull(session.id, child.id, agent.id):
+                    bb_snippets.append(entry.content)
 
         from app.common.utils import estimate_tokens
         text_sample = (

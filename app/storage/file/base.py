@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,17 @@ def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=None), encoding="utf-8")
-    os.replace(tmp, path)
+    # Windows: os.replace can fail with PermissionError if the destination file
+    # is momentarily locked by another reader (SSE poll, antivirus, etc.).
+    # Retry with exponential backoff before giving up.
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (2 ** attempt))  # 20ms, 40ms, 80ms, 160ms
 
 
 def read_json(path: Path) -> dict[str, Any] | None:

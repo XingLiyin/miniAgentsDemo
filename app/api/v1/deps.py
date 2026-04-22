@@ -111,6 +111,7 @@ def get_reasoner() -> Reasoner:
         blackboard_svc=get_blackboard_service(),
         tool_registry=get_tool_registry(),
         skill_registry=get_skill_registry(),
+        task_svc=get_task_service(),
     )
 
 

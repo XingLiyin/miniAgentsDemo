@@ -5,8 +5,10 @@ from typing import Dict, List, Optional, Any, Literal
 class LLMMessage:
     """统一的消息结构。"""
 
-    role: Literal['system', 'user', 'assistant']
+    role: Literal['system', 'user', 'assistant', 'tool']
     content: str
+    tool_call_id: Optional[str] = None
+    tool_calls: Optional[List[Dict[str, Any]]] = None
 
 
 @dataclass
