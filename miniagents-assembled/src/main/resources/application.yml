@@ -1,0 +1,37 @@
+spring:
+  application:
+    name: miniAgents
+  config:
+    import: optional:file:.env[.properties]
+
+logging:
+  level:
+    root: INFO
+    com.codex.miniagents: DEBUG
+    org.springframework: INFO
+
+miniagents:
+  app-name: miniAgents
+  app-version: 0.1.0
+  data-dir: data
+  skills-dir: resources/skills
+  agents-dir: resources/agents
+  llm-openai-base-url: https://dashscope.aliyuncs.com/compatible-mode/
+  llm-anthropic-base-url: https://dashscope.aliyuncs.com/compatible-mode/
+  llm-default-model: qwen-plus
+  default-llm-provider: qwen-plus
+  default-llm-timeout-sec: 3600
+  agent-default-system-prompt: You are a helpful agent.
+  agent-default-llm-name: qwen-plus
+  default-token-budget: 200000
+  default-root-max-turns: 20
+  default-summary-threshold: 20
+  default-short-window-size: 20
+  bash-exec-cwd: ""
+  bash-exec-timeout-ms: 30000
+  bash-exec-output-limit-bytes: 65536
+  http-request-timeout-ms: 10000
+  http-response-limit-bytes: 524288
+  log-level: INFO
+  store-base-url: ""
+  store-timeout-sec: 10
