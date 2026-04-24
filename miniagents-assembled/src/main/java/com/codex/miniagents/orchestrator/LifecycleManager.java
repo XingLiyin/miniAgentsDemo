@@ -224,8 +224,7 @@ public class LifecycleManager {
             return;
         }
 
-        Task nextTaskToSchedule = null;
-        String rootResumeAgentId = null;
+        AgentFinishedDecision decision = new AgentFinishedDecision();
 
         ReentrantLock lock = locks.computeIfAbsent(sessionId, sid -> new ReentrantLock());
         lock.lock();
@@ -236,122 +235,147 @@ public class LifecycleManager {
             }
 
             if (meta.spawnDepth == 0) {
-                SessionStatus sessionStatus;
-                try {
-                    sessionStatus = sessionService.get(sessionId).getStatus();
-                } catch (Exception e) {
-                    sessionStatus = SessionStatus.FAILED;
-                }
-
-                if (sessionStatus != SessionStatus.RUNNING) {
-                    state.agentRegistry.remove(agentId);
-                    state.concurrentAgents -= 1;
-                    eventBus.publish(LIFECYCLE_AGENT_RECYCLED, Map.of("session_id", sessionId, "agent_id", agentId));
-                } else {
-                    List<Task> pending = taskService.listPending(sessionId);
-                    if (!pending.isEmpty()) {
-                        nextTaskToSchedule = pending.get(0);
-                        meta.taskId = nextTaskToSchedule.getId();
-                        if (asBoolean(taskSettings(nextTaskToSchedule).get("use_subagent"), false)) {
-                            String rejectReason = checkSpawnPermission(state, agentId, List.of(
-                                new SpawnPlanItem(nextTaskToSchedule.getTitle(), nextTaskToSchedule.getDescription())
-                            ));
-                            if (!rejectReason.isBlank()) {
-                                eventBus.publish(SPAWN_REJECTED, Map.of(
-                                    "session_id", sessionId,
-                                    "agent_id", agentId,
-                                    "task_id", nextTaskToSchedule.getId(),
-                                    "reason", rejectReason
-                                ));
-                                log.warn(
-                                    "LifecycleManager: auto-spawn rejected for task {} ({}), fallback inline",
-                                    nextTaskToSchedule.getId(), rejectReason
-                                );
-                            } else {
-                                pendingAutoSpawns.computeIfAbsent(sessionId, sid -> new ArrayList<>())
-                                    .add(new PendingAutoSpawn(agentId, nextTaskToSchedule.getId()));
-                                nextTaskToSchedule = null;
-                                meta.taskId = null;
-                            }
-                        }
-                    } else {
-                        log.info("Session {}: no pending tasks, marking SUCCEEDED", sessionId);
-                        try {
-                            sessionService.transition(sessionId, SessionStatus.SUCCEEDED);
-                        } catch (Exception ignored) {
-                            // best effort
-                        }
-                        state.agentRegistry.remove(agentId);
-                        state.concurrentAgents -= 1;
-                        eventBus.publish(LIFECYCLE_AGENT_RECYCLED, Map.of("session_id", sessionId, "agent_id", agentId));
-                    }
-                }
+                decision = handleRootAgentFinished(sessionId, agentId, state, meta, payload);
             } else {
-                String finishedTaskId = meta.taskId;
-                state.agentRegistry.remove(agentId);
-                state.concurrentAgents -= 1;
-                if (finishedTaskId != null) {
-                    state.concurrentTasks -= 1;
-                }
-
-                eventBus.publish(LIFECYCLE_AGENT_RECYCLED, Map.of("session_id", sessionId, "agent_id", agentId));
-
-                if (finishedTaskId != null) {
-                    try {
-                        Task finishedTask = taskService.get(finishedTaskId);
-                        if (finishedTask.getParentTaskId() != null && !finishedTask.getParentTaskId().isBlank()) {
-                            Task parent = taskService.get(finishedTask.getParentTaskId());
-                            if (parent.getStatus() == TaskStatus.SUSPENDED) {
-                                List<Task> allTasks = taskService.listBySession(sessionId);
-                                List<Task> children = allTasks.stream()
-                                    .filter(t -> t != null && parent.getId().equals(t.getParentTaskId()))
-                                    .toList();
-                                boolean allChildrenTerminal = !children.isEmpty()
-                                    && children.stream().allMatch(t -> t.getStatus() != null && t.getStatus().isTerminal());
-                                if (allChildrenTerminal) {
-                                    taskService.resume(parent.getId());
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        log.warn("LM: failed to resume parent task for finished task {}: {}", finishedTaskId,
-                            e.getMessage());
-                    }
-                }
-
-                String rootId = state.rootAgentId;
-                AgentMeta rootMeta = state.agentRegistry.get(rootId);
-                if (rootMeta != null) {
-                    List<Task> pending = taskService.listPending(sessionId);
-                    if (!pending.isEmpty()) {
-                        rootMeta.taskId = pending.get(0).getId();
-                        nextTaskToSchedule = pending.get(0);
-                        rootResumeAgentId = rootId;
-                    } else {
-                        log.info("Session {}: no pending tasks after sub-agent, marking SUCCEEDED", sessionId);
-                        try {
-                            sessionService.transition(sessionId, SessionStatus.SUCCEEDED);
-                        } catch (Exception ignored) {
-                            // best effort
-                        }
-                    }
-                }
+                decision = handleSubAgentFinished(sessionId, agentId, state, meta);
             }
         } finally {
             lock.unlock();
         }
 
-        if (nextTaskToSchedule != null) {
-            String scheduleAgentId = rootResumeAgentId == null ? agentId : rootResumeAgentId;
-            scheduleTask(sessionId, scheduleAgentId, nextTaskToSchedule.getId());
+        if (decision.nextTaskToSchedule != null) {
+            String scheduleAgentId = decision.rootResumeAgentId == null ? agentId : decision.rootResumeAgentId;
+            scheduleTask(sessionId, scheduleAgentId, decision.nextTaskToSchedule.getId());
         }
 
         List<PendingAutoSpawn> autoSpawns = pendingAutoSpawns.remove(sessionId);
-        if (autoSpawns != null) {
-            for (PendingAutoSpawn item : autoSpawns) {
-                autoSpawnForTask(sessionId, item.rootAgentId, item.taskId);
+        if (autoSpawns == null) {
+            autoSpawns = List.of();
+        }
+        for (PendingAutoSpawn item : autoSpawns) {
+            autoSpawnForTask(sessionId, item.rootAgentId, item.taskId);
+        }
+    }
+
+    private AgentFinishedDecision handleRootAgentFinished(String sessionId, String agentId, SessionState state,
+        AgentMeta meta, Map<String, Object> payload) {
+        SessionStatus sessionStatus;
+        try {
+            sessionStatus = sessionService.get(sessionId).getStatus();
+        } catch (Exception e) {
+            sessionStatus = SessionStatus.FAILED;
+        }
+
+        if (sessionStatus != SessionStatus.RUNNING) {
+            recycleAgent(sessionId, agentId, state);
+            return new AgentFinishedDecision();
+        }
+
+        String finishedTaskId = String.valueOf(payload.getOrDefault("task_id", ""));
+        if (!finishedTaskId.isBlank()) {
+            tryResumeParentTask(sessionId, finishedTaskId);
+        }
+
+        List<Task> pending = taskService.listPending(sessionId);
+        if (pending.isEmpty()) {
+            log.info("Session {}: no pending tasks, marking SUCCEEDED", sessionId);
+            try {
+                sessionService.transition(sessionId, SessionStatus.SUCCEEDED);
+            } catch (Exception e) {
+                log.error("LifecycleManager: failed to transition session {} to SUCCEEDED", sessionId, e);
+            }
+            recycleAgent(sessionId, agentId, state);
+            return new AgentFinishedDecision();
+        }
+
+        Task nextTaskToSchedule = pending.get(0);
+        meta.taskId = nextTaskToSchedule.getId();
+        if (asBoolean(taskSettings(nextTaskToSchedule).get("use_subagent"), false)) {
+            String rejectReason = checkSpawnPermission(state, agentId, List.of(
+                new SpawnPlanItem(nextTaskToSchedule.getTitle(), nextTaskToSchedule.getDescription())
+            ));
+            if (!rejectReason.isBlank()) {
+                eventBus.publish(SPAWN_REJECTED, Map.of(
+                    "session_id", sessionId,
+                    "agent_id", agentId,
+                    "task_id", nextTaskToSchedule.getId(),
+                    "reason", rejectReason
+                ));
+                log.warn("LifecycleManager: auto-spawn rejected for task {} ({}), fallback inline",
+                    nextTaskToSchedule.getId(), rejectReason);
+            } else {
+                pendingAutoSpawns.computeIfAbsent(sessionId, sid -> new ArrayList<>())
+                    .add(new PendingAutoSpawn(agentId, nextTaskToSchedule.getId()));
+                meta.taskId = null;
+                nextTaskToSchedule = null;
             }
         }
+
+        return new AgentFinishedDecision(nextTaskToSchedule, null);
+    }
+
+    private AgentFinishedDecision handleSubAgentFinished(String sessionId, String agentId, SessionState state,
+        AgentMeta meta) {
+        String finishedTaskId = meta.taskId;
+        state.agentRegistry.remove(agentId);
+        state.concurrentAgents -= 1;
+        if (finishedTaskId != null) {
+            state.concurrentTasks -= 1;
+        }
+
+        log.info("LM: sub-agent {} finished (task={})", agentId, finishedTaskId);
+        eventBus.publish(LIFECYCLE_AGENT_RECYCLED, Map.of("session_id", sessionId, "agent_id", agentId));
+
+        String rootId = state.rootAgentId;
+        AgentMeta rootMeta = state.agentRegistry.get(rootId);
+        if (rootMeta == null) {
+            return new AgentFinishedDecision();
+        }
+
+        List<Task> pending = taskService.listPending(sessionId);
+        if (pending.isEmpty()) {
+            log.info("Session {}: no pending tasks after sub-agent, marking SUCCEEDED", sessionId);
+            try {
+                sessionService.transition(sessionId, SessionStatus.SUCCEEDED);
+            } catch (Exception e) {
+                log.error("LifecycleManager: failed to transition session {} to SUCCEEDED", sessionId, e);
+            }
+            return new AgentFinishedDecision();
+        }
+
+        Task nextTaskToSchedule = pending.get(0);
+        rootMeta.taskId = nextTaskToSchedule.getId();
+        return new AgentFinishedDecision(nextTaskToSchedule, rootId);
+    }
+
+    private void tryResumeParentTask(String sessionId, String finishedTaskId) {
+        try {
+            Task finishedTask = taskService.get(finishedTaskId);
+            if (finishedTask.getParentTaskId() == null || finishedTask.getParentTaskId().isBlank()) {
+                return;
+            }
+            Task parent = taskService.get(finishedTask.getParentTaskId());
+            if (parent.getStatus() != TaskStatus.SUSPENDED) {
+                return;
+            }
+            List<Task> allTasks = taskService.listBySession(sessionId);
+            List<Task> children = allTasks.stream()
+                .filter(t -> t != null && parent.getId().equals(t.getParentTaskId()))
+                .toList();
+            boolean allChildrenTerminal = !children.isEmpty()
+                && children.stream().allMatch(t -> t.getStatus() != null && t.getStatus().isTerminal());
+            if (allChildrenTerminal) {
+                taskService.resume(parent.getId());
+            }
+        } catch (Exception e) {
+            log.error("LM: failed to resume parent task for finished task {}", finishedTaskId, e);
+        }
+    }
+
+    private void recycleAgent(String sessionId, String agentId, SessionState state) {
+        state.agentRegistry.remove(agentId);
+        state.concurrentAgents -= 1;
+        eventBus.publish(LIFECYCLE_AGENT_RECYCLED, Map.of("session_id", sessionId, "agent_id", agentId));
     }
 
     private void onAgentFailed(String eventType, Map<String, Object> payload) {
@@ -649,6 +673,20 @@ public class LifecycleManager {
         private SpawnPlanItem(String title, String description) {
             this.title = title;
             this.description = description;
+        }
+    }
+
+    private static class AgentFinishedDecision {
+        private final Task nextTaskToSchedule;
+        private final String rootResumeAgentId;
+
+        private AgentFinishedDecision() {
+            this(null, null);
+        }
+
+        private AgentFinishedDecision(Task nextTaskToSchedule, String rootResumeAgentId) {
+            this.nextTaskToSchedule = nextTaskToSchedule;
+            this.rootResumeAgentId = rootResumeAgentId;
         }
     }
 

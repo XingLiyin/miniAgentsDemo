@@ -7,6 +7,7 @@ import com.codex.miniagents.tools.model.McpConfigData;
 import com.codex.miniagents.tools.model.McpServerInfo;
 import com.codex.miniagents.tools.registry.ToolRegistry;
 
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -23,6 +24,15 @@ public class McpService {
     private final ToolRegistry toolRegistry;
 
     private final McpConfigStore store;
+
+    @PostConstruct
+    public void init() {
+        try {
+            restoreAll();
+        } catch (Exception e) {
+            log.warn("McpService: failed to restore MCP servers on startup", e);
+        }
+    }
 
     public McpServerInfo registerStdio(String name, String command, List<String> args,
         java.util.Map<String, String> env) {

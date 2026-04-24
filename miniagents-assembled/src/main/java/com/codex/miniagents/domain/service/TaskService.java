@@ -100,8 +100,6 @@ public class TaskService {
         switch (toStatus) {
             case ACTIVE -> eventBus.publish("TASK_STARTED",
                 java.util.Map.of("task_id", taskId, "session_id", task.getSessionId()));
-            case TO_BE_OBSERVED -> eventBus.publish("TASK_TO_BE_OBSERVED",
-                java.util.Map.of("task_id", taskId, "session_id", task.getSessionId()));
             case FINISHED -> eventBus.publish("TASK_FINISHED",
                 java.util.Map.of("task_id", taskId, "session_id", task.getSessionId()));
             case FAILED ->

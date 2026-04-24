@@ -7,6 +7,7 @@ import com.codex.miniagents.agenttemplate.definition.ToolSpec;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.yaml.snakeyaml.Yaml;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -21,6 +22,8 @@ import java.util.stream.Stream;
 @Component
 public class AgentLoader {
     private static final Logger log = LoggerFactory.getLogger(AgentLoader.class);
+
+    private final Yaml yaml = new Yaml();
 
     public List<AgentDefMetadata> scan(Path agentsDir) {
         if (agentsDir == null || !Files.exists(agentsDir)) {
@@ -43,7 +46,7 @@ public class AgentLoader {
                     results.add(metadata);
                     log.debug("AgentLoader: loaded agent '{}' from '{}'", metadata.getName(), agentDir);
                 } catch (Exception e) {
-                    log.warn("AgentLoader: failed to load '{}': {}", agentDir.getFileName(), e.getMessage());
+                    log.warn("AgentLoader: failed to load '{}': {}", agentDir.getFileName(), e.getMessage(), e);
                 }
             });
         } catch (IOException e) {
@@ -107,7 +110,7 @@ public class AgentLoader {
     }
 
     private ParsedAgentMd parseAgentMd(String content) {
-        if (content == null) {
+        if (content == null || content.isBlank()) {
             return new ParsedAgentMd(Map.of(), "");
         }
 
@@ -115,117 +118,75 @@ public class AgentLoader {
             return new ParsedAgentMd(Map.of(), content.strip());
         }
 
-        int end = content.indexOf("\n---", 3);
-        if (end == -1) {
+        int frontmatterEnd = findFrontmatterEnd(content);
+        if (frontmatterEnd < 0) {
             return new ParsedAgentMd(Map.of(), content.strip());
         }
 
-        String frontmatterStr = content.substring(3, end).strip();
-        String body = content.substring(end + 4).strip();
-        Map<String, Object> frontmatter = parseSimpleYaml(frontmatterStr);
+        String frontmatterStr = content.substring(3, frontmatterEnd).strip();
+        String body = content.substring(frontmatterEnd).strip();
+
+        if (body.startsWith("---")) {
+            body = body.substring(3).strip();
+        }
+
+        Map<String, Object> frontmatter = parseYamlMap(frontmatterStr);
         return new ParsedAgentMd(frontmatter, body);
     }
 
-    private Map<String, Object> parseSimpleYaml(String text) {
-        Map<String, Object> result = new LinkedHashMap<>();
-        List<String> lines = text.lines().toList();
-        int i = 0;
+    private int findFrontmatterEnd(String content) {
+        int index = 3;
+        while (index < content.length()) {
+            int lineStart = index;
 
-        while (i < lines.size()) {
-            String line = lines.get(i);
-
-            if (line.isEmpty() || line.startsWith("#") || line.startsWith(" ")) {
-                i++;
+            if (content.charAt(lineStart) == '\r' || content.charAt(lineStart) == '\n') {
+                index++;
                 continue;
             }
 
-            int colonIndex = line.indexOf(':');
-            if (colonIndex < 0) {
-                i++;
-                continue;
+            int lineEnd = lineStart;
+            while (lineEnd < content.length()
+                && content.charAt(lineEnd) != '\n'
+                && content.charAt(lineEnd) != '\r') {
+                lineEnd++;
             }
 
-            String key = line.substring(0, colonIndex).trim();
-            String rawVal = line.substring(colonIndex + 1).trim();
-
-            if (rawVal.equals("[]")) {
-                result.put(key, List.of());
-                i++;
-                continue;
+            String line = content.substring(lineStart, lineEnd).trim();
+            if ("---".equals(line)) {
+                return lineStart;
             }
 
-            if (rawVal.equals(">") || rawVal.equals("|")) {
-                List<String> parts = new ArrayList<>();
-                i++;
-                while (i < lines.size() && lines.get(i).startsWith("  ")) {
-                    parts.add(lines.get(i).trim());
-                    i++;
-                }
-                result.put(key, String.join(" ", parts));
-                continue;
-            }
-
-            if (rawVal.isEmpty()) {
-                ParsedIndentedValue nested = parseIndentedValue(lines, i + 1);
-                result.put(key, nested.value());
-                i = nested.nextIndex();
-                continue;
-            }
-
-            result.put(key, stripQuotes(rawVal));
-            i++;
+            index = lineEnd + 1;
         }
-
-        return result;
+        return -1;
     }
 
-    private ParsedIndentedValue parseIndentedValue(List<String> lines, int startIndex) {
-        if (startIndex >= lines.size()) {
-            return new ParsedIndentedValue(List.of(), startIndex);
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseYamlMap(String text) {
+        if (text == null || text.isBlank()) {
+            return Map.of();
         }
 
-        List<String> listValues = new ArrayList<>();
-        Map<String, Object> mapValues = new LinkedHashMap<>();
-        boolean sawMap = false;
-        int i = startIndex;
-
-        while (i < lines.size()) {
-            String line = lines.get(i);
-            if (!line.startsWith("  ")) {
-                break;
-            }
-            String trimmed = line.trim();
-            if (trimmed.startsWith("- ")) {
-                listValues.add(trimmed.substring(2).trim());
-                i++;
-                continue;
-            }
-
-            int colonIndex = trimmed.indexOf(':');
-            if (colonIndex < 0) {
-                i++;
-                continue;
-            }
-
-            sawMap = true;
-            String key = trimmed.substring(0, colonIndex).trim();
-            String rawVal = trimmed.substring(colonIndex + 1).trim();
-            if (rawVal.isEmpty()) {
-                ParsedIndentedValue nested = parseIndentedValue(lines, i + 1);
-                mapValues.put(key, nested.value());
-                i = nested.nextIndex();
-                continue;
-            }
-            if (rawVal.equals("[]")) {
-                mapValues.put(key, List.of());
-                i++;
-                continue;
-            }
-            mapValues.put(key, stripQuotes(rawVal));
-            i++;
+        Object loaded;
+        try {
+            loaded = yaml.load(text);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to parse YAML frontmatter", e);
         }
 
-        return sawMap ? new ParsedIndentedValue(mapValues, i) : new ParsedIndentedValue(listValues, i);
+        if (loaded == null) {
+            return Map.of();
+        }
+
+        if (!(loaded instanceof Map<?, ?> rawMap)) {
+            throw new IllegalArgumentException("YAML frontmatter must be a map/object");
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : rawMap.entrySet()) {
+            result.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        return result;
     }
 
     private List<String> parseStringList(Object value) {
@@ -262,17 +223,6 @@ public class AgentLoader {
         return ToolSpec.builder().build();
     }
 
-    private String stripQuotes(String value) {
-        if (value == null || value.length() < 2) {
-            return value;
-        }
-        if ((value.startsWith("\"") && value.endsWith("\""))
-            || (value.startsWith("'") && value.endsWith("'"))) {
-            return value.substring(1, value.length() - 1);
-        }
-        return value;
-    }
-
     private String asString(Object value) {
         return value == null ? "" : String.valueOf(value);
     }
@@ -294,8 +244,5 @@ public class AgentLoader {
     }
 
     private record ParsedAgentMd(Map<String, Object> frontmatter, String body) {
-    }
-
-    private record ParsedIndentedValue(Object value, int nextIndex) {
     }
 }

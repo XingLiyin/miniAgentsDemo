@@ -402,7 +402,7 @@ public class ControlToolProvider implements ToolProvider {
     }
 
     private ToolDefinition buildSubmitPlanTool() {
-        return definitionFromMethod("submitPlanTool", List.class, String.class, String.class, String.class);
+        return definitionFromMethod("submitPlanTool", List.class);
     }
 
     private ToolDefinition buildSubmitTaskAssessmentTool() {

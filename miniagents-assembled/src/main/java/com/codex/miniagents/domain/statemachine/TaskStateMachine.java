@@ -23,7 +23,8 @@ public class TaskStateMachine {
                 TaskStatus.TO_BE_OBSERVED));
         TRANSITIONS.put(TaskStatus.SUSPENDED,
             EnumSet.of(TaskStatus.PENDING, TaskStatus.ACTIVE, TaskStatus.FAILED, TaskStatus.CANCELED));
-        TRANSITIONS.put(TaskStatus.TO_BE_OBSERVED, EnumSet.of(TaskStatus.FINISHED, TaskStatus.FAILED));
+        TRANSITIONS.put(TaskStatus.TO_BE_OBSERVED,
+            EnumSet.of(TaskStatus.SUSPENDED, TaskStatus.FINISHED, TaskStatus.FAILED, TaskStatus.PENDING));
         TRANSITIONS.put(TaskStatus.FINISHED, EnumSet.of(TaskStatus.PENDING));
         TRANSITIONS.put(TaskStatus.FAILED, EnumSet.of(TaskStatus.PENDING));
         TRANSITIONS.put(TaskStatus.CANCELED, EnumSet.noneOf(TaskStatus.class));

@@ -4,6 +4,7 @@ import com.codex.miniagents.infrastructure.storage.file.LLMConfigStore;
 import com.codex.miniagents.llm.ChatClient;
 import com.codex.miniagents.llm.model.LlmProviderConfig;
 
+import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 
 import org.springframework.stereotype.Component;
@@ -29,6 +30,18 @@ public class LlmRegistry {
     public LlmRegistry(ProviderRegistry providerRegistry, LLMConfigStore store) {
         this.providerRegistry = providerRegistry;
         this.store = store;
+    }
+
+    @PostConstruct
+    public void init() {
+        try {
+            int loaded = loadFromStore();
+            if (loaded > 0) {
+                log.info("LlmRegistry: restored {} provider(s) from store", loaded);
+            }
+        } catch (Exception e) {
+            log.warn("LlmRegistry: failed to restore providers from store", e);
+        }
     }
 
     public synchronized void register(LlmProviderConfig config, boolean persist) {
