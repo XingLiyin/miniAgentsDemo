@@ -414,6 +414,14 @@ public class LifecycleManager {
         if (decision.resumeRootAgentId != null && decision.resumeRootTask != null) {
             scheduleTask(sessionId, decision.resumeRootAgentId, decision.resumeRootTask.getId());
         }
+
+        List<PendingAutoSpawn> autoSpawns = pendingAutoSpawns.remove(sessionId);
+        if (autoSpawns == null) {
+            autoSpawns = List.of();
+        }
+        for (PendingAutoSpawn item : autoSpawns) {
+            autoSpawnForTask(sessionId, item.rootAgentId, item.taskId);
+        }
     }
 
     private AgentFailedDecision handleRootAgentFailed(String sessionId, String agentId, SessionState state,
@@ -462,8 +470,28 @@ public class LifecycleManager {
 
         List<Task> pending = taskService.listPending(sessionId);
         if (!pending.isEmpty()) {
-            rootMeta.taskId = pending.get(0).getId();
-            return new AgentFailedDecision(rootId, pending.get(0));
+            Task nextTask = pending.get(0);
+            rootMeta.taskId = nextTask.getId();
+            String resumeRootAgentId = rootId;
+            Task resumeRootTask = nextTask;
+
+            if (asBoolean(taskSettings(nextTask).get("use_subagent"), false)) {
+                String rejectReason = checkSpawnPermission(state, rootId, List.of(
+                    new SpawnPlanItem(nextTask.getTitle(), nextTask.getDescription())
+                ));
+                if (!rejectReason.isBlank()) {
+                    log.warn("LM: auto-spawn rejected for task {} ({}); falling back to inline execution",
+                        nextTask.getId(), rejectReason);
+                } else {
+                    pendingAutoSpawns.computeIfAbsent(sessionId, sid -> new ArrayList<>())
+                        .add(new PendingAutoSpawn(rootId, nextTask.getId()));
+                    rootMeta.taskId = null;
+                    resumeRootAgentId = null;
+                    resumeRootTask = null;
+                }
+            }
+
+            return new AgentFailedDecision(resumeRootAgentId, resumeRootTask);
         }
 
         log.warn("LM: sub-agent {} failed with no pending tasks, marking session {} FAILED", agentId, sessionId);
