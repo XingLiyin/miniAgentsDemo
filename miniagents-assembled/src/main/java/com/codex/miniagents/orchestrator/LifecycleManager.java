@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.locks.ReentrantLock;
 
 @Slf4j
@@ -224,7 +225,8 @@ public class LifecycleManager {
             return;
         }
 
-        AgentFinishedDecision decision = new AgentFinishedDecision();
+        AgentFinishedDecision decision = null;
+        List<PendingAutoSpawn> autoSpawns = List.of();
 
         ReentrantLock lock = locks.computeIfAbsent(sessionId, sid -> new ReentrantLock());
         lock.lock();
@@ -239,19 +241,20 @@ public class LifecycleManager {
             } else {
                 decision = handleSubAgentFinished(sessionId, agentId, state, meta);
             }
+
+            List<PendingAutoSpawn> removed = pendingAutoSpawns.remove(sessionId);
+            if (removed != null) {
+                autoSpawns = removed;
+            }
         } finally {
             lock.unlock();
         }
 
-        if (decision.nextTaskToSchedule != null) {
+        if (decision != null && decision.nextTaskToSchedule != null) {
             String scheduleAgentId = decision.rootResumeAgentId == null ? agentId : decision.rootResumeAgentId;
             scheduleTask(sessionId, scheduleAgentId, decision.nextTaskToSchedule.getId());
         }
 
-        List<PendingAutoSpawn> autoSpawns = pendingAutoSpawns.remove(sessionId);
-        if (autoSpawns == null) {
-            autoSpawns = List.of();
-        }
         for (PendingAutoSpawn item : autoSpawns) {
             autoSpawnForTask(sessionId, item.rootAgentId, item.taskId);
         }
@@ -304,7 +307,7 @@ public class LifecycleManager {
                 log.warn("LifecycleManager: auto-spawn rejected for task {} ({}), fallback inline",
                     nextTaskToSchedule.getId(), rejectReason);
             } else {
-                pendingAutoSpawns.computeIfAbsent(sessionId, sid -> new ArrayList<>())
+                pendingAutoSpawns.computeIfAbsent(sessionId, sid -> new CopyOnWriteArrayList<>())
                     .add(new PendingAutoSpawn(agentId, nextTaskToSchedule.getId()));
                 meta.taskId = null;
                 nextTaskToSchedule = null;
@@ -386,8 +389,7 @@ public class LifecycleManager {
             return;
         }
 
-        String resumeRootAgentId = null;
-        Task resumeRootTask = null;
+        AgentFailedDecision decision = new AgentFailedDecision();
 
         ReentrantLock lock = locks.computeIfAbsent(sessionId, sid -> new ReentrantLock());
         lock.lock();
@@ -397,70 +399,86 @@ public class LifecycleManager {
                 return;
             }
 
-            state.concurrentAgents -= 1;
-            if (meta.taskId != null) {
-                state.concurrentTasks -= 1;
-            }
+            recycleFailedAgent(state, meta);
+            log.warn("LM: agent {} failed (spawn_depth={})", agentId, meta.spawnDepth);
 
             if (meta.spawnDepth == 0) {
-                String failedTaskId = meta.taskId;
-                int retryCount = failedTaskId == null ? state.maxRetries
-                    : state.retryCounts.getOrDefault(failedTaskId, 0);
-                if (failedTaskId != null && retryCount < state.maxRetries) {
-                    state.retryCounts.put(failedTaskId, retryCount + 1);
-                    log.info("LM: retrying task {} (attempt {}/{}) for session {}",
-                        failedTaskId, retryCount + 1, state.maxRetries, sessionId);
-                    boolean retryOk = false;
-                    try {
-                        taskService.retry(failedTaskId);
-                        retryOk = true;
-                    } catch (Exception e) {
-                        log.warn("LM: failed to reset task {} for retry: {}", failedTaskId, e.getMessage());
-                        try {
-                            sessionService.transition(sessionId, SessionStatus.FAILED);
-                        } catch (Exception ignored) {
-                            // best effort
-                        }
-                    }
-                    if (retryOk) {
-                        resumeRootAgentId = agentId;
-                        resumeRootTask = taskService.get(failedTaskId);
-                        state.agentRegistry.put(agentId, new AgentMeta(agentId, failedTaskId, 0, "RUNNING"));
-                        state.concurrentAgents += 1;
-                    }
-                } else {
-                    try {
-                        sessionService.transition(sessionId, SessionStatus.FAILED);
-                    } catch (Exception ignored) {
-                        // best effort
-                    }
-                }
+                decision = handleRootAgentFailed(sessionId, agentId, state, meta);
             } else {
-                String rootId = state.rootAgentId;
-                AgentMeta rootMeta = state.agentRegistry.get(rootId);
-                if (rootMeta != null) {
-                    List<Task> pending = taskService.listPending(sessionId);
-                    if (!pending.isEmpty()) {
-                        rootMeta.taskId = pending.get(0).getId();
-                        resumeRootAgentId = rootId;
-                        resumeRootTask = pending.get(0);
-                    } else {
-                        log.warn("LM: sub-agent {} failed with no pending tasks, marking session {} FAILED",
-                            agentId, sessionId);
-                        try {
-                            sessionService.transition(sessionId, SessionStatus.FAILED);
-                        } catch (Exception ignored) {
-                            // best effort
-                        }
-                    }
-                }
+                decision = handleSubAgentFailed(sessionId, agentId, state);
             }
         } finally {
             lock.unlock();
         }
 
-        if (resumeRootAgentId != null && resumeRootTask != null) {
-            scheduleTask(sessionId, resumeRootAgentId, resumeRootTask.getId());
+        if (decision.resumeRootAgentId != null && decision.resumeRootTask != null) {
+            scheduleTask(sessionId, decision.resumeRootAgentId, decision.resumeRootTask.getId());
+        }
+    }
+
+    private AgentFailedDecision handleRootAgentFailed(String sessionId, String agentId, SessionState state,
+        AgentMeta meta) {
+        String failedTaskId = meta.taskId;
+        int retryCount = failedTaskId == null ? state.maxRetries : state.retryCounts.getOrDefault(failedTaskId, 0);
+        if (failedTaskId != null && retryCount < state.maxRetries) {
+            state.retryCounts.put(failedTaskId, retryCount + 1);
+            log.info("LM: retrying task {} (attempt {}/{}) for session {}",
+                failedTaskId, retryCount + 1, state.maxRetries, sessionId);
+            boolean retryOk = false;
+            try {
+                taskService.retry(failedTaskId);
+                retryOk = true;
+            } catch (Exception e) {
+                log.warn("LM: failed to reset task {} for retry: {}", failedTaskId, e.getMessage());
+                try {
+                    sessionService.transition(sessionId, SessionStatus.FAILED);
+                } catch (Exception ignored) {
+                    // best effort
+                }
+            }
+
+            if (retryOk) {
+                Task resumeRootTask = taskService.get(failedTaskId);
+                state.agentRegistry.put(agentId, new AgentMeta(agentId, failedTaskId, 0, "RUNNING"));
+                state.concurrentAgents += 1;
+                return new AgentFailedDecision(agentId, resumeRootTask);
+            }
+        } else {
+            try {
+                sessionService.transition(sessionId, SessionStatus.FAILED);
+            } catch (Exception ignored) {
+                // best effort
+            }
+        }
+        return new AgentFailedDecision();
+    }
+
+    private AgentFailedDecision handleSubAgentFailed(String sessionId, String agentId, SessionState state) {
+        String rootId = state.rootAgentId;
+        AgentMeta rootMeta = state.agentRegistry.get(rootId);
+        if (rootMeta == null) {
+            return new AgentFailedDecision();
+        }
+
+        List<Task> pending = taskService.listPending(sessionId);
+        if (!pending.isEmpty()) {
+            rootMeta.taskId = pending.get(0).getId();
+            return new AgentFailedDecision(rootId, pending.get(0));
+        }
+
+        log.warn("LM: sub-agent {} failed with no pending tasks, marking session {} FAILED", agentId, sessionId);
+        try {
+            sessionService.transition(sessionId, SessionStatus.FAILED);
+        } catch (Exception ignored) {
+            // best effort
+        }
+        return new AgentFailedDecision();
+    }
+
+    private void recycleFailedAgent(SessionState state, AgentMeta meta) {
+        state.concurrentAgents -= 1;
+        if (meta.taskId != null) {
+            state.concurrentTasks -= 1;
         }
     }
 
@@ -687,6 +705,20 @@ public class LifecycleManager {
         private AgentFinishedDecision(Task nextTaskToSchedule, String rootResumeAgentId) {
             this.nextTaskToSchedule = nextTaskToSchedule;
             this.rootResumeAgentId = rootResumeAgentId;
+        }
+    }
+
+    private static class AgentFailedDecision {
+        private final String resumeRootAgentId;
+        private final Task resumeRootTask;
+
+        private AgentFailedDecision() {
+            this(null, null);
+        }
+
+        private AgentFailedDecision(String resumeRootAgentId, Task resumeRootTask) {
+            this.resumeRootAgentId = resumeRootAgentId;
+            this.resumeRootTask = resumeRootTask;
         }
     }
 
