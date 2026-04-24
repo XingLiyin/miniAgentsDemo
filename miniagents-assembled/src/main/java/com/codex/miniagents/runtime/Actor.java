@@ -7,6 +7,7 @@ import com.codex.miniagents.domain.model.task.TaskStatus;
 import com.codex.miniagents.domain.service.TaskService;
 import com.codex.miniagents.llm.ChatClient;
 import com.codex.miniagents.llm.model.LlmMessage;
+import com.codex.miniagents.llm.model.LlmTool;
 import com.codex.miniagents.llm.model.StreamChunk;
 import com.codex.miniagents.llm.model.ToolCallBlock;
 import com.codex.miniagents.llm.registry.LlmClientProvider;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.time.Instant;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -49,15 +51,10 @@ public class Actor {
         }
 
         ActorPromptBuilder promptBuilder = PromptBuilderFactory.forActor();
-        ChatClient llmClient = llmClientProvider.get(agent.getLlmName(), agent.getLlmModel());
+        ChatClient llmClient = resolveLlmClient(agent);
         String systemPrompt = promptBuilder.buildSystemPrompt(context);
         List<LlmMessage> messages = promptBuilder.buildMessages(task, context);
-        List<com.codex.miniagents.llm.model.LlmTool> tools = context.getActorResources() == null
-            ? List.of()
-            : context.getActorResources().stream()
-                .filter(r -> "tool".equals(r.getKind()) && r.getLlmTool() != null)
-                .map(ContextResource::getLlmTool)
-                .collect(Collectors.toList());
+        List<LlmTool> tools = resolveTools(context);
 
         List<ToolCallRecord> toolCalls = new ArrayList<>();
         List<ConversationTurn> conversationTurns = new ArrayList<>();
@@ -71,55 +68,11 @@ public class Actor {
 
         for (int round = 0; round < maxRounds; round++) {
             List<LlmMessage> messagesSent = cloneMessages(messages);
+            pushPromptEvent(sessionId, round, systemPrompt, messages, context);
 
-            try {
-                SseBus.getInstance().push(sessionId, Map.of(
-                    "type", "llm_prompt",
-                    "source", "actor",
-                    "round_label", "actor_round_" + round,
-                    "system_prompt", systemPrompt,
-                    "messages", messages.stream().map(m -> Map.of(
-                        "role", defaultString(m.getRole()),
-                        "content", defaultString(m.getContent())
-                    )).toList(),
-                    "tool_names", context.getActorResources() == null ? List.of() : context.getActorResources().stream()
-                        .filter(r -> "tool".equals(r.getKind()) && r.getLlmTool() != null)
-                        .map(r -> r.getLlmTool().getName())
-                        .toList()
-                ));
-            } catch (Exception ignored) {
-            }
-
-            String fullText = "";
-            Map<Integer, Map<String, Object>> toolCallAcc = new java.util.LinkedHashMap<>();
-            for (Iterator<StreamChunk> stream = llmClient.streamMessage(messages, systemPrompt, tools); stream.hasNext(); ) {
-                StreamChunk chunk = stream.next();
-                if (chunk.getTextDelta() != null && !chunk.getTextDelta().isEmpty()) {
-                    fullText += chunk.getTextDelta();
-                    try {
-                        SseBus.getInstance().push(sessionId, Map.of(
-                            "type", "text_delta",
-                            "delta", chunk.getTextDelta(),
-                            "round", round
-                        ));
-                    } catch (Exception ignored) {
-                    }
-                }
-                if (chunk.getToolCallDelta() != null && !chunk.getToolCallDelta().isEmpty()) {
-                    Object idxObj = chunk.getToolCallDelta().get("index");
-                    int idx = idxObj instanceof Number n ? n.intValue() : 0;
-                    toolCallAcc.put(idx, new java.util.LinkedHashMap<>(chunk.getToolCallDelta()));
-                }
-            }
-
-            try {
-                SseBus.getInstance().push(sessionId, Map.of(
-                    "type", "text_done",
-                    "text", fullText,
-                    "round", round
-                ));
-            } catch (Exception ignored) {
-            }
+            StreamRoundResult streamResult = streamLlm(llmClient, messages, systemPrompt, tools, round, sessionId);
+            String fullText = streamResult.fullText;
+            Map<Integer, Map<String, Object>> toolCallAcc = streamResult.toolCallAcc;
 
             List<ToolCallBlock> parsedToolCalls = promptBuilder.buildToolCallsFromStream(toolCallAcc);
             if (parsedToolCalls.isEmpty()) {
@@ -135,48 +88,12 @@ public class Actor {
 
             messages = promptBuilder.appendAssistantToolCalls(messages, defaultString(fullText), parsedToolCalls);
 
-            List<ToolCallRecord> roundToolCalls = new ArrayList<>();
-            boolean done = false;
-            for (ToolCallBlock toolCall : parsedToolCalls) {
-                Map<String, Object> args = toolCall.getInput() == null ? Map.of() : toolCall.getInput();
-                ToolResult result;
-                try {
-                    result = toolGateway.call(task.getSessionId(), task.getId(), agent, task, toolCall.getName(), args);
-                } catch (Exception e) {
-                    result = ToolResult.builder().content(String.valueOf(e.getMessage())).isError(true)
-                        .errorCode("TOOL_EXEC_ERROR").build();
-                }
-                if (isTaskCompleteSignal(result) || task.isActorDone()) {
-                    done = true;
-                }
-                toolCalls.add(ToolCallRecord.builder()
-                    .toolCallId(toolCall.getId())
-                    .toolName(toolCall.getName())
-                    .arguments(args)
-                    .result(result.getContent() == null ? "" : result.getContent())
-                    .isError(result.isError())
-                    .build());
-                roundToolCalls.add(ToolCallRecord.builder()
-                    .toolCallId(toolCall.getId())
-                    .toolName(toolCall.getName())
-                    .arguments(args)
-                    .result(result.getContent() == null ? "" : result.getContent())
-                    .isError(result.isError())
-                    .build());
-                messages = promptBuilder.appendToolResult(messages, toolCall.getName(), result, toolCall.getId());
-
-                try {
-                    SseBus.getInstance().push(sessionId, Map.of(
-                        "type", "tool_call",
-                        "tool_name", toolCall.getName(),
-                        "arguments", args,
-                        "result", result.getContent() == null ? "" : result.getContent(),
-                        "is_error", result.isError(),
-                        "created_at", Instant.now().toString()
-                    ));
-                } catch (Exception ignored) {
-                }
-            }
+            ToolExecutionResult executionResult = executeTools(promptBuilder, parsedToolCalls, agent, task, messages,
+                sessionId);
+            messages = executionResult.messages;
+            List<ToolCallRecord> roundToolCalls = executionResult.roundToolCalls;
+            boolean done = executionResult.done;
+            toolCalls.addAll(roundToolCalls);
             lastText = fullText;
             conversationTurns.add(ConversationTurn.builder()
                 .round(round)
@@ -206,6 +123,114 @@ public class Actor {
             .build();
     }
 
+    private ChatClient resolveLlmClient(Agent agent) {
+        return llmClientProvider.get(agent.getLlmName(), agent.getLlmModel());
+    }
+
+    private List<LlmTool> resolveTools(ReasoningContext context) {
+        return context.getActorResources() == null
+            ? List.of()
+            : context.getActorResources().stream()
+                .filter(r -> "tool".equals(r.getKind()) && r.getLlmTool() != null)
+                .map(ContextResource::getLlmTool)
+                .collect(Collectors.toList());
+    }
+
+    private void pushPromptEvent(String sessionId, int round, String systemPrompt, List<LlmMessage> messages,
+        ReasoningContext context) {
+        try {
+            SseBus.getInstance().push(sessionId, Map.of(
+                "type", "llm_prompt",
+                "source", "actor",
+                "round_label", "actor_round_" + round,
+                "system_prompt", systemPrompt,
+                "messages", messages.stream().map(m -> {
+                    Map<String, Object> msg = new LinkedHashMap<>();
+                    msg.put("role", defaultString(m.getRole()));
+                    msg.put("content", defaultString(m.getContent()));
+                    if (m.getToolCallId() != null && !m.getToolCallId().isBlank()) {
+                        msg.put("tool_call_id", m.getToolCallId());
+                    }
+                    if (m.getToolCalls() != null && !m.getToolCalls().isEmpty()) {
+                        msg.put("tool_calls", m.getToolCalls());
+                    }
+                    return msg;
+                }).toList(),
+                "tool_names", context.getActorResources() == null ? List.of() : context.getActorResources().stream()
+                    .filter(r -> "tool".equals(r.getKind()) && r.getLlmTool() != null)
+                    .map(r -> r.getLlmTool().getName())
+                    .toList()
+            ));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private StreamRoundResult streamLlm(ChatClient llmClient, List<LlmMessage> messages, String systemPrompt,
+        List<LlmTool> tools, int round, String sessionId) {
+        String fullText = "";
+        Map<Integer, Map<String, Object>> toolCallAcc = new LinkedHashMap<>();
+        for (Iterator<StreamChunk> stream = llmClient.streamMessage(messages, systemPrompt, tools); stream.hasNext();) {
+            StreamChunk chunk = stream.next();
+            if (chunk.getTextDelta() != null && !chunk.getTextDelta().isEmpty()) {
+                fullText += chunk.getTextDelta();
+                pushSseEvent(sessionId, Map.of(
+                    "type", "text_delta",
+                    "delta", chunk.getTextDelta(),
+                    "round", round
+                ));
+            }
+            if (chunk.getToolCallDelta() != null && !chunk.getToolCallDelta().isEmpty()) {
+                Object idxObj = chunk.getToolCallDelta().get("index");
+                int idx = idxObj instanceof Number n ? n.intValue() : 0;
+                toolCallAcc.put(idx, new LinkedHashMap<>(chunk.getToolCallDelta()));
+            }
+        }
+        pushSseEvent(sessionId, Map.of(
+            "type", "text_done",
+            "text", fullText,
+            "round", round
+        ));
+        return new StreamRoundResult(fullText, toolCallAcc);
+    }
+
+    private ToolExecutionResult executeTools(ActorPromptBuilder promptBuilder, List<ToolCallBlock> parsedToolCalls,
+        Agent agent, Task task, List<LlmMessage> messages, String sessionId) {
+        List<ToolCallRecord> roundToolCalls = new ArrayList<>();
+        boolean done = false;
+        List<LlmMessage> nextMessages = messages;
+        for (ToolCallBlock toolCall : parsedToolCalls) {
+            Map<String, Object> args = toolCall.getInput() == null ? Map.of() : toolCall.getInput();
+            ToolResult result;
+            try {
+                result = toolGateway.call(toolCall.getName(), args, agent, task.getId(), task);
+            } catch (Exception e) {
+                result = ToolResult.builder().content(String.valueOf(e.getMessage())).isError(true)
+                    .errorCode("TOOL_EXEC_ERROR").build();
+            }
+            if (isTaskCompleteSignal(result) || task.isActorDone()) {
+                done = true;
+            }
+            ToolCallRecord record = ToolCallRecord.builder()
+                .toolCallId(toolCall.getId())
+                .toolName(toolCall.getName())
+                .arguments(args)
+                .result(result.getContent() == null ? "" : result.getContent())
+                .isError(result.isError())
+                .build();
+            roundToolCalls.add(record);
+            nextMessages = promptBuilder.appendToolResult(nextMessages, toolCall.getName(), result, toolCall.getId());
+            pushSseEvent(sessionId, Map.of(
+                "type", "tool_call",
+                "tool_name", toolCall.getName(),
+                "arguments", args,
+                "result", result.getContent() == null ? "" : result.getContent(),
+                "is_error", result.isError(),
+                "created_at", Instant.now().toString()
+            ));
+        }
+        return new ToolExecutionResult(roundToolCalls, nextMessages, done);
+    }
+
     private boolean isTaskCompleteSignal(ToolResult result) {
         if (result == null || result.getMetadata() == null) {
             return false;
@@ -229,5 +254,25 @@ public class Actor {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private void pushSseEvent(String sessionId, Map<String, Object> event) {
+        try {
+            SseBus.getInstance().push(sessionId, event);
+        } catch (Exception ignored) {
+        }
+    }
+
+    private record StreamRoundResult(
+        String fullText,
+        Map<Integer, Map<String, Object>> toolCallAcc
+    ) {
+    }
+
+    private record ToolExecutionResult(
+        List<ToolCallRecord> roundToolCalls,
+        List<LlmMessage> messages,
+        boolean done
+    ) {
     }
 }

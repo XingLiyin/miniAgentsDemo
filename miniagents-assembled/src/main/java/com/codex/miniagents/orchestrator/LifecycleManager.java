@@ -575,32 +575,59 @@ public class LifecycleManager {
             .orElseThrow(() -> new IllegalArgumentException("Parent agent not found: " + parentAgentId));
 
         AgentTemplate template = null;
+        List<String> actToolList;
+        List<String> observeToolList;
+        String templateId;
+        String agentName;
+        String soulMd;
+        String roleMd;
         if (templateName != null && !templateName.isBlank()) {
             template = templateService.getByName(templateName);
-            if (template == null) {
+            if (template != null) {
+                actToolList = template.getActToolList();
+                observeToolList = template.getObserveToolList();
+                templateId = template.getId();
+                agentName = "sub-agent-" + templateName;
+                AgentDefContent content = templateRegistry == null ? null : templateRegistry.loadContent(templateName);
+                soulMd = content == null ? "" : defaultString(content.getSoulMd());
+                roleMd = content == null ? "" : defaultString(content.getRoleMd());
+                log.debug("LM: sub-agent will use template '{}'", templateName);
+            } else {
                 log.warn("LifecycleManager: template '{}' not found, fallback to parent config", templateName);
+                soulMd = parent.getSoulMd();
+                roleMd = parent.getRoleMd();
+                actToolList = parent.getActToolList();
+                observeToolList = parent.getObserveToolList();
+                templateId = parent.getTemplateId();
+                agentName = "sub-agent-" + templateName;
             }
+        } else {
+            soulMd = parent.getSoulMd();
+            roleMd = parent.getRoleMd();
+            actToolList = parent.getActToolList();
+            observeToolList = parent.getObserveToolList();
+            templateId = parent.getTemplateId();
+            agentName = "sub-agent-d" + spawnDepth;
         }
 
         Instant now = Instant.now();
         Agent sub = new Agent();
         sub.setId(newAgentId());
         sub.setSessionId(sessionId);
-        sub.setTemplateId(template == null ? parent.getTemplateId() : template.getId());
-        sub.setName((templateName == null || templateName.isBlank()) ? ("sub-agent-d" + spawnDepth) : ("sub-agent-" + templateName));
+        sub.setTemplateId(templateId);
+        sub.setName(agentName);
         sub.setStatus(AgentStatus.IDLE);
-        AgentDefContent content = template == null || templateRegistry == null ? null : templateRegistry.loadContent(template.getName());
-        sub.setSoulMd(template == null ? parent.getSoulMd() : (content == null ? "" : defaultString(content.getSoulMd())));
-        sub.setRoleMd(template == null ? parent.getRoleMd() : (content == null ? "" : defaultString(content.getRoleMd())));
-        sub.setActToolList(template == null ? parent.getActToolList() : template.getActToolList());
-        sub.setObserveToolList(template == null ? parent.getObserveToolList() : template.getObserveToolList());
-        sub.setMcpActServers(template == null ? parent.getMcpActServers() : template.getMcpActServers());
-        sub.setMcpObserveServers(template == null ? parent.getMcpObserveServers() : template.getMcpObserveServers());
-        sub.setSkillList(template == null ? parent.getSkillList() : new ArrayList<>());
+        sub.setSoulMd(soulMd);
+        sub.setRoleMd(roleMd);
+        sub.setActToolList(actToolList);
+        sub.setObserveToolList(observeToolList);
+        sub.setMcpActServers(new ArrayList<>());
+        sub.setMcpObserveServers(new ArrayList<>());
+        sub.setSkillList(parent.getSkillList());
         sub.setSoulPath(parent.getSoulPath());
-        sub.setLoopGuard(new LoopGuard(0, DEFAULT_SUB_AGENT_MAX_TURNS, 50));
+        sub.setLoopGuard(new LoopGuard(0, DEFAULT_SUB_AGENT_MAX_TURNS, 50, 50));
         sub.setInheritMemory(inheritMemory);
-        sub.setLlmName(isBlank(parent.getLlmName()) ? properties.getAgentDefaultLlmName() : parent.getLlmName());
+        sub.setLlmName(isBlank(parent.getLlmName()) ? properties.getDefaultLlmProvider() : parent.getLlmName());
         sub.setLlmModel(parent.getLlmModel());
         sub.setHasSpawnPermission(false);
         sub.setSpawnDepth(spawnDepth);
@@ -624,8 +651,8 @@ public class LifecycleManager {
                 msg.getRole(),
                 msg.getContent(),
                 null,
-                msg.getToolCallId(),
-                msg.getToolCalls()
+                null,
+                null
             );
         }
 

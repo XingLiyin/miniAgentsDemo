@@ -133,8 +133,8 @@ public class Observer {
                 if ("submit_task_reviews".equals(call.getName())) {
                     reviewsSubmitted = true;
                 }
-                ToolResult toolResult = toolGateway.call(task.getSessionId(), task.getId(), null, task,
-                    call.getName(), call.getInput() == null ? Map.of() : call.getInput());
+                ToolResult toolResult = toolGateway.call(call.getName(),
+                    call.getInput() == null ? Map.of() : call.getInput(), null, task.getId(), task);
                 messages = promptBuilder.appendToolResult(messages, call.getName(), toolResult, call.getId());
             }
 

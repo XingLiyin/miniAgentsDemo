@@ -31,23 +31,27 @@ public class ToolGateway {
         this.taskService = taskService;
     }
 
-    public ToolResult call(String sessionId, String taskId, Agent agent, String toolName, Map<String, Object> arguments) {
-        return call(sessionId, taskId, agent, null, toolName, arguments);
+    public ToolResult call(String toolName, Map<String, Object> arguments, Agent agent, String taskId) {
+        return call(toolName, arguments, agent, taskId, null);
     }
 
-    public ToolResult call(String sessionId, String taskId, Agent agent, Task task, String toolName,
-        Map<String, Object> arguments) {
+    public ToolResult call(String toolName, Map<String, Object> arguments, Agent agent, String taskId, Task task) {
         if (agent != null) {
             policyEngine.authorize(agent, toolName);
         }
 
+        CallContext context = buildCallContext(taskId, agent, task);
+        String sessionId = context.getSessionId() == null ? "" : context.getSessionId();
+        String agentId = context.getAgentId() == null || context.getAgentId().isBlank()
+            ? (agent == null ? null : agent.getId())
+            : context.getAgentId();
         String callId = "call_" + UUID.randomUUID().toString().replace("-", "");
         Instant startedAt = Instant.now();
         ToolCall running = new ToolCall();
         running.setId(callId);
         running.setSessionId(sessionId);
         running.setTaskId(taskId);
-        running.setAgentId(agent == null ? null : agent.getId());
+        running.setAgentId(agentId);
         running.setToolName(toolName);
         running.setStatus("RUNNING");
         running.setArguments(redact(arguments));
@@ -59,7 +63,6 @@ public class ToolGateway {
         String error = null;
         try {
             var definition = toolRegistry.get(toolName);
-            CallContext context = buildCallContext(sessionId, taskId, agent, task);
             result = definition.getHandler().apply(arguments, context);
             status = result.isError() ? "FAILED" : "SUCCEEDED";
             if (result.isError()) {
@@ -75,7 +78,7 @@ public class ToolGateway {
         finished.setId(callId);
         finished.setSessionId(sessionId);
         finished.setTaskId(taskId);
-        finished.setAgentId(agent == null ? null : agent.getId());
+        finished.setAgentId(agentId);
         finished.setToolName(toolName);
         finished.setStatus(status);
         finished.setArguments(redact(arguments));
@@ -112,7 +115,7 @@ public class ToolGateway {
         return redacted;
     }
 
-    private CallContext buildCallContext(String sessionId, String taskId, Agent agent, Task task) {
+    private CallContext buildCallContext(String taskId, Agent agent, Task task) {
         Task resolvedTask = task;
         if (resolvedTask == null) {
             try {
@@ -120,6 +123,9 @@ public class ToolGateway {
             } catch (Exception ignored) {
             }
         }
+        String sessionId = agent != null && agent.getSessionId() != null
+            ? agent.getSessionId()
+            : (resolvedTask == null || resolvedTask.getSessionId() == null ? "" : resolvedTask.getSessionId());
         String agentId = agent != null
             ? agent.getId()
             : (resolvedTask == null || resolvedTask.getAssignedAgentId() == null ? "" : resolvedTask.getAssignedAgentId());
