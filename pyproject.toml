@@ -13,6 +13,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pytest>=9.0.2",
     "uvicorn>=0.42.0",
+    "cairosvg>=2.9.0",
 ]
 
 [tool.pytest.ini_options]

@@ -7,7 +7,7 @@ from typing import Iterator
 from app.llm.base import (
     BaseAdapter
 )
-from app.llm.types import LLMRequest, LLMResponse, LLMUsage, ParsedResponse, StreamChunk, TextBlock
+from app.llm.types import LLMRequest, LLMResponse, LLMUsage, ParsedResponse, StreamChunk, TextBlock, TextPart
 
 
 class MockAdapter(BaseAdapter):
@@ -29,6 +29,7 @@ class MockAdapter(BaseAdapter):
             text=text,
             blocks=[TextBlock(type='text', text=text)],
             tool_calls=[],
+            images=[],
             raw=response.raw,
             usage=response.usage,
         )

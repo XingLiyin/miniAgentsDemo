@@ -112,6 +112,7 @@ def get_reasoner() -> Reasoner:
         tool_registry=get_tool_registry(),
         skill_registry=get_skill_registry(),
         task_svc=get_task_service(),
+        agent_template_registry=get_agent_template_registry(),
     )
 
 

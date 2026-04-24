@@ -54,6 +54,7 @@ class AgentLoader:
 
         mcp_act_servers = _parse_mcp_servers(soul_fm)
         mcp_observe_servers = _parse_mcp_servers(role_fm)
+        subagents = _parse_str_list(soul_fm, "subagents")
 
         return AgentDefMetadata(
             name=soul_fm["name"],
@@ -64,6 +65,7 @@ class AgentLoader:
             agent_dir=agent_dir,
             mcp_act_servers=mcp_act_servers,
             mcp_observe_servers=mcp_observe_servers,
+            subagents=subagents,
         )
 
     def load_content(self, agent_dir: Path) -> AgentDefContent:
@@ -111,20 +113,18 @@ def _parse_agent_md(content: str) -> tuple[dict, str]:
     return frontmatter, body
 
 
-def _parse_mcp_servers(fm: dict) -> list[str]:
-    """从 frontmatter dict 中解析 mcp_servers 列表。
-
-    支持格式：
-      mcp_servers:
-        - server_a
-        - server_b
-    """
-    raw = fm.get("mcp_servers")
+def _parse_str_list(fm: dict, key: str) -> list[str]:
+    """从 frontmatter dict 中解析任意字符串列表字段。"""
+    raw = fm.get(key)
     if not raw:
         return []
     if isinstance(raw, list):
         return [str(s) for s in raw if s]
     return []
+
+
+def _parse_mcp_servers(fm: dict) -> list[str]:
+    return _parse_str_list(fm, "mcp_servers")
 
 
 def _parse_tool_spec(fm: dict) -> ToolSpec:

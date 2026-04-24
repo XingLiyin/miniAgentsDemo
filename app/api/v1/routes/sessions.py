@@ -17,7 +17,7 @@ from app.common.errors import AppError
 
 
 class SendMessageRequest(BaseModel):
-    content: str
+    content: str | list           # str 纯文本 或 list[ContentPart dict] 多模态
     initial_task: InitialTaskConfig | None = None
 
 

@@ -5,6 +5,7 @@ import { SessionsPage } from '@/pages/SessionsPage'
 import { TemplatesPage } from '@/pages/TemplatesPage'
 import { LLMsPage } from '@/pages/LLMsPage'
 import { MCPPage } from '@/pages/MCPPage'
+import { SkillSourcesPage } from '@/pages/SkillSourcesPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -26,6 +27,7 @@ export function App() {
             <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/llms" element={<LLMsPage />} />
             <Route path="/mcp" element={<MCPPage />} />
+            <Route path="/skills" element={<SkillSourcesPage />} />
           </Routes>
         </Layout>
       </BrowserRouter>

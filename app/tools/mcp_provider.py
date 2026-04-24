@@ -22,7 +22,7 @@ from typing import Any
 
 from agent_framework._mcp import MCPStdioTool
 
-from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin
+from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin, _parse_mcp_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,13 @@ class MCPStdioProvider(_MCPProviderBase):
         class _Tool(_MetaInjectingMixin, MCPStdioTool):
             pass
 
-        af_tool = _Tool(name=name, command=command, args=args or [], env=env)
+        af_tool = _Tool(
+            name=name,
+            command=command,
+            args=args or [],
+            env=env,
+            parse_tool_results=_parse_mcp_tool_result,
+        )
         super().__init__(af_tool, thread_name="mcp-stdio-loop")
 
     def start(self) -> None:

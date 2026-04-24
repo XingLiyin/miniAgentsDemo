@@ -28,7 +28,7 @@ class TaskService:
         self,
         session_id: str,
         creator_agent_id: str,
-        user_prompt: str,
+        user_prompt: str | list,
         title: str = "",
         description: str = "",
         inputs: dict | None = None,

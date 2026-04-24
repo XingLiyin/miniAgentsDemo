@@ -22,6 +22,11 @@ class SkillMetadata:
     version: str
     skill_dir: Path
 
+    # 来源字段（注册时由调用方注入，不来自 SKILL.md frontmatter）
+    source: str = "local"                  # "local" | "remote"
+    remote_source_name: str | None = None  # 对应 SkillRegistry._mcp_conns 的 key
+    extra: dict = field(default_factory=dict)
+
 
 @dataclass
 class SkillDefinition:
@@ -29,3 +34,26 @@ class SkillDefinition:
 
     metadata: SkillMetadata
     instructions: str  # SKILL.md 主体文本（frontmatter 之后的部分）
+
+
+# ── 远端 skill 来源注册用数据类 ────────────────────────────────────────────────
+
+@dataclass
+class RemoteSkillSourceConfig:
+    """一个远端 skill 来源的完整配置（注册调用时传入，可持久化）。"""
+
+    source_name: str                               # 本地唯一标识，作为 _mcp_conns 的 key
+    mcp_type: str                                  # "http" | "stdio"
+    # http 连接参数
+    mcp_url: str | None = None
+    mcp_timeout: int = 30
+    # stdio 连接参数
+    mcp_command: str | None = None
+    mcp_args: list[str] = field(default_factory=list)
+    mcp_env: dict[str, str] = field(default_factory=dict)
+    # MCP tool 名称（与远端 MCP server spec 对齐）
+    mcp_tool_list_skills: str = "listSkills"
+    mcp_tool_load_skill_md: str = "loadSkillMd"
+    mcp_tool_get_skill_files: str = "getSkillFiles"
+    mcp_tool_load_skill_reference: str = "loadSkillReference"
+    mcp_tool_exec_skill_script: str = "execSkillScript"

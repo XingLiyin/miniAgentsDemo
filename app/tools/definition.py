@@ -34,9 +34,9 @@ ToolHandler = Callable[[dict[str, Any], "CallContext"], "ToolResult"]
 
 @dataclass
 class ToolResult:
-    """工具调用结果（MCP 格式）。"""
+    """工具调用结果。content 支持纯文本或多模态 list[ContentPart dict]。"""
 
-    content: str
+    content: str | list = ""
     is_error: bool = False
     error_code: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)

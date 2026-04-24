@@ -12,12 +12,21 @@ export type ChatItemKind =
   | 'waiting_input'
   | 'llm_prompt'
   | 'observer_message'
+  | 'observer_tool_call'
+
+export interface ChatImageData {
+  media_type: string
+  source_type: 'base64' | 'url'
+  data: string
+}
 
 export interface ChatMessage {
   id: string
   kind: 'message'
   role: 'user' | 'assistant'
   content: string
+  reasoning?: string
+  images?: ChatImageData[]
   created_at: string
 }
 
@@ -53,7 +62,7 @@ export interface ChatLLMPrompt {
   source: string        // 'actor' | 'observer'
   round_label: string
   system_prompt: string
-  messages: Array<{ role: string; content: string }>
+  messages: Array<{ role: string; content: string | object[] }>
   tool_names: string[]
   created_at: string
 }
@@ -63,10 +72,22 @@ export interface ChatObserverMessage {
   kind: 'observer_message'
   round_label: string
   content: string
+  reasoning?: string
   created_at: string
 }
 
-export type ChatItem = ChatMessage | ChatToolCall | ChatTaskEvent | ChatWaitingInput | ChatLLMPrompt | ChatObserverMessage
+export interface ChatObserverToolCall {
+  id: string
+  kind: 'observer_tool_call'
+  round_label: string
+  tool_name: string
+  arguments: Record<string, unknown>
+  result: string
+  is_error: boolean
+  created_at: string
+}
+
+export type ChatItem = ChatMessage | ChatToolCall | ChatTaskEvent | ChatWaitingInput | ChatLLMPrompt | ChatObserverMessage | ChatObserverToolCall
 
 export interface SSEState {
   session: Session | null
@@ -74,7 +95,10 @@ export interface SSEState {
   items: ChatItem[]
   waitingInput: ChatWaitingInput | null
   streamingText: string | null
+  streamingReasoning: string | null
+  streamingImages: ChatImageData[]
   observerStreamingText: string | null
+  observerStreamingReasoning: string | null
   connected: boolean
   error: string | null
 }
@@ -93,7 +117,10 @@ export function useSessionSSE(sessionId: string | null): SSEState {
     items: [],
     waitingInput: null,
     streamingText: null,
+    streamingReasoning: null,
+    streamingImages: [],
     observerStreamingText: null,
+    observerStreamingReasoning: null,
     connected: false,
     error: null,
   })
@@ -111,7 +138,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
   useEffect(() => {
     if (!sessionId) {
       close()
-      setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, observerStreamingText: null, connected: false, error: null })
+      setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
       return
     }
 
@@ -120,7 +147,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
     // Close previous connection
     close()
     sessionIdRef.current = sessionId
-    setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, observerStreamingText: null, connected: false, error: null })
+    setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
 
     const es = new EventSource(`/api/v1/sessions/${sessionId}/stream`)
     esRef.current = es
@@ -142,14 +169,28 @@ export function useSessionSSE(sessionId: string | null): SSEState {
       setState(s => ({ ...s, connected: false, error: '连接断开，正在重连...' }))
     }
 
-    function eventToItem(evt: Record<string, unknown>): ChatItem | null {
+    function parseContent(raw: unknown): { text: string; images?: ChatImageData[] } {
+      if (Array.isArray(raw)) {
+        const parts = raw as Array<Record<string, string>>
+        const images = parts
+          .filter(p => p.type === 'image')
+          .map(p => ({ media_type: p.media_type || '', source_type: (p.source_type || 'base64') as 'base64' | 'url', data: p.data || '' }))
+        const text = parts.filter(p => p.type === 'text').map(p => p.text || '').join('\n')
+        return { text, images: images.length > 0 ? images : undefined }
+      }
+      return { text: (raw as string) || '' }
+    }
+
+    function eventToItem(evt: Record<string, unknown>, extras?: { actorReasoning?: string; observerReasoning?: string }): ChatItem | null {
       const t = evt.type as string
       if (t === 'message') {
+        const { text, images } = parseContent(evt.content)
         return {
           id: uid(),
           kind: 'message',
           role: (evt.role as 'user' | 'assistant') || 'assistant',
-          content: (evt.content as string) || '',
+          content: text,
+          images,
           created_at: (evt.created_at as string) || '',
         }
       }
@@ -161,6 +202,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           kind: 'message',
           role: 'assistant',
           content: text,
+          reasoning: extras?.actorReasoning,
           created_at: (evt.created_at as string) || '',
         }
       }
@@ -191,7 +233,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           source: (evt.source as string) || 'actor',
           round_label: (evt.round_label as string) || '',
           system_prompt: (evt.system_prompt as string) || '',
-          messages: (evt.messages as Array<{ role: string; content: string }>) || [],
+          messages: (evt.messages as Array<{ role: string; content: string | object[] }>) || [],
           tool_names: (evt.tool_names as string[]) || [],
           created_at: (evt.created_at as string) || '',
         }
@@ -204,6 +246,19 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           kind: 'observer_message',
           round_label: (evt.round_label as string) || '',
           content: text,
+          reasoning: extras?.observerReasoning,
+          created_at: (evt.created_at as string) || '',
+        }
+      }
+      if (t === 'observer_tool_call') {
+        return {
+          id: uid(),
+          kind: 'observer_tool_call',
+          round_label: (evt.round_label as string) || '',
+          tool_name: (evt.tool_name as string) || '',
+          arguments: (evt.arguments as Record<string, unknown>) || {},
+          result: (evt.result as string) || '',
+          is_error: (evt.is_error as boolean) || false,
           created_at: (evt.created_at as string) || '',
         }
       }
@@ -218,9 +273,22 @@ export function useSessionSSE(sessionId: string | null): SSEState {
       if (type === 'history') {
         const events = (data.events as Array<Record<string, unknown>>) || []
         const historyItems: ChatItem[] = []
+        let actorReasoning: string | undefined
+        let observerReasoning: string | undefined
         for (const evt of events) {
-          const item = eventToItem(evt)
+          const evtType = evt.type as string
+          if (evtType === 'reasoning_done') {
+            actorReasoning = ((evt.text as string) || '') || undefined
+            continue
+          }
+          if (evtType === 'observer_reasoning_done') {
+            observerReasoning = ((evt.text as string) || '') || undefined
+            continue
+          }
+          const item = eventToItem(evt, { actorReasoning, observerReasoning })
           if (item) historyItems.push(item)
+          if (evtType === 'text_done') actorReasoning = undefined
+          if (evtType === 'observer_text_done') observerReasoning = undefined
         }
         setState(s => ({ ...s, items: historyItems }))
         return
@@ -232,13 +300,17 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         const messages = (data.messages as Array<Record<string, unknown>>) || []
 
         // Build initial chat items from history messages
-        const items: ChatItem[] = messages.map((m) => ({
-          id: uid(),
-          kind: 'message' as const,
-          role: (m.role as 'user' | 'assistant') || 'assistant',
-          content: (m.content as string) || '',
-          created_at: (m.created_at as string) || '',
-        }))
+        const items: ChatItem[] = messages.map((m) => {
+          const { text, images } = parseContent(m.content)
+          return {
+            id: uid(),
+            kind: 'message' as const,
+            role: (m.role as 'user' | 'assistant') || 'assistant',
+            content: text,
+            images,
+            created_at: (m.created_at as string) || '',
+          }
+        })
 
         setState({
           session,
@@ -246,7 +318,10 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           items,
           waitingInput: null,
           streamingText: null,
+          streamingReasoning: null,
+          streamingImages: [],
           observerStreamingText: null,
+          observerStreamingReasoning: null,
           connected: true,
           error: null,
         })
@@ -262,7 +337,9 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           // clear waiting input & streaming when session resumes
           waitingInput: data.status === 'RUNNING' ? null : s.waitingInput,
           streamingText: data.status === 'RUNNING' ? null : s.streamingText,
+          streamingReasoning: data.status === 'RUNNING' ? null : s.streamingReasoning,
           observerStreamingText: data.status === 'RUNNING' ? null : s.observerStreamingText,
+          observerStreamingReasoning: data.status === 'RUNNING' ? null : s.observerStreamingReasoning,
         }))
         return
       }
@@ -301,11 +378,13 @@ export function useSessionSSE(sessionId: string | null): SSEState {
       }
 
       if (type === 'message') {
+        const { text, images } = parseContent(data.content)
         const item: ChatMessage = {
           id: uid(),
           kind: 'message',
           role: (data.role as 'user' | 'assistant') || 'assistant',
-          content: (data.content as string) || '',
+          content: text,
+          images,
           created_at: (data.created_at as string) || now(),
         }
         setState(s => ({ ...s, items: [...s.items, item] }))
@@ -347,19 +426,48 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         return
       }
 
+      if (type === 'reasoning_delta') {
+        const delta = (data.delta as string) || ''
+        if (delta) {
+          setState(s => ({ ...s, streamingReasoning: (s.streamingReasoning ?? '') + delta }))
+        }
+        return
+      }
+
+      if (type === 'image') {
+        const img: ChatImageData = {
+          media_type: (data.media_type as string) || '',
+          source_type: (data.source_type as 'base64' | 'url') || 'base64',
+          data: (data.data as string) || '',
+        }
+        setState(s => ({ ...s, streamingImages: [...s.streamingImages, img] }))
+        return
+      }
+
       if (type === 'text_done') {
         const text = (data.text as string) || ''
-        if (text) {
+        setState(s => {
+          if (!text && s.streamingImages.length === 0 && !s.streamingReasoning) {
+            return { ...s, streamingText: null, streamingReasoning: null }
+          }
           const item: ChatMessage = {
             id: uid(),
             kind: 'message',
             role: 'assistant',
             content: text,
+            reasoning: s.streamingReasoning || undefined,
+            images: s.streamingImages.length > 0 ? s.streamingImages : undefined,
             created_at: now(),
           }
-          setState(s => ({ ...s, items: [...s.items, item], streamingText: null }))
-        } else {
-          setState(s => ({ ...s, streamingText: null }))
+          return { ...s, items: [...s.items, item], streamingText: null, streamingReasoning: null, streamingImages: [] }
+        })
+        return
+      }
+
+      if (type === 'reasoning_done') {
+        const reasoning = (data.text as string) || ''
+        if (reasoning) {
+          setState(s => ({ ...s, streamingReasoning: reasoning }))
         }
         return
       }
@@ -387,21 +495,54 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         return
       }
 
+      if (type === 'observer_reasoning_delta') {
+        const delta = (data.delta as string) || ''
+        if (delta) {
+          setState(s => ({ ...s, observerStreamingReasoning: (s.observerStreamingReasoning ?? '') + delta }))
+        }
+        return
+      }
+
       if (type === 'observer_text_done') {
         const text = (data.text as string) || ''
         const round_label = (data.round_label as string) || ''
-        if (text) {
+        setState(s => {
+          if (!text && !s.observerStreamingReasoning) {
+            return { ...s, observerStreamingText: null, observerStreamingReasoning: null }
+          }
           const item: ChatObserverMessage = {
             id: uid(),
             kind: 'observer_message',
             round_label,
             content: text,
+            reasoning: s.observerStreamingReasoning || undefined,
             created_at: now(),
           }
-          setState(s => ({ ...s, items: [...s.items, item], observerStreamingText: null }))
-        } else {
-          setState(s => ({ ...s, observerStreamingText: null }))
+          return { ...s, items: [...s.items, item], observerStreamingText: null, observerStreamingReasoning: null }
+        })
+        return
+      }
+
+      if (type === 'observer_reasoning_done') {
+        const reasoning = (data.text as string) || ''
+        if (reasoning) {
+          setState(s => ({ ...s, observerStreamingReasoning: reasoning }))
         }
+        return
+      }
+
+      if (type === 'observer_tool_call') {
+        const item: ChatObserverToolCall = {
+          id: uid(),
+          kind: 'observer_tool_call',
+          round_label: (data.round_label as string) || '',
+          tool_name: (data.tool_name as string) || '',
+          arguments: (data.arguments as Record<string, unknown>) || {},
+          result: (data.result as string) || '',
+          is_error: (data.is_error as boolean) || false,
+          created_at: (data.created_at as string) || now(),
+        }
+        setState(s => ({ ...s, items: [...s.items, item] }))
         return
       }
 
@@ -410,7 +551,10 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           ...s,
           waitingInput: null,
           streamingText: null,
+          streamingReasoning: null,
+          streamingImages: [],
           observerStreamingText: null,
+          observerStreamingReasoning: null,
           session: s.session
             ? { ...s.session, status: (data.final_status as Session['status']) || s.session.status }
             : s.session,

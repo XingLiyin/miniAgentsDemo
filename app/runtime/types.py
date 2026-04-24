@@ -11,7 +11,7 @@ TaskOutcome = Literal["success", "failed", "needs_user_input"]
 
 if TYPE_CHECKING:
     from app.domain.models.task import Task
-    from app.llm.types import LLMTool
+    from app.llm.types import ImageBlock, LLMTool
 
 
 @dataclass
@@ -19,7 +19,7 @@ class ContextResource:
     """Agent 可用资源（工具或技能），统一承载检索结果。"""
     name: str
     description: str
-    kind: Literal["tool", "skill"]
+    kind: Literal["tool", "skill", "agent"]
     llm_tool: "LLMTool | None" = None   # kind="tool" 时有效，传给 LLM function calling
 
 
@@ -30,7 +30,7 @@ class ReasoningContext:
     goal: str
     recent_messages: list[dict]
     summary_text: str
-    blackboard_snippets: list[str]
+    blackboard_snippets: list[str | list]
     # Agent 身份（由 Reasoner 从 Agent 对象提取）
     soul: str = ""                       # agent.soul_md or agent.system_prompt
     role: str = ""                       # agent.role_md
@@ -74,6 +74,7 @@ class ConversationTurn:
     messages_sent: list[Any]           # list[LLMMessage]，避免循环导入用 Any
     llm_text: str                       # 本轮 LLM 文本回复
     tool_calls: list[ToolCallRecord] = field(default_factory=list)
+    images: list[Any] = field(default_factory=list)  # list[ImageBlock]，本轮 LLM 输出的图片
 
 
 @dataclass

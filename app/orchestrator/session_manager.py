@@ -32,6 +32,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _extract_text(content: str | list) -> str:
+    """从 str 或 list[ContentPart dict] 中提取纯文本，用于 str-only 字段。"""
+    if isinstance(content, str):
+        return content
+    return '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text')
+
+
 def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent) -> None:  # type: ignore[name-defined]
     agent.soul_md = content.soul_md if content else ""
     agent.role_md = content.role_md if content else ""
@@ -178,7 +185,7 @@ class SessionManager:
         self,
         session_id: str,
         creator_agent_id: str,
-        user_prompt: str,
+        user_prompt: str | list,
         cfg: InitialTaskConfig | None,
     ) -> None:
         """根据 InitialTaskConfig 创建第一个 task。
@@ -207,7 +214,7 @@ class SessionManager:
                 creator_agent_id=creator_agent_id,
                 user_prompt=user_prompt,
                 title="Update task meta data details",
-                description=f"Summarize the user prompt ({user_prompt}) and fill in the task title and description accordingly",
+                description=f"Summarize the user prompt ({_extract_text(user_prompt)}) and fill in the task title and description accordingly",
                 inputs={
                     "subagent_template": "metadata_filler",
                     "target_task_id": task.id,
@@ -216,20 +223,23 @@ class SessionManager:
             )
             self._lifecycle_manager.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
 
-    def continue_session(self, session_id: str, user_message: str, *, initial_task: InitialTaskConfig | None = None) -> Session:
+    def continue_session(self, session_id: str, user_message: str | list, *, initial_task: InitialTaskConfig | None = None) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
         from app.domain.services.memory_service import MemoryService
         from app.storage.file.memory_store import MemoryStore
 
+        # 提取纯文本用于 session/task 的 str 字段显示
+        text_prompt = _extract_text(user_message)
+
         session = self._session_svc.get(session_id)
 
-        session.user_prompt = user_message  # 更新 session.user_prompt 以供后续参考（如创建新 task）
+        session.user_prompt = text_prompt
         self._session_svc.save(session)
 
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
 
-        # Push SSE user message event
+        # Push SSE user message event（多模态内容透传给前端）
         try:
             from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {
@@ -260,7 +270,8 @@ class SessionManager:
         # 重新初始化 LM 状态（旧 session 的状态已过期）
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session_id)
-        # 创建新 task（默认由 root 直接执行，不创建 sub-agent）
+
+        # 创建新 task，携带完整多模态内容
         if self._task_svc is not None:
             self._create_initial_task(
                 session_id=session_id,

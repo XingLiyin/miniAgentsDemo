@@ -24,8 +24,10 @@ _PERSIST_TYPES: frozenset[str] = frozenset({
     "tool_call",
     "task_created",
     "task_updated",
+    "reasoning_done",
     "text_done",
     "llm_prompt",
+    "observer_reasoning_done",
     "observer_text_done",
 })
 

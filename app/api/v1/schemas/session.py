@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 class InitialTaskConfig(BaseModel):
@@ -29,6 +29,15 @@ class CreateSessionRequest(BaseModel):
 class SessionResponse(BaseModel):
     id: str
     user_prompt: str
+
+    @field_validator('user_prompt', mode='before')
+    @classmethod
+    def coerce_user_prompt(cls, v: Any) -> str:
+        if isinstance(v, str):
+            return v
+        if isinstance(v, list):
+            return '\n'.join(p.get('text', '') for p in v if isinstance(p, dict) and p.get('type') == 'text')
+        return str(v) if v is not None else ''
     status: str
     template_id: Optional[str] = None
     root_agent_id: Optional[str] = None

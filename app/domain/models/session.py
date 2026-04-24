@@ -6,6 +6,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _coerce_str(v: Any) -> str:
+    """将可能因历史数据污染而成为 list 的字段强制转为纯文本。"""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return '\n'.join(p.get('text', '') for p in v if isinstance(p, dict) and p.get('type') == 'text')
+    return str(v) if v is not None else ''
+
+
 @dataclass
 class LoopGuard:
     """Agent Loop Guard 参数。"""
@@ -59,7 +68,7 @@ class Session:
     def from_dict(cls, d: dict[str, Any]) -> "Session":
         return cls(
             id=d["id"],
-            user_prompt=d["user_prompt"],
+            user_prompt=_coerce_str(d["user_prompt"]),
             goal=d["goal"],
             status=d["status"],
             template_id=d.get("template_id"),

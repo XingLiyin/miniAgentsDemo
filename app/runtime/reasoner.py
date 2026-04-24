@@ -14,6 +14,7 @@ from app.domain.services.task_service import TaskService
 from app.runtime.types import ContextResource, ReasoningContext
 
 if TYPE_CHECKING:
+    from app.agent_template.registry import AgentTemplateRegistry
     from app.skills.registry import SkillRegistry
     from app.tools.registry import ToolRegistry
 
@@ -37,19 +38,21 @@ class Reasoner:
         tool_registry: "ToolRegistry | None" = None,
         skill_registry: "SkillRegistry | None" = None,
         task_svc: TaskService | None = None,
+        agent_template_registry: "AgentTemplateRegistry | None" = None,
     ) -> None:
         self._memory_svc = memory_svc
         self._bb_svc = blackboard_svc
         self._tool_registry = tool_registry
         self._skill_registry = skill_registry
         self._task_svc = task_svc
+        self._agent_template_registry = agent_template_registry
 
     def reason(
         self, session: Session, agent: Agent, task: Task
     ) -> ReasoningContext:
         """构建本轮 ReasoningContext。"""
         messages, summary_text, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
-        soul, role, skill_instructions = self._extract_agent_identity(agent, task)
+        soul, role, skill_instructions = self._extract_agent_identity(agent, task, session.id)
 
         return ReasoningContext(
             goal=session.goal,
@@ -59,20 +62,24 @@ class Reasoner:
             soul=soul,
             role=role,
             skill_instructions=skill_instructions,
-            actor_resources=self._build_actor_resources(session.goal, agent, task),
+            actor_resources=self._build_actor_resources(session.goal, agent, task, session.id),
             observer_resources=self._build_observer_resources(agent, task),
             current_task=task,
             token_estimate=token_estimate,
         )
 
-    def _extract_agent_identity(self, agent: Agent, task: Task) -> tuple[str, str, str]:
+    def _extract_agent_identity(
+        self, agent: Agent, task: Task, session_id: str = ""
+    ) -> tuple[str, str, str]:
         """提取 soul、role、skill_instructions（plan/act 均适用）。"""
         soul = agent.soul_md or ""
         role = agent.role_md or ""
         skill_instructions = ""
         skill_name = task.settings.get("skill_name") if task.settings else None
         if skill_name and self._skill_registry:
-            skill_def = self._skill_registry.load_definition(skill_name)
+            from app.tools.definition import CallContext
+            ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task)
+            skill_def = self._skill_registry.load_definition(skill_name, ctx)
             if skill_def is not None:
                 skill_instructions = skill_def.instructions or ""
         return soul, role, skill_instructions
@@ -85,8 +92,9 @@ class Reasoner:
         summary = self._memory_svc.get_summary(agent.id)
         summary_text = summary.summary_text if summary else ""
 
-        bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
-        bb_snippets = [entry.content for entry in bb_entries]
+        # bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
+        # bb_snippets = [entry.content for entry in bb_entries]
+        bb_snippets = []
 
         if self._task_svc:
             for child in self._task_svc.list_children(task.id, session.id):
@@ -94,11 +102,16 @@ class Reasoner:
                     bb_snippets.append(entry.content)
 
         from app.common.utils import estimate_tokens
+        from app.llm.types import content_to_text
+
+        def _item_text(v: object) -> str:
+            return content_to_text(v) if isinstance(v, (str, list)) else ""
+
         text_sample = (
             session.goal
             + summary_text
-            + " ".join(m.get("content", "") for m in messages)
-            + " ".join(bb_snippets)
+            + " ".join(_item_text(m.get("content", "")) for m in messages)
+            + " ".join(_item_text(s) for s in bb_snippets)
         )
         token_estimate = estimate_tokens(text_sample)
 
@@ -122,18 +135,38 @@ class Reasoner:
                 tools.update(self._tool_registry.get_server_tool_names(server_name))
         return tools
 
-    def _build_actor_resources(self, goal: str, agent: Agent, task: Task) -> list[ContextResource]:
+    def _build_actor_resources(self, goal: str, agent: Agent, task: Task, session_id: str = "") -> list[ContextResource]:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
+        from app.tools.definition import CallContext
+        ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task)
         allowed = self._resolve_act_tool_names(agent)
         skill_resources = [
             ContextResource(name=name, description=desc, kind="skill")
-            for name, desc in self._retrieve_skills(goal, agent)
+            for name, desc in self._retrieve_skills(goal, agent, ctx)
         ]
         tool_resources = [
             ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
             for t in self._tool_registry.to_llm_tools(list(allowed))
         ]
-        return skill_resources + tool_resources
+        agent_resources = self._build_agent_resources(agent)
+        return skill_resources + tool_resources + agent_resources
+
+    def _build_agent_resources(self, agent: Agent) -> list[ContextResource]:
+        """构建可见 sub-agent 列表；仅 has_spawn_permission=True 时生效。
+
+        可见范围由当前 agent template 的 SOUL.md subagents 字段控制：
+        空列表 = 全部可见，非空 = 仅列出的 template name 可见。
+        """
+        if not agent.has_spawn_permission or not self._agent_template_registry:
+            return []
+        own_meta = self._agent_template_registry.get_metadata(agent.template_id or "")
+        allowlist: set[str] | None = set(own_meta.subagents) if own_meta and own_meta.subagents else None
+        return [
+            ContextResource(name=m.name, description=m.description, kind="agent")
+            for m in self._agent_template_registry.list_all()
+            if m.name != (agent.template_id or "")
+            and (allowlist is None or m.name in allowlist)
+        ]
 
     def _build_observer_resources(self, agent: Agent, task: Task) -> list[ContextResource]:
         """组装 Observer 阶段可用工具，由 observe_tool_list 统一配置。
@@ -175,23 +208,11 @@ class Reasoner:
 
         return self._tool_registry.to_llm_tools(list(allowed))
 
-    def _retrieve_skills(self, goal: str, agent: Agent) -> list[tuple[str, str]]:
+    def _retrieve_skills(self, goal: str, agent: Agent, ctx: "CallContext | None" = None) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。"""
         if not self._skill_registry:
             return []
-
-        # try:
-        #     from app.skills.skill_store_client import get_skill_store_client
-        #     store_client = get_skill_store_client()
-        #     if store_client.enabled:
-        #         results = store_client.search(goal, top_k=5)
-        #         if results:
-        #             allowed = set(agent.skill_list)
-        #             return [(r.name, r.description) for r in results if r.name in allowed]
-        # except Exception:
-        #     logger.debug("Reasoner: skill store search failed, falling back to full list")
-
         return [
             (m.name, m.description)
-            for m in self._skill_registry.list_all()
+            for m in self._skill_registry.list_all(ctx)
         ]

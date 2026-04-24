@@ -1,18 +1,18 @@
 """工具注册表（全局单例）。
 
 职责：
-- 存储并索引所有 ToolDefinition（跨 Provider）
-- to_llm_tools()  — 生成 LLMTool[]，供 LLM 感知可用工具
-- get() / is_registered() — 供 ToolGateway 和 PolicyEngine 使用
-- register_provider() — 批量接入 ToolProvider（内置或外部 MCP）
-- register_mcp_stdio() / register_mcp_http() — 一步启动并注册 MCP Server
-- shutdown() — 统一停止所有 MCP Provider（在应用退出时调用）
-- refresh_mcp() — 重新拉取 MCP 工具列表并同步变更到外部 DB
+- _tools          — 存储 builtin 工具定义（静态）
+- _mcp_providers  — 存储 MCP server 连接（server_name → provider）
+- MCP 工具列表每次从 provider.list_definitions() 实时读取（内存快照，无网络调用）
+- to_llm_tools()  — builtin 优先，MCP 实时补充，按 names 过滤
+- get()           — 先查 builtin，再实时查 MCP
+- shutdown()      — 统一停止所有 MCP Provider
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from app.common.errors import AppError
@@ -29,44 +29,32 @@ logger = logging.getLogger(__name__)
 class ToolRegistry:
     """工具注册表（内存单例）。"""
 
+    _CONNECT_COOLDOWN = 30.0  # 连接失败后的最小重试间隔（秒）
+
     def __init__(self) -> None:
-        self._tools: dict[str, ToolDefinition] = {}
-        self._mcp_providers: list[_MCPProviderBase] = []
-        # provider name → 该 provider 贡献的工具名列表（用于按名删除）
-        self._provider_tool_names: dict[str, list[str]] = {}
-        # 控制工具名集合（与外部工具同等注册，Reasoner 用于区分展示策略）
+        self._tools: dict[str, ToolDefinition] = {}             # builtin only
+        self._mcp_providers: dict[str, _MCPProviderBase] = {}   # server_name → provider（懒连接）
         self._control_tool_names: set[str] = set()
+        self._last_connect_attempt: dict[str, float] = {}       # server_name → monotonic timestamp
+
+    # ── Builtin 工具注册 ──────────────────────────────────────────────────────
 
     def register(self, tool_def: ToolDefinition) -> None:
-        """注册单个工具定义（重复注册会覆盖）。"""
         self._tools[tool_def.name] = tool_def
-        logger.debug("ToolRegistry: registered tool '%s'", tool_def.name)
+        logger.debug("ToolRegistry: registered builtin tool '%s'", tool_def.name)
 
     def register_as_control(self, tool_def: ToolDefinition) -> None:
-        """注册控制工具（与普通工具共享同一注册表，额外标记为 control）。"""
         self.register(tool_def)
         self._control_tool_names.add(tool_def.name)
 
-    def get_control_tool_names(self) -> frozenset[str]:
-        """返回已注册的控制工具名集合。"""
-        return frozenset(self._control_tool_names)
-
     def register_provider(self, provider: ToolProvider, name: str = "builtin") -> None:
-        """批量注册 Provider 提供的所有工具定义，并同步到外部工具存储。
-
-        这是接入外部 MCP Server 的扩展点：
-        只需传入已 start() 的 MCPProvider 实例即可接入远端工具，
-        无需修改 ToolRegistry 或 ToolGateway 的任何代码。
-
-        Args:
-            provider: 工具提供者
-            name:     provider 标识名（用于外部 DB 同步，默认 "builtin"）
-        """
+        """批量注册 builtin Provider 的所有工具（仅供内置工具使用）。"""
         tool_defs = list(provider.list_definitions())
         for tool_def in tool_defs:
             self.register(tool_def)
-        self._provider_tool_names[name] = [td.name for td in tool_defs]
         self._sync_added(tool_defs, provider=name)
+
+    # ── MCP Server 注册 ───────────────────────────────────────────────────────
 
     def register_mcp_stdio(
         self,
@@ -74,27 +62,12 @@ class ToolRegistry:
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
-    ) -> list[str]:
-        """启动 MCP stdio Server 并将其所有工具注册到 Registry。
-
-        Registry 持有 provider 引用，shutdown() 时自动调用 stop()。
-
-        Args:
-            name:    MCP server 标识名（用于日志）
-            command: 可执行文件路径，如 "npx" 或 "python"
-            args:    命令参数列表，如 ["-y", "@mcp/server-fs", "."]
-            env:     额外的环境变量
-
-        Returns:
-            注册成功的工具名列表
-        """
+    ) -> None:
+        """注册 MCP stdio Server（懒连接：首次使用时才建立连接）。"""
         from app.tools.mcp_provider import MCPStdioProvider
-
         provider = MCPStdioProvider(name=name, command=command, args=args, env=env)
-        provider.start()
-        self._mcp_providers.append(provider)
-        tool_names = self._register_provider_with_tracking(name, provider)
-        return tool_names
+        self._mcp_providers[name] = provider
+        logger.info("ToolRegistry: registered MCP stdio server '%s' (lazy)", name)
 
     def register_mcp_http(
         self,
@@ -102,135 +75,128 @@ class ToolRegistry:
         url: str,
         *,
         timeout: int = 30,
-    ) -> list[str]:
-        """启动 MCP Streamable HTTP Server 并将其所有工具注册到 Registry。
-
-        Registry 持有 provider 引用，shutdown() 时自动调用 stop()。
-
-        Args:
-            name:    MCP server 标识名（用于日志）
-            url:     MCP Server 的 HTTP 端点，如 "http://my-server/mcp"
-            timeout: 请求超时秒数（默认 30）
-
-        Returns:
-            注册成功的工具名列表
-        """
+    ) -> None:
+        """注册 MCP Streamable HTTP Server（懒连接：首次使用时才建立连接）。"""
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
-
         provider = MCPStreamableHTTPProvider(name=name, url=url, timeout=timeout)
-        provider.start()
-        self._mcp_providers.append(provider)
-        tool_names = self._register_provider_with_tracking(name, provider)
-        return tool_names
+        self._mcp_providers[name] = provider
+        logger.info("ToolRegistry: registered MCP http server '%s' (lazy)", name)
 
     def shutdown_one(self, name: str) -> None:
-        """停止并移除指定名称的 MCP Provider 及其工具。"""
-        provider = next((p for p in self._mcp_providers if getattr(p._af_tool, "name", None) == name), None)
+        """停止并移除指定 MCP Server。"""
+        provider = self._mcp_providers.pop(name, None)
+        self._last_connect_attempt.pop(name, None)
         if provider is None:
-            logger.warning("ToolRegistry.shutdown_one: provider '%s' not found", name)
+            logger.warning("ToolRegistry.shutdown_one: server '%s' not found", name)
             return
-        try:
-            provider.stop()
-        except Exception:
-            logger.exception("Error stopping MCP provider '%s'", name)
-        self._mcp_providers.remove(provider)
-        # 删除该 provider 贡献的工具，同步到外部 DB
-        removed_names = self._provider_tool_names.pop(name, [])
-        for tool_name in removed_names:
-            self._tools.pop(tool_name, None)
-        self._sync_removed(removed_names)
-        logger.debug("ToolRegistry: removed provider '%s'", name)
-
-    def refresh_mcp(self, name: str) -> tuple[list[str], list[str]]:
-        """重新从 MCP Server 拉取工具列表，diff 并同步变更到外部 DB。
-
-        Returns:
-            (added_names, removed_names) — 本次新增和删除的工具名列表
-        """
-        provider = next((p for p in self._mcp_providers if getattr(p._af_tool, "name", None) == name), None)
-        if provider is None:
-            raise AppError("MCP_NOT_FOUND", f"MCP provider '{name}' not found in registry")
-
-        new_defs = provider.reload_tools()
-        old_names = set(self._provider_tool_names.get(name, []))
-        new_names = {td.name for td in new_defs}
-
-        added_names = sorted(new_names - old_names)
-        removed_names = sorted(old_names - new_names)
-
-        # 更新内存
-        for tool_name in removed_names:
-            self._tools.pop(tool_name, None)
-        added_defs = []
-        for td in new_defs:
-            self._tools[td.name] = td
-            if td.name in added_names:
-                added_defs.append(td)
-        self._provider_tool_names[name] = sorted(new_names)
-
-        # 同步到外部 DB
-        if added_defs:
-            self._sync_added(added_defs, provider=name)
-        if removed_names:
-            self._sync_removed(removed_names)
-
-        logger.info(
-            "ToolRegistry.refresh_mcp '%s': +%d -%d",
-            name, len(added_names), len(removed_names),
-        )
-        return added_names, removed_names
-
-    def _register_provider_with_tracking(self, name: str, provider: ToolProvider) -> list[str]:
-        """注册 provider 的工具，记录 name → tool_names 映射，并同步到外部 DB。"""
-        tool_defs = list(provider.list_definitions())
-        tool_names = []
-        for tool_def in tool_defs:
-            self.register(tool_def)
-            tool_names.append(tool_def.name)
-        self._provider_tool_names[name] = tool_names
-        self._sync_added(tool_defs, provider=name)
-        return tool_names
-
-    def shutdown(self) -> None:
-        """停止所有 MCP Provider（在应用退出时调用）。"""
-        for provider in self._mcp_providers:
+        if provider._initialized:
             try:
                 provider.stop()
             except Exception:
-                logger.exception("Error stopping MCP provider %r", provider)
+                logger.exception("Error stopping MCP provider '%s'", name)
+        logger.info("ToolRegistry: removed MCP server '%s'", name)
+
+    def refresh_mcp(self, name: str) -> None:
+        """重新从 MCP Server 拉取工具列表；未连接时主动发起连接。"""
+        provider = self._mcp_providers.get(name)
+        if provider is None:
+            raise AppError("MCP_NOT_FOUND", f"MCP server '{name}' not found in registry")
+        if not provider._initialized:
+            self._try_connect(name, provider)
+        else:
+            provider.reload_tools()
+        logger.info("ToolRegistry.refresh_mcp: '%s' reloaded", name)
+
+    def shutdown(self) -> None:
+        """停止所有 MCP Provider（应用退出时调用）。"""
+        for name, provider in list(self._mcp_providers.items()):
+            try:
+                provider.stop()
+            except Exception:
+                logger.exception("Error stopping MCP provider '%s'", name)
         self._mcp_providers.clear()
 
+    # ── 查询 ─────────────────────────────────────────────────────────────────
+
     def get(self, name: str) -> ToolDefinition:
-        """获取工具定义；不存在则抛 AppError。"""
-        if name not in self._tools:
-            raise AppError("TOOL_NOT_FOUND", f"Tool '{name}' is not registered")
-        return self._tools[name]
+        """获取工具定义：先查 builtin，再实时查 MCP providers。"""
+        if name in self._tools:
+            return self._tools[name]
+        for td in self._live_mcp_definitions():
+            if td.name == name:
+                return td
+        raise AppError("TOOL_NOT_FOUND", f"Tool '{name}' is not registered")
 
     def is_registered(self, name: str) -> bool:
-        return name in self._tools
+        if name in self._tools:
+            return True
+        return any(td.name == name for td in self._live_mcp_definitions())
 
     def get_server_tool_names(self, server_name: str) -> list[str]:
-        """返回指定 MCP server 贡献的工具名列表；server 不存在则返回空列表。"""
-        return list(self._provider_tool_names.get(server_name, []))
+        """返回指定 MCP server 的工具名列表（实时读取，未连接时触发懒连接）。"""
+        provider = self._mcp_providers.get(server_name)
+        if provider is None:
+            return []
+        if not provider._initialized:
+            if not self._try_connect(server_name, provider):
+                return []
+        try:
+            return [td.name for td in provider.list_definitions()]
+        except Exception as e:
+            logger.warning("ToolRegistry.get_server_tool_names '%s' failed: %s", server_name, e)
+            return []
+
+    def get_control_tool_names(self) -> frozenset[str]:
+        return frozenset(self._control_tool_names)
 
     def list_names(self) -> list[str]:
-        return list(self._tools.keys())
+        mcp_names = [td.name for td in self._live_mcp_definitions()]
+        return list(self._tools.keys()) + [n for n in mcp_names if n not in self._tools]
 
     def list_all_definitions(self) -> list[ToolDefinition]:
-        """返回所有已注册工具的定义列表。"""
-        return list(self._tools.values())
+        mcp = {td.name: td for td in self._live_mcp_definitions()}
+        return list({**mcp, **self._tools}.values())  # builtin 覆盖同名 MCP
 
     def to_llm_tools(self, names: list[str]) -> list[LLMTool]:
-        """将工具名称列表转为 LLMTool[]（名称不存在的静默跳过）。"""
+        """将工具名列表转为 LLMTool[]；builtin 优先，MCP 实时补充。"""
+        mcp_map = {td.name: td for td in self._live_mcp_definitions()}
+        combined = {**mcp_map, **self._tools}  # builtin 优先级高
         result = []
         for name in names:
-            if name in self._tools:
-                result.append(self._tools[name].to_llm_tool())
+            if name in combined:
+                result.append(combined[name].to_llm_tool())
             else:
                 logger.warning("ToolRegistry.to_llm_tools: unknown tool '%s', skipped", name)
         return result
 
-    # ── 内部同步helpers ───────────────────────────────────────────────────
+    # ── 内部 ─────────────────────────────────────────────────────────────────
+
+    def _live_mcp_definitions(self) -> list[ToolDefinition]:
+        """从所有 MCP providers 读取工具定义；未连接的按冷却时间懒启动。"""
+        result: list[ToolDefinition] = []
+        for name, provider in self._mcp_providers.items():
+            if not provider._initialized:
+                if not self._try_connect(name, provider):
+                    continue
+            try:
+                result.extend(provider.list_definitions())
+            except Exception as e:
+                logger.warning("ToolRegistry: list_definitions failed for '%s': %s", name, e)
+        return result
+
+    def _try_connect(self, name: str, provider: _MCPProviderBase) -> bool:
+        """尝试启动未连接的 provider，冷却期内跳过。返回是否连接成功。"""
+        now = time.monotonic()
+        if now - self._last_connect_attempt.get(name, 0) < self._CONNECT_COOLDOWN:
+            return False
+        self._last_connect_attempt[name] = now
+        try:
+            provider.start()
+            logger.info("ToolRegistry: connected MCP server '%s'", name)
+            return True
+        except Exception as e:
+            logger.warning("ToolRegistry: failed to connect '%s': %s", name, e)
+            return False
 
     def _sync_added(self, tool_defs: list[ToolDefinition], provider: str) -> None:
         try:
@@ -247,13 +213,12 @@ class ToolRegistry:
             logger.warning("ToolRegistry: sync-removed failed for %s", names, exc_info=True)
 
 
-# ── 全局单例 ──────────────────────────────────────────────────────────────
+# ── 全局单例 ──────────────────────────────────────────────────────────────────
 
 _registry: ToolRegistry | None = None
 
 
 def get_tool_registry() -> ToolRegistry:
-    """获取全局工具注册表（首次调用时注册所有内置工具）。"""
     global _registry
     if _registry is None:
         _registry = ToolRegistry()

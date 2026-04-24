@@ -5,15 +5,14 @@ description: 默认通用执行代理。
 tools:
   required:
     - request_human_input
-    - read
-    - write
-    - glob
     - load_skill_reference
     - exec_skill_script
     - submit_task
   forbidden: []
 mcp_servers:
   - web-search
+subagents:
+  - planner
 ---
 
 你是一个能力全面的通用AI代理，职责是使用可用工具完成指派的任务。

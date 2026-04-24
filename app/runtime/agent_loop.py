@@ -120,41 +120,21 @@ class AgentLoop:
                     session_id=session_id,
                     task_id=task_id,
                 )
-            for turn in result.conversation_turns:
-                if turn.tool_calls:
-                    self._memory_svc.append_message(
-                        agent_id=agent_id,
-                        role="assistant",
-                        content=turn.llm_text,
-                        session_id=session_id,
-                        task_id=task_id,
-                        tool_calls=[
-                            {"id": tc.tool_call_id, "name": tc.tool_name, "input": tc.arguments}
-                            for tc in turn.tool_calls
-                        ],
-                    )
-                    for tc in turn.tool_calls:
-                        self._memory_svc.append_message(
-                            agent_id=agent_id,
-                            role="tool",
-                            content=tc.result,
-                            session_id=session_id,
-                            task_id=task_id,
-                            tool_call_id=tc.tool_call_id,
-                        )
-                elif turn.llm_text:
-                    self._memory_svc.append_message(
-                        agent_id=agent_id,
-                        role="assistant",
-                        content=turn.llm_text,
-                        session_id=session_id,
-                        task_id=task_id,
-                    )
-            if verdict.summary:
+            if verdict.summary or (result.conversation_turns and result.conversation_turns[-1].images):
+                last_images = result.conversation_turns[-1].images if result.conversation_turns else []
+                if last_images:
+                    mem_content: str | list = [
+                        {"type": "image", "data": img.data, "media_type": img.media_type, "source_type": img.source_type}
+                        for img in last_images
+                    ]
+                    if verdict.summary:
+                        mem_content.append({"type": "text", "text": verdict.summary})
+                else:
+                    mem_content = verdict.summary
                 self._memory_svc.append_message(
                     agent_id=agent_id,
                     role="assistant",
-                    content=verdict.summary,
+                    content=mem_content,
                     session_id=session_id,
                     task_id=task_id,
                 )

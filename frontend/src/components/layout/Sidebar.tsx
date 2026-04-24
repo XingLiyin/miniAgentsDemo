@@ -6,6 +6,7 @@ import {
   Cpu,
   Server,
   Activity,
+  BookOpen,
 } from 'lucide-react'
 
 const navItems = [
@@ -13,6 +14,7 @@ const navItems = [
   { to: '/templates', icon: Bot, label: 'Templates' },
   { to: '/llms', icon: Cpu, label: 'LLM Providers' },
   { to: '/mcp', icon: Server, label: 'MCP Servers' },
+  { to: '/skills', icon: BookOpen, label: 'Skill Sources' },
 ]
 
 export function Sidebar() {

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Iterator, List, Optional, Protocol, runtime_checkable
 
-from app.llm.types import LLMMessage, LLMRequest, LLMResponse, LLMTool, ParsedResponse, StreamChunk
+from app.llm.types import (
+    ImageBlock, LLMMessage, LLMRequest, LLMResponse, LLMTool, LLMUsage,
+    ParsedResponse, StreamChunk, TextBlock, ToolCallBlock,
+)
 
 
 # ── 传输层 ────────────────────────────────────────────────────────────────
@@ -109,6 +113,50 @@ class BaseChatClient:
     def parse_response(self, response: LLMResponse) -> ParsedResponse:
         """统一解析 LLM 响应。"""
         return self._adapter.parse_response(response)
+
+    def parse_stream_acc(
+        self,
+        full_text: str,
+        tool_call_acc: Dict[int, Dict[str, Any]],
+        images: Optional[List[ImageBlock]] = None,
+        usage: Optional[LLMUsage] = None,
+    ) -> ParsedResponse:
+        """将流式累积结果解析为 ParsedResponse。
+
+        tool_call_acc 格式：{index: {id, name, arguments(JSON 字符串片段)}}
+        """
+        blocks: List = []
+        tool_calls: List[ToolCallBlock] = []
+
+        if full_text:
+            blocks.append(TextBlock(type='text', text=full_text))
+
+        for img in (images or []):
+            blocks.append(img)
+
+        for idx in sorted(tool_call_acc):
+            buf = tool_call_acc[idx]
+            args_raw = buf.get('arguments') or ''
+            try:
+                args = json.loads(args_raw) if args_raw else {}
+            except json.JSONDecodeError:
+                args = {'_raw': args_raw}
+            tc = ToolCallBlock(
+                type='tool_call',
+                id=buf.get('id', ''),
+                name=buf.get('name', ''),
+                input=args,
+            )
+            blocks.append(tc)
+            tool_calls.append(tc)
+
+        return ParsedResponse(
+            text=full_text,
+            blocks=blocks,
+            tool_calls=tool_calls,
+            images=images or [],
+            usage=usage,
+        )
 
     def _build_request(
         self,

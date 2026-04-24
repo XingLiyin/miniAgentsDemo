@@ -12,7 +12,7 @@ class LoopGuard:
     turns_used: int = 0
     max_turns: int = 20
     actor_max_tool_rounds: int = 50      # 单个 atomic task 内最多工具调用轮次
-    observer_max_tool_rounds: int = 50   # observer ReAct 循环最多轮次
+    observer_max_tool_rounds: int = 5   # observer ReAct 循环最多轮次
 
     def to_dict(self) -> dict[str, Any]:
         return {

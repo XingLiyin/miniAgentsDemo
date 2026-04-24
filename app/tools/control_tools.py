@@ -108,6 +108,7 @@ def submit_plan(
             "  user_prompt: the user prompt that triggered this task, or empty if none. "
             "  skill_name: one of the available skills, or null; "
             "  use_subagent: true if the task should run in an independent sub-agent; "
+            "  subagent_template: template name for the sub-agent (e.g. 'planner'); empty uses system default; "
             "  inherit_memory: true (default) for sub-agents that need session history."
         ),
     ],
@@ -121,6 +122,7 @@ def submit_task(
     description: Annotated[str, "WHAT to achieve — not HOW, no tool names or arguments (≤80 chars)"],
     skill_name: Annotated[str, "Skill to assign to the task, or empty string if none"] = "",
     use_subagent: Annotated[bool, "True if the task should run in an independent sub-agent"] = False,
+    subagent_template: Annotated[str, "Template name for the sub-agent (e.g. 'planner'); empty uses system default"] = "",
     inherit_memory: Annotated[bool, "True (default) for sub-agents that need session history"] = True,
     user_prompt: Annotated[str, "The user prompt that triggered this task, or empty"] = "",
 ) -> ToolResult:
@@ -235,7 +237,9 @@ class ControlToolProvider:
                 inputs["skill_name"] = skill_name
             if bool(spec.get("use_subagent", False)):
                 inputs["use_subagent"] = True
-                inputs["template_name"] = spec.get("subagent_template") or None
+                subagent_template = spec.get("subagent_template") or None
+                if subagent_template:
+                    inputs["subagent_template"] = subagent_template
                 inputs["inherit_memory"] = bool(spec.get("inherit_memory", True))
             t = self._task_svc.create(
                 session_id=task.session_id if task else "",
@@ -389,6 +393,9 @@ class ControlToolProvider:
         if bool(args.get("use_subagent", False)):
             inputs["use_subagent"] = True
             inputs["inherit_memory"] = bool(args.get("inherit_memory", True))
+            subagent_template = args.get("subagent_template") or None
+            if subagent_template:
+                inputs["subagent_template"] = subagent_template
         t = self._task_svc.create(
             session_id=task.session_id if task else "",
             creator_agent_id=task.assigned_agent_id if task else "",

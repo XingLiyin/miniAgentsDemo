@@ -17,7 +17,7 @@ class BlackboardEntry:
     session_id: str
     topic: str                         # 如 _root, _digest, 或自定义 topic
     publisher_id: str                  # 发布者 agent_id
-    content: str
+    content: str | list                 # 纯文本或多模态 part 列表
     created_at: str = ""
 
     def to_dict(self) -> dict[str, Any]:

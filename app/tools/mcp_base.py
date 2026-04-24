@@ -40,6 +40,7 @@ class _MCPProviderBase(ABC):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._initialized = False
+        self._reconnect_lock = threading.Lock()
 
     # ── 子类接口 ──────────────────────────────────────────────────────────
 
@@ -72,19 +73,40 @@ class _MCPProviderBase(ABC):
         return self.list_definitions()
 
     def call(self, tool_name: str, arguments: dict, ctx: CallContext | None = None) -> ToolResult:
-        """调用远端工具。"""
+        """调用远端工具，session 断开时自动重连一次后重试。"""
         if not self._initialized:
             raise AppError(
                 "MCP_NOT_STARTED",
                 f"{type(self).__name__}.start() has not been called",
             )
-        # meta 在此处（同步层）捕获并传入 coroutine 参数，coroutine 对象创建时即绑定，
-        # 不依赖共享实例属性，规避多线程竞态。
         meta = {"netcowork/sessionId": ctx.session_id} if ctx else None
-        logger.debug("Calling MCP tool '%s' with arguments %s and meta %s", tool_name, arguments, meta)
+        try:
+            return self._do_call(tool_name, arguments, meta)
+        except Exception as e:
+            if not _is_session_terminated(e):
+                raise
+            logger.warning(
+                "MCP session terminated while calling '%s', reconnecting...", tool_name
+            )
+            with self._reconnect_lock:
+                if self._initialized:  # 避免并发时重复重连
+                    self._reconnect()
+            logger.info("MCP reconnected, retrying '%s'", tool_name)
+            return self._do_call(tool_name, arguments, meta)
+
+    def _do_call(self, tool_name: str, arguments: dict, meta: dict | None) -> ToolResult:
+        logger.debug("Calling MCP tool '%s' with arguments %s", tool_name, arguments)
         result = self._run_sync(self._af_tool.call_tool(tool_name, _injected_meta=meta, **arguments))
         text = result if isinstance(result, str) else _content_to_text(result)
         return ToolResult(content=text)
+
+    def _reconnect(self) -> None:
+        """stop() + start()，事件循环线程完整重建。"""
+        try:
+            self.stop()
+        except Exception:
+            pass
+        self.start()
 
     # ── 生命周期（共享） ───────────────────────────────────────────────────
 
@@ -188,3 +210,34 @@ def _content_to_text(content: Any) -> str:
     if isinstance(content, list):
         return "\n".join(getattr(c, "text", "") or "" for c in content)
     return str(content)
+
+
+def _is_session_terminated(exc: Exception) -> bool:
+    """判断异常是否为 MCP session 断开（可重连）。"""
+    msg = str(exc)
+    return "Session terminated" in msg or "session terminated" in msg
+
+
+def _parse_mcp_tool_result(result: Any) -> str:
+    """MCP CallToolResult → str。
+
+    优先取 content[].text；若全为空则回退到 structuredContent（MCP 2025-06-18）。
+    直接返回 str，跳过 AF 默认的 list[Content] 转换，避免 Content 类型不可序列化等问题。
+    """
+    import json as _json
+
+    # 1. 取 content 中的 text
+    texts = [
+        item.text
+        for item in getattr(result, "content", [])
+        if getattr(item, "text", None)
+    ]
+    if texts:
+        return "\n".join(texts)
+
+    # 2. 回退到 structuredContent
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        return _json.dumps(structured, ensure_ascii=False)
+
+    return ""

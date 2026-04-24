@@ -61,7 +61,7 @@ function TemplateDrawer({
           </div>
 
           {/* Tool list */}
-          {template.tool_list.length > 0 && (
+          {(template.tool_list?.length ?? 0) > 0 && (
             <div>
               <p className="text-xs font-medium text-gray-500 mb-2">工具列表</p>
               <div className="flex flex-wrap gap-1.5">
@@ -119,7 +119,7 @@ function TemplateCard({
       </div>
 
       {/* Tool chips */}
-      {template.tool_list.length > 0 && (
+      {(template.tool_list?.length ?? 0) > 0 && (
         <div className="flex flex-wrap gap-1">
           {template.tool_list.slice(0, 4).map((tool) => (
             <span

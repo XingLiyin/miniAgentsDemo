@@ -99,13 +99,13 @@ class Observer:
 
         for _round in range(max_rounds):
             _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools)
-            full_text, tool_call_acc = _stream_observer(
+            full_text, tool_call_acc, image_acc = _stream_observer(
                 llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}"
             )
             if full_text:
                 last_llm_text = full_text
 
-            tool_calls = self._prompt_builder.build_tool_calls_from_stream(tool_call_acc)
+            tool_calls = llm_client.parse_stream_acc(full_text, tool_call_acc, images=image_acc).tool_calls
 
             if not tool_calls:
                 break
@@ -122,6 +122,12 @@ class Observer:
                 messages = self._prompt_builder.append_tool_result(
                     messages, tool_call.name, tool_result, tool_call_id=tool_call.id
                 )
+                _push_observer_tool_call(
+                    session_id, f"observer_round_{_round}",
+                    tool_call.name, tool_call.input,
+                    tool_result.content if hasattr(tool_result, "content") else str(tool_result),
+                    bool(getattr(tool_result, "is_error", False)),
+                )
 
             if task.status != "TO_BE_OBSERVED":
                 live_siblings = [
@@ -133,7 +139,9 @@ class Observer:
                     t.status in ("FINISHED", "PENDING") for t in live_siblings
                 )
                 if not live_reviewable or reviews_submitted:
-                    break
+                    # Task is settled and no reviews pending — let LLM output one final
+                    # summary turn (no tools), then exit via the `if not tool_calls` branch.
+                    tools = []
 
         if task.status == "TO_BE_OBSERVED":
             raise RuntimeError("Observer: no assessment submitted by LLM")
@@ -169,11 +177,13 @@ class Observer:
             return ObserverVerdict(summary=summary)
 
         if result.success:
-            summary = "Completed this turn's task."
-            self._task_svc.finish(task.id, result=result.output or "")
+            detail = result.output or ""
+            summary = f"Completed this turn's task.\n{detail}" if detail else "Completed this turn's task."
+            self._task_svc.finish(task.id, result=detail)
         else:
-            summary = "Task failed this turn."
-            self._task_svc.fail(task.id, error=result.output or result.error or "")
+            detail = result.output or result.error or ""
+            summary = f"Task failed this turn.\n{detail}" if detail else "Task failed this turn."
+            self._task_svc.fail(task.id, error=detail)
         return ObserverVerdict(summary=summary)
 
 
@@ -208,10 +218,14 @@ def _stream_observer(
     tools: list,
     session_id: str,
     round_label: str,
-) -> tuple[str, dict]:
-    """流式调用 LLM，推送 observer_text_delta / observer_text_done，返回 (full_text, tool_call_acc)。"""
+) -> tuple[str, dict, list]:
+    """流式调用 LLM，推送 observer_text_delta / observer_text_done，返回 (full_text, tool_call_acc, image_acc)。"""
     full_text = ""
+    reasoning_text = ""
     tool_call_acc: dict[int, dict] = {}
+    image_acc: list = []
+    finish_reason = None
+    final_usage = None
 
     try:
         from app.common.sse_bus import get_sse_bus
@@ -231,11 +245,33 @@ def _stream_observer(
                     })
                 except Exception:
                     pass
+        if chunk.reasoning_delta:
+            reasoning_text += chunk.reasoning_delta
+            if _sse:
+                try:
+                    _sse.push(session_id, {
+                        "type": "observer_reasoning_delta",
+                        "delta": chunk.reasoning_delta,
+                        "round_label": round_label,
+                    })
+                except Exception:
+                    pass
         if chunk.tool_call_delta:
             tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
+        if chunk.image:
+            image_acc.append(chunk.image)
+        if chunk.is_done:
+            finish_reason = chunk.finish_reason
+            final_usage = chunk.usage
 
     if _sse:
         try:
+            if reasoning_text:
+                _sse.push(session_id, {
+                    "type": "observer_reasoning_done",
+                    "text": reasoning_text,
+                    "round_label": round_label,
+                })
             _sse.push(session_id, {
                 "type": "observer_text_done",
                 "text": full_text,
@@ -244,6 +280,43 @@ def _stream_observer(
         except Exception:
             pass
 
-    return full_text, tool_call_acc
+    logger.info(
+        "Observer LLM stream finished: round_label=%s finish_reason=%s usage=%s text_len=%s reasoning_len=%s tool_calls=%s images=%s",
+        round_label,
+        finish_reason,
+        final_usage,
+        len(full_text),
+        len(reasoning_text),
+        len(tool_call_acc),
+        len(image_acc),
+    )
+
+    return full_text, tool_call_acc, image_acc
 
 
+def _push_observer_tool_call(
+    session_id: str,
+    round_label: str,
+    tool_name: str,
+    arguments: dict,
+    result,
+    is_error: bool,
+) -> None:
+    if not session_id:
+        return
+    from app.common.utils import now_iso
+    from app.llm.types import content_to_text
+    result_text = content_to_text(result) if isinstance(result, list) else str(result or "")
+    try:
+        from app.common.sse_bus import get_sse_bus
+        get_sse_bus().push(session_id, {
+            "type": "observer_tool_call",
+            "round_label": round_label,
+            "tool_name": tool_name,
+            "arguments": arguments,
+            "result": result_text,
+            "is_error": is_error,
+            "created_at": now_iso(),
+        })
+    except Exception:
+        pass

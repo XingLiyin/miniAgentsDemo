@@ -23,7 +23,7 @@ class BlackboardService:
         session_id: str,
         topic: str,
         publisher_id: str,
-        content: str,
+        content: str | list,
     ) -> BlackboardEntry:
         """发布一条黑板条目（追加写）。"""
         entry = BlackboardEntry(

@@ -20,7 +20,7 @@ import logging
 
 from agent_framework import MCPStreamableHTTPTool
 
-from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin
+from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin, _parse_mcp_tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,7 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
             url=url,
             load_tools=True,
             request_timeout=timeout,
+            parse_tool_results=_parse_mcp_tool_result,
         )
         super().__init__(af_tool, thread_name="mcp-http-loop")
 

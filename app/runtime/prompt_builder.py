@@ -9,11 +9,10 @@ BasePromptBuilder 持有两者共用的工具方法。
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
-from app.llm.types import LLMMessage, ToolCallBlock
+from app.llm.types import ImagePart, LLMMessage, TextPart, ToolCallBlock, content_from_raw, content_to_text
 
 if TYPE_CHECKING:
     from app.domain.models.session import Session
@@ -54,9 +53,10 @@ class BasePromptBuilder:
     ) -> list[LLMMessage]:
         """将工具调用结果追加到消息历史。"""
         is_error = getattr(tool_result, "is_error", False)
-        content  = getattr(tool_result, "content", "") or ""
+        content: str | list = getattr(tool_result, "content", "") or ""
         if is_error:
-            content = f"[ERROR] {content}"
+            text = content_to_text(content) if isinstance(content, list) else content
+            content = f"[ERROR] {text}"
         messages.append(LLMMessage(role="tool", content=content, tool_call_id=tool_call_id))
         return messages
 
@@ -64,13 +64,19 @@ class BasePromptBuilder:
         """过滤空白消息，合并连续同角色消息（tool/assistant 不合并）。"""
         filtered = [
             m for m in messages
-            if (m.content and m.content.strip()) or m.tool_calls or m.role == "tool"
+            if (m.content and content_to_text(m.content).strip()) or m.tool_calls or m.role == "tool"
         ]
         merged: list[LLMMessage] = []
         for m in filtered:
             if (merged and merged[-1].role == m.role
                     and m.role not in ("tool", "assistant")):
-                merged[-1].content = merged[-1].content + "\n\n" + m.content
+                prev_parts = content_from_raw(merged[-1].content) if isinstance(merged[-1].content, list) else None
+                curr_parts = content_from_raw(m.content) if isinstance(m.content, list) else None
+                prev_images = [p for p in prev_parts if isinstance(p, ImagePart)] if prev_parts else []
+                curr_images = [p for p in curr_parts if isinstance(p, ImagePart)] if curr_parts else []
+                all_images = prev_images + curr_images
+                merged_text = content_to_text(merged[-1].content) + "\n\n" + content_to_text(m.content)
+                merged[-1].content = ([*all_images, TextPart(text=merged_text)] if all_images else merged_text)
             else:
                 merged.append(LLMMessage(
                     role=m.role,
@@ -80,23 +86,6 @@ class BasePromptBuilder:
                 ))
         return merged
 
-    def build_tool_calls_from_stream(self, acc: dict[int, dict]) -> list[ToolCallBlock]:
-        """将流式 tool_call 累积缓冲区转换为 ToolCallBlock 列表。"""
-        result = []
-        for idx in sorted(acc.keys()):
-            buf = acc[idx]
-            args_raw = buf.get("arguments") or ""
-            try:
-                args = json.loads(args_raw) if args_raw else {}
-            except json.JSONDecodeError:
-                args = {"_raw": args_raw}
-            result.append(ToolCallBlock(
-                type="tool_call",
-                id=buf.get("id", ""),
-                name=buf.get("name", ""),
-                input=args,
-            ))
-        return result
 
 
 # ── Actor prompt builder ───────────────────────────────────────────────────────
@@ -121,27 +110,37 @@ class ActorPromptBuilder(BasePromptBuilder):
         for m in recent_messages:
             messages.append(LLMMessage(
                 role=m.get("role", "user"),
-                content=m.get("content", ""),
+                content=content_from_raw(m.get("content", "")),
                 tool_call_id=m.get("tool_call_id"),
                 tool_calls=m.get("tool_calls"),
             ))
 
         parts: list[str] = []
         if ctx.blackboard_snippets:
-            parts.append("Task Background:\n" + "\n".join(f"- {s}" for s in ctx.blackboard_snippets))
+            parts.append("Task Background:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
         if task.title and task.description:
             parts.append(f"Current goal: {task.title}\nDescription: {task.description}")
         if ctx.summary_text:
             parts.append(f"Previous progress:\n{ctx.summary_text}")
-        parts.append(f"Current message: {ctx.current_task.user_prompt}")
 
-        messages.append(LLMMessage(role="user", content="\n".join(parts)))
+        user_prompt = ctx.current_task.user_prompt
+        parts.append(f"Current message: {content_to_text(user_prompt)}")
+        text_content = "\n".join(parts)
+
+        if isinstance(user_prompt, list):
+            image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]
+            msg_content = ([*image_parts, TextPart(text=text_content)] if image_parts else text_content)
+        else:
+            msg_content = text_content
+
+        messages.append(LLMMessage(role="user", content=msg_content))
         return messages
 
     def _build_resources_section(self, ctx: "ReasoningContext") -> str:
         """将 ctx.actor_resources 按 kind 分组渲染为 system prompt 段落。"""
         skills = [r for r in ctx.actor_resources if r.kind == "skill"]
         tools  = [r for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None]
+        agents = [r for r in ctx.actor_resources if r.kind == "agent"]
         parts: list[str] = []
         if skills:
             lines = ["## Available Skills (assign to tasks where appropriate)"]
@@ -152,6 +151,14 @@ class ActorPromptBuilder(BasePromptBuilder):
             lines = ["## Available Tools (use them via tool calls)"]
             for r in tools:
                 lines.append(f"- {r.llm_tool.to_prompt_text()}")
+            parts.append("\n".join(lines))
+        if agents:
+            lines = [
+                "## Available Sub-Agents",
+                "Delegate via: submit_task(use_subagent=True, subagent_template='<name>')",
+            ]
+            for r in agents:
+                lines.append(f"- {r.name}: {r.description}")
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 

@@ -7,15 +7,22 @@ from typing import Any, Dict, Iterator, Optional
 
 from app.llm.base import BaseAdapter, StreamTransport, Transport
 from app.llm.types import (
+    DocumentBlock,
+    DocumentPart,
+    ImageBlock,
+    ImagePart,
     LLMMessage,
     LLMRequest,
     LLMResponse,
     LLMTool,
     LLMUsage,
+    MessageContent,
     ParsedResponse,
     StreamChunk,
     TextBlock,
-    ToolCallBlock
+    TextPart,
+    ToolCallBlock,
+    content_to_text,
 )
 
 
@@ -46,6 +53,7 @@ class AnthropicAdapter(BaseAdapter):
         raw = response.raw or {}
         blocks: list = []
         tool_calls: list[ToolCallBlock] = []
+        images: list[ImageBlock] = []
         text_parts: list[str] = []
 
         for block in raw.get('content') or []:
@@ -66,9 +74,27 @@ class AnthropicAdapter(BaseAdapter):
                 )
                 blocks.append(tool_block)
                 tool_calls.append(tool_block)
+            elif block_type == 'image':
+                source = block.get('source') or {}
+                img = ImageBlock(
+                    type='image',
+                    media_type=source.get('media_type', ''),
+                    source_type=source.get('type', 'base64'),
+                    data=source.get('data') or source.get('url', ''),
+                )
+                blocks.append(img)
+                images.append(img)
+            elif block_type == 'document':
+                source = block.get('source') or {}
+                doc = DocumentBlock(
+                    type='document',
+                    media_type=source.get('media_type', ''),
+                    data=source.get('data', ''),
+                )
+                blocks.append(doc)
 
         text = '\n'.join(text_parts).strip()
-        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, raw=raw, usage=response.usage)
+        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, images=images, raw=raw, usage=response.usage)
 
     # ── 流式 ──────────────────────────────────────────────────────────────
 
@@ -111,6 +137,14 @@ class AnthropicAdapter(BaseAdapter):
                         'name': block.get('name', ''),
                         'arguments': '',
                     }
+                elif current_block_type == 'image':
+                    source = block.get('source') or {}
+                    yield StreamChunk(image=ImageBlock(
+                        type='image',
+                        media_type=source.get('media_type', ''),
+                        source_type=source.get('type', 'base64'),
+                        data=source.get('data') or source.get('url', ''),
+                    ))
 
             elif event_type == 'content_block_delta':
                 delta = event.get('delta') or {}
@@ -133,11 +167,12 @@ class AnthropicAdapter(BaseAdapter):
 
             elif event_type == 'message_delta':
                 # 包含 stop_reason 和最终 usage
+                stop_reason = event.get('delta', {}).get('stop_reason') or event.get('stop_reason')
                 usage_data = event.get('usage') or {}
                 usage = LLMUsage(
                     completion_tokens=usage_data.get('output_tokens'),
                 ) if usage_data else None
-                yield StreamChunk(is_done=True, usage=usage)
+                yield StreamChunk(is_done=True, finish_reason=stop_reason, usage=usage)
                 return
 
     # ── 内部工具 ──────────────────────────────────────────────────────────
@@ -201,13 +236,44 @@ def _extract_anthropic_usage(resp: Dict[str, Any]) -> Optional[LLMUsage]:
     )
 
 
+def _content_to_text(content: MessageContent) -> str:
+    return content_to_text(content)
+
+
+def _content_to_anthropic_blocks(content: MessageContent) -> 'list[dict] | str':
+    """将 MessageContent 转为 Anthropic content blocks。
+    纯字符串直接返回（保持向后兼容），part 列表逐项转换。
+    """
+    if isinstance(content, str):
+        return content
+    blocks: list[dict] = []
+    for part in content:
+        if isinstance(part, TextPart):
+            if part.text:
+                blocks.append({"type": "text", "text": part.text})
+        elif isinstance(part, ImagePart):
+            if part.source_type == "url":
+                blocks.append({"type": "image", "source": {"type": "url", "url": part.data}})
+            else:
+                blocks.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": part.media_type, "data": part.data},
+                })
+        elif isinstance(part, DocumentPart):
+            blocks.append({
+                "type": "document",
+                "source": {"type": "base64", "media_type": part.media_type, "data": part.data},
+            })
+    return blocks or ""
+
+
 def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
     """将内部 LLMMessage 列表序列化为 Anthropic Messages API 格式。
 
     - role="assistant" + tool_calls → content 块列表（text + tool_use）
     - role="tool" → 合并连续 tool 消息为单条 role="user" 的 tool_result 块列表
     - role="tool" 且 tool_call_id 为空 → 降级为普通 user 文本（历史记忆回放场景）
-    - 其他 role 原样传递（content 保持字符串）
+    - 其他 role → content 经 _content_to_anthropic_blocks 转换（支持多模态）
     """
     result: list[dict] = []
     i = 0
@@ -216,8 +282,9 @@ def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
 
         if m.role == "assistant":
             content_blocks: list[dict] = []
-            if m.content:
-                content_blocks.append({"type": "text", "text": m.content})
+            text = _content_to_text(m.content)
+            if text:
+                content_blocks.append({"type": "text", "text": text})
             for tc in (m.tool_calls or []):
                 content_blocks.append({
                     "type": "tool_use",
@@ -225,7 +292,7 @@ def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
                     "name": tc["name"],
                     "input": tc["input"],
                 })
-            result.append({"role": "assistant", "content": content_blocks or m.content})
+            result.append({"role": "assistant", "content": content_blocks or text})
             i += 1
 
         elif m.role == "tool":
@@ -237,10 +304,10 @@ def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
                     tool_result_blocks.append({
                         "type": "tool_result",
                         "tool_use_id": tm.tool_call_id,
-                        "content": tm.content,
+                        "content": _content_to_anthropic_blocks(tm.content),
                     })
                 else:
-                    fallback_texts.append(tm.content)
+                    fallback_texts.append(_content_to_text(tm.content))
                 i += 1
             if tool_result_blocks:
                 result.append({"role": "user", "content": tool_result_blocks})
@@ -248,7 +315,7 @@ def _serialize_messages_anthropic(messages: list[LLMMessage]) -> list[dict]:
                 result.append({"role": "user", "content": "\n\n".join(fallback_texts)})
 
         else:
-            result.append({"role": m.role, "content": m.content})
+            result.append({"role": m.role, "content": _content_to_anthropic_blocks(m.content)})
             i += 1
 
     return result
@@ -259,7 +326,7 @@ def _split_system_messages(req: LLMRequest) -> tuple[str, list]:
     non_system = []
     for m in req.messages:
         if m.role == 'system':
-            system_parts.append(m.content)
+            system_parts.append(_content_to_text(m.content))
         else:
             non_system.append(m)
     return '\n'.join(system_parts).strip(), non_system

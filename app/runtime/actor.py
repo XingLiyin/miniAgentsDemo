@@ -72,11 +72,12 @@ class Actor:
             messages_sent = list(messages)
             self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx)
 
-            full_text, tool_call_acc = self._stream_llm(
+            full_text, tool_call_acc, image_acc = self._stream_llm(
                 llm_client, messages, system_prompt, tools, _round, _sse, session_id
             )
             last_text = full_text
-            tool_calls_from_stream = self._prompt_builder.build_tool_calls_from_stream(tool_call_acc)
+            parsed = llm_client.parse_stream_acc(full_text, tool_call_acc, images=image_acc)
+            tool_calls_from_stream = parsed.tool_calls
 
             round_tool_calls: list[ToolCallRecord] = []
             done = False
@@ -95,6 +96,7 @@ class Actor:
                 messages_sent=messages_sent,
                 llm_text=last_text,
                 tool_calls=round_tool_calls,
+                images=parsed.images,
             ))
 
             if not tool_calls_from_stream or done:
@@ -141,17 +143,56 @@ class Actor:
 
     def _stream_llm(self, llm_client, messages, system_prompt, tools, _round: int, _sse, session_id: str):
         full_text = ""
-        tool_call_acc: dict[int, dict] = {}  # index → cumulative {id, name, arguments}
+        reasoning_text = ""
+        tool_call_acc: dict[int, dict] = {}
+        image_acc: list = []
+        finish_reason = None
+        final_usage = None
 
         for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools):
             if chunk.text_delta:
                 full_text += chunk.text_delta
                 self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
+            if chunk.reasoning_delta:
+                reasoning_text += chunk.reasoning_delta
+                self._sse_push(_sse, session_id, {
+                    "type": "reasoning_delta",
+                    "delta": chunk.reasoning_delta,
+                    "round": _round,
+                })
             if chunk.tool_call_delta:
                 tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
+            if chunk.image:
+                image_acc.append(chunk.image)
+                self._sse_push(_sse, session_id, {
+                    "type": "image",
+                    "media_type": chunk.image.media_type,
+                    "source_type": chunk.image.source_type,
+                    "data": chunk.image.data,
+                    "round": _round,
+                })
+            if chunk.is_done:
+                finish_reason = chunk.finish_reason
+                final_usage = chunk.usage
 
+        if reasoning_text:
+            self._sse_push(_sse, session_id, {
+                "type": "reasoning_done",
+                "text": reasoning_text,
+                "round": _round,
+            })
         self._sse_push(_sse, session_id, {"type": "text_done", "text": full_text, "round": _round})
-        return full_text, tool_call_acc
+        logger.info(
+            "Actor LLM stream finished: round=%s finish_reason=%s usage=%s text_len=%s reasoning_len=%s tool_calls=%s images=%s",
+            _round,
+            finish_reason,
+            final_usage,
+            len(full_text),
+            len(reasoning_text),
+            len(tool_call_acc),
+            len(image_acc),
+        )
+        return full_text, tool_call_acc, image_acc
 
     def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages, _sse, session_id: str):
         from app.common.utils import now_iso
@@ -175,10 +216,12 @@ class Actor:
             if task.actor_done:
                 done = True
 
+            from app.llm.types import content_to_text
+            result_text = content_to_text(result.content) if isinstance(result.content, list) else (result.content or "")
             record = ToolCallRecord(
                 tool_name=tool_call.name,
                 arguments=tool_call.input,
-                result=result.content or "",
+                result=result_text,
                 is_error=result.is_error,
                 tool_call_id=tool_call.id,
             )
@@ -218,4 +261,3 @@ class Actor:
             actor_mode=actor_mode,
             skill_used=skill_used,
         )
-

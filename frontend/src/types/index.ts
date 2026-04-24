@@ -193,6 +193,48 @@ export interface RegisterMCPHttpRequest {
   timeout?: number
 }
 
+// ─── Remote Skill Source ─────────────────────────────────────────────────────
+
+export interface RemoteSkillSource {
+  source_name: string
+  mcp_type: 'http' | 'stdio'
+  mcp_tool_list_skills: string
+  mcp_tool_load_skill_md: string
+  mcp_tool_get_skill_files: string
+  mcp_tool_load_skill_reference: string
+  mcp_tool_exec_skill_script: string
+  // http
+  mcp_url?: string | null
+  mcp_timeout?: number | null
+  // stdio
+  mcp_command?: string | null
+  mcp_args?: string[] | null
+  mcp_env?: Record<string, string> | null
+}
+
+export interface RegisterSkillSourceHttpRequest {
+  source_name: string
+  mcp_url: string
+  mcp_timeout?: number
+  mcp_tool_list_skills?: string
+  mcp_tool_load_skill_md?: string
+  mcp_tool_get_skill_files?: string
+  mcp_tool_load_skill_reference?: string
+  mcp_tool_exec_skill_script?: string
+}
+
+export interface RegisterSkillSourceStdioRequest {
+  source_name: string
+  mcp_command: string
+  mcp_args?: string[]
+  mcp_env?: Record<string, string>
+  mcp_tool_list_skills?: string
+  mcp_tool_load_skill_md?: string
+  mcp_tool_get_skill_files?: string
+  mcp_tool_load_skill_reference?: string
+  mcp_tool_exec_skill_script?: string
+}
+
 // ─── API Error ───────────────────────────────────────────────────────────────
 
 export interface ApiError {

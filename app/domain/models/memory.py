@@ -8,12 +8,12 @@ from typing import Any
 
 @dataclass
 class MemoryItem:
-    """单条消息记录（存入 messages.jsonl）。"""
+    """单条消息记录（存入 messages.jsonl）。content 支持纯文本或多模态 part 列表。"""
     id: str
     session_id: str
     agent_id: str
     role: str                          # user | assistant | tool
-    content: str
+    content: str | list
     task_id: str | None = None
     created_at: str = ""
     tool_call_id: str | None = None    # role="tool" 时填充，用于 provider 协议配对

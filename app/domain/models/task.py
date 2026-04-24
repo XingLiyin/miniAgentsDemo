@@ -20,7 +20,7 @@ class Task:
     assigned_agent_id: str             # 被分配执行该任务的 agent（auto-spawn 时可更新）
     status: str                        # PENDING | ACTIVE | SUSPENDED | TO_BE_OBSERVED | FINISHED | FAILED | CANCELED
 
-    user_prompt: str                   # 用户输入的文本信息，创建 task 的依据，供 Agent 处理，不可为空
+    user_prompt: str | list            # 用户输入，str 纯文本或 list[ContentPart dict] 多模态
     conversation_turns: list[dict[str, Any]] = field(default_factory=list) # 任务相关的对话历史（agent 内部维护，非必需）
 
     title: str = ""                    # 简短描述，供 Agent 识别和展示用, 可为空，等待 llm 补全

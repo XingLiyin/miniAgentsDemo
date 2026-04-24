@@ -33,7 +33,7 @@ class MemoryService:
         self,
         agent_id: str,
         role: str,
-        content: str,
+        content: str | list,
         session_id: str = "",
         task_id: str | None = None,
         tool_call_id: str | None = None,
@@ -111,9 +111,14 @@ class MemoryService:
         )
 
         # 粗略 token 估算
+        def _to_text(v: object) -> str:
+            if isinstance(v, list):
+                return " ".join(p.get("text", "") for p in v if isinstance(p, dict) and p.get("type") == "text")
+            return str(v) if v else ""
+
         total_text = system_prompt + goal + task_description + summary_text
-        total_text += " ".join(m.get("content", "") for m in messages)
-        total_text += " ".join(blackboard_snippets or [])
+        total_text += " ".join(_to_text(m.get("content", "")) for m in messages)
+        total_text += " ".join(_to_text(s) for s in (blackboard_snippets or []))
         ctx.token_estimate = estimate_tokens(total_text)
 
         # 超过 60% token_budget 时截断低优先级内容（blackboard + 旧消息）

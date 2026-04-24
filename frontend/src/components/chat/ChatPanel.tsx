@@ -1,16 +1,77 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, Clock, MessageCircleQuestion, Eye, Code2 } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, Clock, MessageCircleQuestion, Eye, Code2, Paperclip, X } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
+import type { ContentPart, ImagePart } from '@/api/sessions'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
-import type { ChatItem, ChatMessage, ChatToolCall, ChatTaskEvent, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage } from '@/hooks/useSessionSSE'
-import type { Session } from '@/types'
+import type { ChatItem, ChatMessage, ChatToolCall, ChatTaskEvent, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatObserverToolCall, ChatImageData } from '@/hooks/useSessionSSE'
 import { formatTime } from '@/lib/status'
 import { SessionStatusBadge } from '@/components/session/StatusBadge'
 import { Spinner } from '@/components/ui/spinner'
 
 // ── Individual item renderers ─────────────────────────────────────────────────
+
+function imageUrl(img: ChatImageData): string {
+  return img.source_type === 'url' ? img.data : `data:${img.media_type};base64,${img.data}`
+}
+
+function ImageGrid({ images }: { images: ChatImageData[] }) {
+  return (
+    <div className={clsx('grid gap-1 mt-1', images.length === 1 ? 'grid-cols-1' : 'grid-cols-2')}>
+      {images.map((img, i) => (
+        <a key={i} href={imageUrl(img)} target="_blank" rel="noopener noreferrer">
+          <img
+            src={imageUrl(img)}
+            alt=""
+            className="rounded-lg max-h-48 w-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+          />
+        </a>
+      ))}
+    </div>
+  )
+}
+
+function ReasoningBlock({
+  reasoning,
+  tone = 'actor',
+  defaultOpen = false,
+}: {
+  reasoning: string
+  tone?: 'actor' | 'observer'
+  defaultOpen?: boolean
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  const styles = tone === 'observer'
+    ? {
+        button: 'text-purple-500 hover:text-purple-700',
+        panel: 'bg-purple-100/80 border-purple-200 text-purple-900',
+        label: 'text-purple-700',
+      }
+    : {
+        button: 'text-slate-500 hover:text-slate-700',
+        panel: 'bg-slate-100 border-slate-200 text-slate-800',
+        label: 'text-slate-700',
+      }
+
+  return (
+    <div className="mb-2">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={clsx('flex items-center gap-1.5 text-xs transition-colors', styles.button)}
+      >
+        {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        <span className="font-medium">Reasoning</span>
+      </button>
+      {open && (
+        <div className={clsx('mt-1 rounded-lg border px-3 py-2 text-xs leading-5', styles.panel)}>
+          <p className={clsx('mb-1 font-medium', styles.label)}>Model reasoning</p>
+          <p className="whitespace-pre-wrap break-words">{reasoning}</p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 function MessageBubble({ item }: { item: ChatMessage }) {
   const isUser = item.role === 'user'
@@ -31,7 +92,9 @@ function MessageBubble({ item }: { item: ChatMessage }) {
             ? 'bg-blue-600 text-white rounded-tr-sm'
             : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm'
         )}>
-          <p className="whitespace-pre-wrap break-words">{item.content}</p>
+          {item.images && item.images.length > 0 && <ImageGrid images={item.images} />}
+          {!isUser && item.reasoning && <ReasoningBlock reasoning={item.reasoning} />}
+          {item.content && <p className="whitespace-pre-wrap break-words mt-1">{item.content}</p>}
         </div>
         {item.created_at && (
           <p className="text-xs text-gray-400 mt-1 px-1">{formatTime(item.created_at)}</p>
@@ -116,7 +179,7 @@ function TaskEventBadge({ item }: { item: ChatTaskEvent }) {
   )
 }
 
-function StreamingBubble({ text }: { text: string }) {
+function StreamingBubble({ text, images, reasoning }: { text: string; images?: ChatImageData[]; reasoning?: string }) {
   return (
     <div className="flex items-start gap-2">
       <div className="w-6 h-6 rounded-full bg-gray-200 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -124,10 +187,14 @@ function StreamingBubble({ text }: { text: string }) {
       </div>
       <div className="flex flex-col items-start max-w-[80%]">
         <div className="rounded-xl px-3 py-2 text-sm leading-relaxed bg-white border border-gray-200 text-gray-800 rounded-tl-sm">
-          <p className="whitespace-pre-wrap break-words">
-            {text}
-            <span className="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 align-text-bottom animate-pulse" />
-          </p>
+          {images && images.length > 0 && <ImageGrid images={images} />}
+          {reasoning && <ReasoningBlock reasoning={reasoning} defaultOpen />}
+          {(text || !reasoning) && (
+            <p className="whitespace-pre-wrap break-words mt-1">
+              {text}
+              <span className="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 align-text-bottom animate-pulse" />
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -168,7 +235,9 @@ function LLMPromptCard({ item }: { item: ChatLLMPrompt }) {
             {item.messages.map((m, i) => (
               <div key={i} className="px-3 py-2 border-b border-slate-800 last:border-b-0">
                 <p className="text-slate-400 mb-1">{m.role}</p>
-                <pre className="text-slate-200 whitespace-pre-wrap break-words">{m.content}</pre>
+                <pre className="text-slate-200 whitespace-pre-wrap break-words">
+                  {typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}
+                </pre>
               </div>
             ))}
             {item.tool_names.length > 0 && (
@@ -194,6 +263,7 @@ function ObserverBubble({ item }: { item: ChatObserverMessage }) {
       <div className="flex flex-col items-start max-w-[80%]">
         <p className="text-xs text-purple-400 mb-0.5">{isRound2 ? 'Observer · 任务复核' : 'Observer · 评估'}</p>
         <div className="rounded-xl px-3 py-2 text-sm leading-relaxed bg-purple-50 border border-purple-200 text-purple-900 rounded-tl-sm">
+          {item.reasoning && <ReasoningBlock reasoning={item.reasoning} tone="observer" />}
           <p className="whitespace-pre-wrap break-words">{item.content}</p>
         </div>
         {item.created_at && (
@@ -204,7 +274,54 @@ function ObserverBubble({ item }: { item: ChatObserverMessage }) {
   )
 }
 
-function ObserverStreamingBubble({ text }: { text: string }) {
+function ObserverToolCallCard({ item }: { item: ChatObserverToolCall }) {
+  const [open, setOpen] = useState(false)
+  const argStr = (() => {
+    try { return JSON.stringify(item.arguments, null, 2) } catch { return String(item.arguments) }
+  })()
+
+  return (
+    <div className="flex items-start gap-2 px-1">
+      <div className="w-6 h-6 rounded bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Wrench size={11} className="text-purple-500" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-600 transition-colors w-full text-left"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="font-mono font-medium text-purple-700">{item.tool_name}</span>
+          {item.is_error
+            ? <XCircle size={11} className="text-red-400 ml-auto flex-shrink-0" />
+            : <CheckCircle2 size={11} className="text-purple-400 ml-auto flex-shrink-0" />}
+        </button>
+        {open && (
+          <div className="mt-1.5 bg-purple-950 rounded-lg overflow-hidden text-xs">
+            {argStr !== '{}' && (
+              <div className="px-3 py-2 border-b border-purple-800">
+                <p className="text-purple-400 mb-1">参数</p>
+                <pre className="text-yellow-300 overflow-x-auto whitespace-pre-wrap break-words">{argStr}</pre>
+              </div>
+            )}
+            <div className="px-3 py-2">
+              <p className="text-purple-400 mb-1">{item.is_error ? '错误' : '结果'}</p>
+              <pre className={clsx(
+                'overflow-x-auto whitespace-pre-wrap break-words',
+                item.is_error ? 'text-red-400' : 'text-purple-200'
+              )}>{item.result || '(空)'}</pre>
+            </div>
+          </div>
+        )}
+        {item.created_at && (
+          <p className="text-xs text-purple-300 mt-1">{formatTime(item.created_at)}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ObserverStreamingBubble({ text, reasoning }: { text: string; reasoning?: string }) {
   return (
     <div className="flex items-start gap-2">
       <div className="w-6 h-6 rounded-full bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -213,10 +330,13 @@ function ObserverStreamingBubble({ text }: { text: string }) {
       <div className="flex flex-col items-start max-w-[80%]">
         <p className="text-xs text-purple-400 mb-0.5">Observer</p>
         <div className="rounded-xl px-3 py-2 text-sm leading-relaxed bg-purple-50 border border-purple-200 text-purple-900 rounded-tl-sm">
-          <p className="whitespace-pre-wrap break-words">
-            {text}
-            <span className="inline-block w-0.5 h-4 bg-purple-400 ml-0.5 align-text-bottom animate-pulse" />
-          </p>
+          {reasoning && <ReasoningBlock reasoning={reasoning} tone="observer" defaultOpen />}
+          {(text || !reasoning) && (
+            <p className="whitespace-pre-wrap break-words">
+              {text}
+              <span className="inline-block w-0.5 h-4 bg-purple-400 ml-0.5 align-text-bottom animate-pulse" />
+            </p>
+          )}
         </div>
       </div>
     </div>
@@ -231,10 +351,36 @@ function ChatItemView({ item }: { item: ChatItem }) {
     case 'waiting_input': return null // handled by input area
     case 'llm_prompt': return <LLMPromptCard item={item} />
     case 'observer_message': return <ObserverBubble item={item} />
+    case 'observer_tool_call': return <ObserverToolCallCard item={item} />
   }
 }
 
 // ── Input area ────────────────────────────────────────────────────────────────
+
+interface Attachment {
+  file: File
+  dataUrl: string   // base64 data URL for preview + sending
+  mediaType: string
+}
+
+function AttachmentPreview({ attachments, onRemove }: { attachments: Attachment[]; onRemove: (i: number) => void }) {
+  if (attachments.length === 0) return null
+  return (
+    <div className="flex flex-wrap gap-1.5 mb-2">
+      {attachments.map((a, i) => (
+        <div key={i} className="relative group w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0">
+          <img src={a.dataUrl} alt="" className="w-full h-full object-cover" />
+          <button
+            onClick={() => onRemove(i)}
+            className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            <X size={14} className="text-white" />
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 function TextInput({
   sessionId,
@@ -244,22 +390,52 @@ function TextInput({
   disabled?: boolean
 }) {
   const [text, setText] = useState('')
+  const [attachments, setAttachments] = useState<Attachment[]>([])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
   const mutation = useMutation({
-    mutationFn: (content: string) => sessionsApi.sendMessage(sessionId, content),
+    mutationFn: (content: string | ContentPart[]) => sessionsApi.sendMessage(sessionId, content),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       setText('')
+      setAttachments([])
       textareaRef.current?.focus()
     },
   })
 
   const submit = () => {
     const trimmed = text.trim()
-    if (!trimmed || mutation.isPending || disabled) return
-    mutation.mutate(trimmed)
+    if ((!trimmed && attachments.length === 0) || mutation.isPending || disabled) return
+
+    if (attachments.length > 0) {
+      const parts: ContentPart[] = [
+        ...attachments.map((a): ImagePart => ({
+          type: 'image',
+          data: a.dataUrl.split(',')[1],   // strip "data:...;base64," prefix
+          media_type: a.mediaType,
+          source_type: 'base64',
+        })),
+        ...(trimmed ? [{ type: 'text' as const, text: trimmed }] : []),
+      ]
+      mutation.mutate(parts)
+    } else {
+      mutation.mutate(trimmed)
+    }
+  }
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files) return
+    Array.from(files).forEach(file => {
+      if (!file.type.startsWith('image/')) return
+      const reader = new FileReader()
+      reader.onload = e => {
+        const dataUrl = e.target?.result as string
+        setAttachments(prev => [...prev, { file, dataUrl, mediaType: file.type }])
+      }
+      reader.readAsDataURL(file)
+    })
   }
 
   useEffect(() => {
@@ -269,15 +445,45 @@ function TextInput({
     el.style.height = Math.min(el.scrollHeight, 120) + 'px'
   }, [text])
 
+  const canSend = (text.trim() || attachments.length > 0) && !mutation.isPending && !disabled
+
   return (
     <div className="border-t border-gray-200 bg-white p-3">
       {mutation.isError && <p className="text-xs text-red-500 mb-2">发送失败，请重试</p>}
+      <AttachmentPreview attachments={attachments} onRemove={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))} />
       <div className="flex items-end gap-2">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={e => handleFiles(e.target.files)}
+        />
+        <button
+          onClick={() => fileInputRef.current?.click()}
+          disabled={disabled}
+          className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0 disabled:opacity-40"
+          title="附加图片"
+        >
+          <Paperclip size={15} />
+        </button>
         <textarea
           ref={textareaRef}
           value={text}
           onChange={e => setText(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
+          onPaste={e => {
+            const items = e.clipboardData?.items
+            if (!items) return
+            const imageItems = Array.from(items).filter(it => it.type.startsWith('image/'))
+            if (imageItems.length === 0) return
+            e.preventDefault()
+            imageItems.forEach(it => {
+              const file = it.getAsFile()
+              if (file) handleFiles(Object.assign(new DataTransfer(), { files: [file] as unknown as FileList }).files)
+            })
+          }}
           placeholder={disabled ? 'Agent 正在运行中...' : '向 Agent 发送消息… (Enter 发送，Shift+Enter 换行)'}
           rows={1}
           disabled={disabled}
@@ -285,12 +491,10 @@ function TextInput({
         />
         <button
           onClick={submit}
-          disabled={!text.trim() || mutation.isPending || disabled}
+          disabled={!canSend}
           className={clsx(
             'flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0',
-            text.trim() && !mutation.isPending && !disabled
-              ? 'bg-blue-500 text-white hover:bg-blue-600'
-              : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            canSend ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           )}
         >
           {mutation.isPending ? <Spinner size="sm" /> : <Send size={14} />}
@@ -441,13 +645,23 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ sessionId }: ChatPanelProps) {
-  const { session, items, waitingInput, streamingText, observerStreamingText, connected } = useSessionSSE(sessionId)
+  const {
+    session,
+    items,
+    waitingInput,
+    streamingText,
+    streamingReasoning,
+    streamingImages,
+    observerStreamingText,
+    observerStreamingReasoning,
+    connected,
+  } = useSessionSSE(sessionId)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   // Auto-scroll to bottom on new items or streaming updates
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [items.length, streamingText, observerStreamingText])
+  }, [items.length, streamingText, streamingReasoning, observerStreamingText, observerStreamingReasoning])
 
   const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
   const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(session.status)
@@ -499,13 +713,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
         )}
 
         {/* Actor streaming bubble */}
-        {streamingText && <StreamingBubble text={streamingText} />}
+        {(streamingText || streamingReasoning || (streamingImages?.length ?? 0) > 0) && (
+          <StreamingBubble text={streamingText ?? ''} reasoning={streamingReasoning ?? undefined} images={streamingImages ?? []} />
+        )}
 
         {/* Observer streaming bubble */}
-        {observerStreamingText && <ObserverStreamingBubble text={observerStreamingText} />}
+        {(observerStreamingText || observerStreamingReasoning) && (
+          <ObserverStreamingBubble text={observerStreamingText ?? ''} reasoning={observerStreamingReasoning ?? undefined} />
+        )}
 
         {/* Running indicator (only when not streaming) */}
-        {isRunning && !streamingText && !observerStreamingText && items.length > 0 && (
+        {isRunning && !streamingText && !streamingReasoning && !observerStreamingText && !observerStreamingReasoning && items.length > 0 && (
           <div className="flex items-center gap-2 text-xs text-gray-400 px-2">
             <Loader2 size={11} className="animate-spin" />
             <span>Agent 正在处理…</span>

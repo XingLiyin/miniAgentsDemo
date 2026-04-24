@@ -1,0 +1,138 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
+  <title>SPN网络拓扑图</title>
+  <defs>
+    <!-- 节点渐变 -->
+    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#FFB347;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF8C00;stop-opacity:1" />
+    </linearGradient>
+    <!-- 节点阴影 -->
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="2" dy="3" stdDeviation="3" flood-color="#333" flood-opacity="0.3"/>
+    </filter>
+    <!-- 发光效果 -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="800" height="600" fill="#F5F7FA" rx="8"/>
+  
+  <!-- 标题 -->
+  <text x="400" y="40" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="22" font-weight="bold" fill="#2C3E50">SPN网络拓扑示意图</text>
+  
+  <!-- 连线 - SPN汇聚环 -->
+  <g stroke="#3498DB" stroke-width="3" fill="none">
+    <!-- A-B -->
+    <line x1="200" y1="120" x2="600" y2="120" stroke-dasharray="none"/>
+    <!-- A-C -->
+    <line x1="200" y1="120" x2="250" y2="300"/>
+    <!-- B-D -->
+    <line x1="600" y1="120" x2="550" y2="300"/>
+    <!-- C-D -->
+    <line x1="250" y1="300" x2="550" y2="300"/>
+  </g>
+  
+  <!-- 连线 - SPN接入环 -->
+  <g stroke="#27AE60" stroke-width="3" fill="none">
+    <!-- C-E -->
+    <line x1="250" y1="300" x2="400" y2="480"/>
+    <!-- D-E -->
+    <line x1="550" y1="300" x2="400" y2="480"/>
+  </g>
+  
+  <!-- 汇聚环区域填充（淡蓝色） -->
+  <polygon points="200,120 600,120 550,300 250,300" fill="#3498DB" fill-opacity="0.08" stroke="none"/>
+  
+  <!-- 接入环区域填充（淡绿色） -->
+  <polygon points="250,300 550,300 400,480" fill="#27AE60" fill-opacity="0.08" stroke="none"/>
+  
+  <!-- 环标注 -->
+  <text x="430" y="200" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="16" font-weight="bold" fill="#3498DB">SPN汇聚环</text>
+  <text x="400" y="400" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="16" font-weight="bold" fill="#27AE60">SPN接入环</text>
+
+  <!-- 节点C的虚线矩形框 - 新垦机房 -->
+  <rect x="195" y="255" width="110" height="105" rx="8" fill="none" stroke="#E74C3C" stroke-width="2" stroke-dasharray="6,4"/>
+  <text x="250" y="248" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="12" font-weight="bold" fill="#E74C3C">新垦机房</text>
+
+  <!-- 节点A - P1410 -->
+  <g transform="translate(200, 120)">
+    <!-- 3D立方体效果 -->
+    <rect x="-28" y="-22" width="56" height="44" rx="4" fill="url(#nodeGrad)" filter="url(#shadow)"/>
+    <rect x="-28" y="-28" width="56" height="8" rx="2" fill="#FF9F43"/>
+    <rect x="-28" y="-22" width="4" height="44" rx="1" fill="#E67E22"/>
+    <!-- 设备图标 -->
+    <rect x="-18" y="-12" width="36" height="24" rx="3" fill="#FFF8DC" opacity="0.9"/>
+    <!-- LED指示灯 -->
+    <circle cx="-12" cy="0" r="3" fill="#2ECC71"/>
+    <circle cx="0" cy="0" r="3" fill="#F39C12"/>
+    <circle cx="12" cy="0" r="3" fill="#3498DB"/>
+    <!-- 标签 -->
+    <text x="0" y="42" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="14" font-weight="bold" fill="#2C3E50">P1410</text>
+  </g>
+
+  <!-- 节点B - 匿名 -->
+  <g transform="translate(600, 120)">
+    <rect x="-28" y="-22" width="56" height="44" rx="4" fill="url(#nodeGrad)" filter="url(#shadow)"/>
+    <rect x="-28" y="-28" width="56" height="8" rx="2" fill="#FF9F43"/>
+    <rect x="-28" y="-22" width="4" height="44" rx="1" fill="#E67E22"/>
+    <rect x="-18" y="-12" width="36" height="24" rx="3" fill="#FFF8DC" opacity="0.9"/>
+    <circle cx="-12" cy="0" r="3" fill="#2ECC71"/>
+    <circle cx="0" cy="0" r="3" fill="#F39C12"/>
+    <circle cx="12" cy="0" r="3" fill="#3498DB"/>
+    <!-- 匿名节点标注 -->
+    <text x="0" y="42" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="12" fill="#7F8C8D">SPN节点</text>
+  </g>
+
+  <!-- 节点C - P1543 -->
+  <g transform="translate(250, 300)">
+    <rect x="-28" y="-22" width="56" height="44" rx="4" fill="url(#nodeGrad)" filter="url(#shadow)"/>
+    <rect x="-28" y="-28" width="56" height="8" rx="2" fill="#FF9F43"/>
+    <rect x="-28" y="-22" width="4" height="44" rx="1" fill="#E67E22"/>
+    <rect x="-18" y="-12" width="36" height="24" rx="3" fill="#FFF8DC" opacity="0.9"/>
+    <circle cx="-12" cy="0" r="3" fill="#2ECC71"/>
+    <circle cx="0" cy="0" r="3" fill="#F39C12"/>
+    <circle cx="12" cy="0" r="3" fill="#3498DB"/>
+    <text x="0" y="42" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="14" font-weight="bold" fill="#2C3E50">P1543</text>
+  </g>
+
+  <!-- 节点D - P1621 -->
+  <g transform="translate(550, 300)">
+    <rect x="-28" y="-22" width="56" height="44" rx="4" fill="url(#nodeGrad)" filter="url(#shadow)"/>
+    <rect x="-28" y="-28" width="56" height="8" rx="2" fill="#FF9F43"/>
+    <rect x="-28" y="-22" width="4" height="44" rx="1" fill="#E67E22"/>
+    <rect x="-18" y="-12" width="36" height="24" rx="3" fill="#FFF8DC" opacity="0.9"/>
+    <circle cx="-12" cy="0" r="3" fill="#2ECC71"/>
+    <circle cx="0" cy="0" r="3" fill="#F39C12"/>
+    <circle cx="12" cy="0" r="3" fill="#3498DB"/>
+    <text x="0" y="42" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="14" font-weight="bold" fill="#2C3E50">P1621</text>
+  </g>
+
+  <!-- 节点E - 匿名 -->
+  <g transform="translate(400, 480)">
+    <rect x="-28" y="-22" width="56" height="44" rx="4" fill="url(#nodeGrad)" filter="url(#shadow)"/>
+    <rect x="-28" y="-28" width="56" height="8" rx="2" fill="#FF9F43"/>
+    <rect x="-28" y="-22" width="4" height="44" rx="1" fill="#E67E22"/>
+    <rect x="-18" y="-12" width="36" height="24" rx="3" fill="#FFF8DC" opacity="0.9"/>
+    <circle cx="-12" cy="0" r="3" fill="#2ECC71"/>
+    <circle cx="0" cy="0" r="3" fill="#F39C12"/>
+    <circle cx="12" cy="0" r="3" fill="#3498DB"/>
+    <text x="0" y="42" text-anchor="middle" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="12" fill="#7F8C8D">SPN节点</text>
+  </g>
+
+  <!-- 图例 -->
+  <g transform="translate(620, 520)">
+    <rect x="0" y="0" width="160" height="65" rx="6" fill="#FFF" stroke="#DDD" stroke-width="1"/>
+    <text x="10" y="20" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="11" font-weight="bold" fill="#2C3E50">图例</text>
+    <line x1="10" y1="35" x2="40" y2="35" stroke="#3498DB" stroke-width="3"/>
+    <text x="45" y="39" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="10" fill="#555">SPN汇聚环</text>
+    <line x1="10" y1="52" x2="40" y2="52" stroke="#27AE60" stroke-width="3"/>
+    <text x="45" y="56" font-family="Microsoft YaHei, SimHei, sans-serif" font-size="10" fill="#555">SPN接入环</text>
+  </g>
+</svg>

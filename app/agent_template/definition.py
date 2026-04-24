@@ -36,6 +36,7 @@ class AgentDefMetadata:
     agent_dir: Path            # 四个文件所在目录
     mcp_act_servers: list[str] = field(default_factory=list)      # SOUL.md 声明订阅的 MCP server
     mcp_observe_servers: list[str] = field(default_factory=list)  # ROLE.md 声明订阅的 MCP server
+    subagents: list[str] = field(default_factory=list)            # 可见 sub-agent template 列表；空 = 全部可见
 
 
 @dataclass

@@ -2,7 +2,6 @@ import { clsx } from 'clsx'
 import { CheckCircle2, XCircle, Circle, Loader2, MinusCircle } from 'lucide-react'
 import type { Task } from '@/types'
 import { TaskStatusBadge } from '@/components/session/StatusBadge'
-import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import { formatRelativeTime } from '@/lib/status'
 

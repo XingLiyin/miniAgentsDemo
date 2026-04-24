@@ -10,7 +10,23 @@ from app.llm.base import (
     StreamTransport,
     Transport
 )
-from app.llm.types import LLMMessage, LLMRequest, LLMResponse, LLMTool, LLMUsage, ParsedResponse, StreamChunk, TextBlock, ToolCallBlock
+from app.llm.types import (
+    DocumentPart,
+    ImageBlock,
+    ImagePart,
+    LLMMessage,
+    LLMRequest,
+    LLMResponse,
+    LLMTool,
+    LLMUsage,
+    MessageContent,
+    ParsedResponse,
+    StreamChunk,
+    TextBlock,
+    TextPart,
+    ToolCallBlock,
+    content_to_text,
+)
 
 
 class OpenAIAdapter(BaseAdapter):
@@ -41,16 +57,21 @@ class OpenAIAdapter(BaseAdapter):
         message = _extract_openai_message(raw)
         blocks: list = []
         tool_calls: list[ToolCallBlock] = []
+        images: list[ImageBlock] = []
 
         for text in _extract_openai_text_parts(message):
             blocks.append(TextBlock(type='text', text=text))
+
+        for img in _extract_openai_image_parts(message):
+            blocks.append(img)
+            images.append(img)
 
         for call in _extract_openai_tool_calls(message):
             blocks.append(call)
             tool_calls.append(call)
 
         text = '\n'.join(b.text for b in blocks if isinstance(b, TextBlock)).strip()
-        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, raw=raw, usage=response.usage)
+        return ParsedResponse(text=text, blocks=blocks, tool_calls=tool_calls, images=images, raw=raw, usage=response.usage)
 
     # ── 流式 ──────────────────────────────────────────────────────────────
 
@@ -87,10 +108,15 @@ class OpenAIAdapter(BaseAdapter):
             delta = choice.get('delta') or {}
             finish_reason = choice.get('finish_reason')
 
-            # 文本增量
-            text_delta = delta.get('content') or ''
-            if text_delta:
+            # 正文 / 推理 / 图片增量分开处理，避免 reasoning_content 混入最终回复文本。
+            for text_delta in _iter_openai_content_delta(delta):
                 yield StreamChunk(text_delta=text_delta)
+
+            for reasoning_delta in _iter_openai_reasoning_delta(delta):
+                yield StreamChunk(reasoning_delta=reasoning_delta)
+
+            for image in _iter_openai_delta_images(delta):
+                yield StreamChunk(image=image)
 
             # tool_call 增量
             for tc_delta in delta.get('tool_calls') or []:
@@ -109,6 +135,7 @@ class OpenAIAdapter(BaseAdapter):
                 usage_data = data.get('usage')
                 yield StreamChunk(
                     is_done=True,
+                    finish_reason=finish_reason,
                     usage=_parse_usage(usage_data) if usage_data else None,
                 )
                 return
@@ -151,6 +178,82 @@ def _parse_usage(usage: Dict[str, Any]) -> LLMUsage:
     )
 
 
+def _iter_openai_content_delta(delta: Dict[str, Any]) -> Iterator[str]:
+    """从流式 delta.content 中提取正文增量。
+
+    兼容形态：
+    - {"content": "..."}
+    - {"content": [{"type":"text","text":"..."}]}
+    """
+    value = delta.get('content')
+    if isinstance(value, str):
+        if value:
+            yield value
+        return
+
+    if isinstance(value, dict):
+        text = value.get('text') or value.get('content') or ''
+        if text:
+            yield text
+        return
+
+    if not isinstance(value, list):
+        return
+
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get('type')
+        if item_type in ('text', 'output_text'):
+            text = item.get('text') or item.get('content') or ''
+            if text:
+                yield text
+
+
+def _iter_openai_reasoning_delta(delta: Dict[str, Any]) -> Iterator[str]:
+    """从流式 delta.reasoning_content 中提取推理增量。"""
+    value = delta.get('reasoning_content')
+    if isinstance(value, str):
+        if value:
+            yield value
+        return
+
+    if isinstance(value, dict):
+        text = value.get('text') or value.get('content') or ''
+        if text:
+            yield text
+        return
+
+    if not isinstance(value, list):
+        return
+
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        item_type = item.get('type')
+        if item_type in ('text', 'reasoning_text', 'output_text'):
+            text = item.get('text') or item.get('content') or ''
+            if text:
+                yield text
+
+
+def _iter_openai_delta_images(delta: Dict[str, Any]) -> Iterator[ImageBlock]:
+    """从流式 delta 中提取图片块。"""
+    content_delta = delta.get('content')
+    if not isinstance(content_delta, list):
+        return
+
+    for item in content_delta:
+        if not isinstance(item, dict) or item.get('type') != 'image_url':
+            continue
+        url = (item.get('image_url') or {}).get('url', '')
+        if url.startswith('data:'):
+            media_type, data = _parse_data_url(url)
+            yield ImageBlock(type='image', media_type=media_type, source_type='base64', data=data)
+        elif url:
+            yield ImageBlock(type='image', media_type='', source_type='url', data=url)
+
+
 def _extract_openai_text(resp: Dict[str, Any]) -> str:
     choices = resp.get('choices') or []
     if not choices:
@@ -180,6 +283,34 @@ def _extract_openai_text_parts(message: Dict[str, Any]) -> list[str]:
     return []
 
 
+def _parse_data_url(url: str) -> tuple[str, str]:
+    """解析 data URL，返回 (media_type, base64_data)。"""
+    # data:<media_type>;base64,<data>
+    try:
+        header, data = url.split(',', 1)
+        media_type = header.split(':')[1].split(';')[0]
+        return media_type, data
+    except Exception:
+        return '', url
+
+
+def _extract_openai_image_parts(message: Dict[str, Any]) -> list[ImageBlock]:
+    content = message.get('content')
+    if not isinstance(content, list):
+        return []
+    images: list[ImageBlock] = []
+    for item in content:
+        if item.get('type') != 'image_url':
+            continue
+        url = (item.get('image_url') or {}).get('url', '')
+        if url.startswith('data:'):
+            media_type, data = _parse_data_url(url)
+            images.append(ImageBlock(type='image', media_type=media_type, source_type='base64', data=data))
+        else:
+            images.append(ImageBlock(type='image', media_type='', source_type='url', data=url))
+    return images
+
+
 def _extract_openai_tool_calls(message: Dict[str, Any]) -> list[ToolCallBlock]:
     blocks: list[ToolCallBlock] = []
     for call in message.get('tool_calls') or []:
@@ -200,20 +331,46 @@ def _extract_openai_tool_calls(message: Dict[str, Any]) -> list[ToolCallBlock]:
     return blocks
 
 
+def _content_to_text(content: MessageContent) -> str:
+    return content_to_text(content)
+
+
+def _content_to_openai_blocks(content: MessageContent) -> 'list[dict] | str':
+    """将 MessageContent 转为 OpenAI content blocks。
+    纯字符串直接返回（向后兼容），part 列表逐项转换。
+    DocumentPart 转为 data URL（OpenAI 不支持文档原生格式）。
+    """
+    if isinstance(content, str):
+        return content
+    blocks: list[dict] = []
+    for part in content:
+        if isinstance(part, TextPart):
+            if part.text:
+                blocks.append({"type": "text", "text": part.text})
+        elif isinstance(part, ImagePart):
+            url = part.data if part.source_type == "url" else f"data:{part.media_type};base64,{part.data}"
+            blocks.append({"type": "image_url", "image_url": {"url": url}})
+        elif isinstance(part, DocumentPart):
+            url = f"data:{part.media_type};base64,{part.data}"
+            blocks.append({"type": "image_url", "image_url": {"url": url}})
+    return blocks or ""
+
+
 def _serialize_messages_openai(messages: list[LLMMessage]) -> list[dict]:
     """将内部 LLMMessage 列表序列化为 OpenAI Chat Completions API 格式。
 
     - role="assistant" + tool_calls → tool_calls 数组（arguments JSON 序列化）
     - role="tool" + tool_call_id → {role:"tool", tool_call_id:..., content:...}
     - role="tool" 且 tool_call_id 为空 → 降级为 role="user" 文本（历史记忆回放）
-    - 其他 role 原样传递
+    - 其他 role → content 经 _content_to_openai_blocks 转换（支持多模态）
     """
     result: list[dict] = []
     for m in messages:
         if m.role == "assistant" and m.tool_calls:
             entry: dict = {"role": "assistant"}
-            if m.content:
-                entry["content"] = m.content
+            text = _content_to_text(m.content)
+            if text:
+                entry["content"] = text
             entry["tool_calls"] = [
                 {
                     "id": tc["id"],
@@ -232,13 +389,13 @@ def _serialize_messages_openai(messages: list[LLMMessage]) -> list[dict]:
                 result.append({
                     "role": "tool",
                     "tool_call_id": m.tool_call_id,
-                    "content": m.content,
+                    "content": _content_to_text(m.content),
                 })
             else:
-                result.append({"role": "user", "content": m.content})
+                result.append({"role": "user", "content": _content_to_text(m.content)})
 
         else:
-            result.append({"role": m.role, "content": m.content})
+            result.append({"role": m.role, "content": _content_to_openai_blocks(m.content)})
 
     return result
 
@@ -249,7 +406,8 @@ def _merge_system_prompt(req: LLMRequest) -> list[LLMMessage]:
         return messages
     for i, m in enumerate(messages):
         if m.role == 'system':
-            messages[i] = LLMMessage(role='system', content=f"{req.system_prompt}\n{m.content}".strip())
+            existing = _content_to_text(m.content)
+            messages[i] = LLMMessage(role='system', content=f"{req.system_prompt}\n{existing}".strip())
             return messages
     return [LLMMessage(role='system', content=req.system_prompt)] + messages
 
