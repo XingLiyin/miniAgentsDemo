@@ -1,9 +1,7 @@
 package com.codex.miniagents.runtime;
 
 import com.codex.miniagents.domain.model.agent.Agent;
-import com.codex.miniagents.domain.model.task.Task;
 import com.codex.miniagents.domain.model.tool.ToolCall;
-import com.codex.miniagents.domain.service.TaskService;
 import com.codex.miniagents.infrastructure.storage.repository.ToolCallRepository;
 import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.registry.ToolRegistry;
@@ -21,26 +19,24 @@ public class ToolGateway {
     private final PolicyEngine policyEngine;
     private final ToolRegistry toolRegistry;
     private final ToolCallRepository toolCallRepository;
-    private final TaskService taskService;
 
-    public ToolGateway(PolicyEngine policyEngine, ToolRegistry toolRegistry, ToolCallRepository toolCallRepository,
-        TaskService taskService) {
+    public ToolGateway(PolicyEngine policyEngine, ToolRegistry toolRegistry, ToolCallRepository toolCallRepository) {
         this.policyEngine = policyEngine;
         this.toolRegistry = toolRegistry;
         this.toolCallRepository = toolCallRepository;
-        this.taskService = taskService;
     }
 
     public ToolResult call(String toolName, Map<String, Object> arguments, Agent agent, String taskId) {
         return call(toolName, arguments, agent, taskId, null);
     }
 
-    public ToolResult call(String toolName, Map<String, Object> arguments, Agent agent, String taskId, Task task) {
+    public ToolResult call(String toolName, Map<String, Object> arguments, Agent agent, String taskId,
+        CallContext ctx) {
         if (agent != null) {
             policyEngine.authorize(agent, toolName);
         }
 
-        CallContext context = buildCallContext(taskId, agent, task);
+        CallContext context = ctx == null ? buildFallbackContext(agent) : ctx;
         String sessionId = context.getSessionId() == null ? "" : context.getSessionId();
         String agentId = context.getAgentId() == null || context.getAgentId().isBlank()
             ? (agent == null ? null : agent.getId())
@@ -115,38 +111,15 @@ public class ToolGateway {
         return redacted;
     }
 
-    private CallContext buildCallContext(String taskId, Agent agent, Task task) {
-        Task resolvedTask = task;
-        if (resolvedTask == null) {
-            try {
-                resolvedTask = taskService.get(taskId);
-            } catch (Exception ignored) {
-            }
-        }
+    private CallContext buildFallbackContext(Agent agent) {
         String sessionId = agent != null && agent.getSessionId() != null
-            ? agent.getSessionId()
-            : (resolvedTask == null || resolvedTask.getSessionId() == null ? "" : resolvedTask.getSessionId());
+            ? agent.getSessionId() : "";
         String agentId = agent != null
-            ? agent.getId()
-            : (resolvedTask == null || resolvedTask.getAssignedAgentId() == null ? "" : resolvedTask.getAssignedAgentId());
+            ? agent.getId() : "";
         return CallContext.builder()
             .sessionId(sessionId == null ? "" : sessionId)
             .agentId(agentId == null ? "" : agentId)
             .agent(agent)
-            .task(resolvedTask)
-            .workingDir(resolveWorkingDir(resolvedTask))
             .build();
-    }
-
-    private String resolveWorkingDir(Task task) {
-        if (task == null || task.getSettings() == null) {
-            return "";
-        }
-        try {
-            Object value = task.getSettings().get("working_dir");
-            return value == null ? "" : String.valueOf(value);
-        } catch (Exception ignored) {
-            return "";
-        }
     }
 }

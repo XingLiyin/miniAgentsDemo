@@ -260,6 +260,7 @@ public class SessionManager {
         if (template != null) {
             applyTemplateToAgent(template, agent);
         }
+        agent.setSettings(Map.of());
         agent.setHasSpawnPermission(true);
         agent.setSpawnDepth(0);
         agent.setInheritMemory(true);

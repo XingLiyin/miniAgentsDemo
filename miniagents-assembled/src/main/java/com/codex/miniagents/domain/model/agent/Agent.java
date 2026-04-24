@@ -5,7 +5,9 @@ import lombok.Getter;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 @Getter
 @JsonIgnoreProperties(ignoreUnknown = true)
@@ -35,6 +37,8 @@ public class Agent {
     private List<String> skillList = new ArrayList<>();
 
     private String soulPath;
+
+    private Map<String, Object> settings = new LinkedHashMap<>();
 
     private LoopGuard loopGuard = new LoopGuard();
 
@@ -69,6 +73,7 @@ public class Agent {
         this.observeToolList = observeToolList == null ? new ArrayList<>() : new ArrayList<>(observeToolList);
         this.skillList = skillList == null ? new ArrayList<>() : new ArrayList<>(skillList);
         this.soulPath = soulPath;
+        this.settings = new LinkedHashMap<>();
         this.loopGuard = loopGuard == null ? new LoopGuard() : loopGuard;
         this.inheritMemory = true;
         this.llmName = llmName == null ? "" : llmName;
@@ -152,6 +157,10 @@ public class Agent {
 
     public void setSoulPath(String soulPath) {
         this.soulPath = soulPath;
+    }
+
+    public void setSettings(Map<String, Object> settings) {
+        this.settings = settings == null ? new LinkedHashMap<>() : new LinkedHashMap<>(settings);
     }
 
     public void setLoopGuard(LoopGuard loopGuard) {

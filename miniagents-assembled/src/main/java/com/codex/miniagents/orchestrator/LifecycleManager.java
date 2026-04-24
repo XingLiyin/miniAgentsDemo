@@ -625,6 +625,7 @@ public class LifecycleManager {
         sub.setMcpObserveServers(new ArrayList<>());
         sub.setSkillList(parent.getSkillList());
         sub.setSoulPath(parent.getSoulPath());
+        sub.setSettings(parent.getSettings());
         sub.setLoopGuard(new LoopGuard(0, DEFAULT_SUB_AGENT_MAX_TURNS, 50, 50));
         sub.setInheritMemory(inheritMemory);
         sub.setLlmName(isBlank(parent.getLlmName()) ? properties.getDefaultLlmProvider() : parent.getLlmName());

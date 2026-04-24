@@ -1,6 +1,7 @@
 package com.codex.miniagents.runtime;
 
 import com.codex.miniagents.common.SseBus;
+import com.codex.miniagents.config.MiniAgentsProperties;
 import com.codex.miniagents.domain.model.agent.Agent;
 import com.codex.miniagents.domain.model.task.Task;
 import com.codex.miniagents.domain.model.task.TaskStatus;
@@ -18,6 +19,7 @@ import com.codex.miniagents.runtime.model.ReasoningContext;
 import com.codex.miniagents.runtime.model.ToolCallRecord;
 import com.codex.miniagents.runtime.prompt.ActorPromptBuilder;
 import com.codex.miniagents.runtime.prompt.PromptBuilderFactory;
+import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.model.ToolResult;
 
 import org.springframework.stereotype.Component;
@@ -38,11 +40,14 @@ public class Actor {
 
     private final TaskService taskService;
 
+    private final MiniAgentsProperties properties;
+
     public Actor(LlmClientProvider llmClientProvider, ToolGateway toolGateway,
-        TaskService taskService) {
+        TaskService taskService, MiniAgentsProperties properties) {
         this.llmClientProvider = llmClientProvider;
         this.toolGateway = toolGateway;
         this.taskService = taskService;
+        this.properties = properties;
     }
 
     public ActorResult act(Task task, ReasoningContext context, Agent agent) {
@@ -195,6 +200,13 @@ public class Actor {
 
     private ToolExecutionResult executeTools(ActorPromptBuilder promptBuilder, List<ToolCallBlock> parsedToolCalls,
         Agent agent, Task task, List<LlmMessage> messages, String sessionId) {
+        CallContext callContext = CallContext.builder()
+            .sessionId(sessionId == null ? "" : sessionId)
+            .agentId(agent == null || agent.getId() == null ? "" : agent.getId())
+            .agent(agent)
+            .task(task)
+            .workingDir(resolveWorkingDir(task, agent))
+            .build();
         List<ToolCallRecord> roundToolCalls = new ArrayList<>();
         boolean done = false;
         List<LlmMessage> nextMessages = messages;
@@ -202,7 +214,7 @@ public class Actor {
             Map<String, Object> args = toolCall.getInput() == null ? Map.of() : toolCall.getInput();
             ToolResult result;
             try {
-                result = toolGateway.call(toolCall.getName(), args, agent, task.getId(), task);
+                result = toolGateway.call(toolCall.getName(), args, agent, task.getId(), callContext);
             } catch (Exception e) {
                 result = ToolResult.builder().content(String.valueOf(e.getMessage())).isError(true)
                     .errorCode("TOOL_EXEC_ERROR").build();
@@ -261,6 +273,28 @@ public class Actor {
             SseBus.getInstance().push(sessionId, event);
         } catch (Exception ignored) {
         }
+    }
+
+    private String resolveWorkingDir(Task task, Agent agent) {
+        if (task != null && task.getSettings() != null) {
+            Object value = task.getSettings().get("working_dir");
+            if (value != null) {
+                String workingDir = String.valueOf(value);
+                if (!workingDir.isBlank()) {
+                    return workingDir;
+                }
+            }
+        }
+        if (agent != null && agent.getSettings() != null) {
+            Object value = agent.getSettings().get("working_dir");
+            if (value != null) {
+                String workingDir = String.valueOf(value);
+                if (!workingDir.isBlank()) {
+                    return workingDir;
+                }
+            }
+        }
+        return properties.getBashExecCwd() == null ? "" : properties.getBashExecCwd();
     }
 
     private record StreamRoundResult(

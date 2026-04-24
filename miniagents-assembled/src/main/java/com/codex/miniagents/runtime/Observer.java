@@ -1,6 +1,7 @@
 package com.codex.miniagents.runtime;
 
 import com.codex.miniagents.common.SseBus;
+import com.codex.miniagents.config.MiniAgentsProperties;
 import com.codex.miniagents.domain.model.agent.Agent;
 import com.codex.miniagents.domain.model.session.Session;
 import com.codex.miniagents.domain.model.task.Task;
@@ -17,6 +18,7 @@ import com.codex.miniagents.runtime.model.ObserverVerdict;
 import com.codex.miniagents.runtime.model.ReasoningContext;
 import com.codex.miniagents.runtime.prompt.ObserverPromptBuilder;
 import com.codex.miniagents.runtime.prompt.PromptBuilderFactory;
+import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.model.ToolResult;
 
 import lombok.extern.slf4j.Slf4j;
@@ -46,11 +48,14 @@ public class Observer {
     private final LlmClientProvider llmClientProvider;
     private final ToolGateway toolGateway;
     private final TaskService taskService;
+    private final MiniAgentsProperties properties;
 
-    public Observer(LlmClientProvider llmClientProvider, ToolGateway toolGateway, TaskService taskService) {
+    public Observer(LlmClientProvider llmClientProvider, ToolGateway toolGateway, TaskService taskService,
+        MiniAgentsProperties properties) {
         this.llmClientProvider = llmClientProvider;
         this.toolGateway = toolGateway;
         this.taskService = taskService;
+        this.properties = properties;
     }
 
     public ObserverVerdict observe(Session session, Agent agent, ActorResult result, ReasoningContext context,
@@ -129,12 +134,19 @@ public class Observer {
                 break;
             }
             messages = promptBuilder.appendAssistantToolCalls(messages, roundResult.fullText(), toolCalls);
+            CallContext callContext = CallContext.builder()
+                .sessionId(task.getSessionId() == null ? "" : task.getSessionId())
+                .agentId(task.getAssignedAgentId() == null ? "" : task.getAssignedAgentId())
+                .agent(agent)
+                .task(task)
+                .workingDir(resolveWorkingDir(task, agent))
+                .build();
             for (ToolCallBlock call : toolCalls) {
                 if ("submit_task_reviews".equals(call.getName())) {
                     reviewsSubmitted = true;
                 }
                 ToolResult toolResult = toolGateway.call(call.getName(),
-                    call.getInput() == null ? Map.of() : call.getInput(), null, task.getId(), task);
+                    call.getInput() == null ? Map.of() : call.getInput(), null, task.getId(), callContext);
                 messages = promptBuilder.appendToolResult(messages, call.getName(), toolResult, call.getId());
             }
 
@@ -238,6 +250,28 @@ public class Observer {
 
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();
+    }
+
+    private String resolveWorkingDir(Task task, Agent agent) {
+        if (task != null && task.getSettings() != null) {
+            Object value = task.getSettings().get("working_dir");
+            if (value != null) {
+                String workingDir = String.valueOf(value);
+                if (!workingDir.isBlank()) {
+                    return workingDir;
+                }
+            }
+        }
+        if (agent != null && agent.getSettings() != null) {
+            Object value = agent.getSettings().get("working_dir");
+            if (value != null) {
+                String workingDir = String.valueOf(value);
+                if (!workingDir.isBlank()) {
+                    return workingDir;
+                }
+            }
+        }
+        return properties.getBashExecCwd() == null ? "" : properties.getBashExecCwd();
     }
 
     private record StreamResult(String fullText, Map<Integer, Map<String, Object>> toolCallAcc) {}
