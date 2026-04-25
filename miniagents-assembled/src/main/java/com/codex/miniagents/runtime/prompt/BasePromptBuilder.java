@@ -96,14 +96,12 @@ abstract class BasePromptBuilder {
                 args = new LinkedHashMap<>();
                 args.put("_raw", argsRaw);
             }
-            result.add(new ToolCallBlock(
-                "tool_call",
-                defaultString(buf.get("id")),
-                defaultString(buf.get("name")),
-                args,
-                "function",
-                buf
-            ));
+            ToolCallBlock block = new ToolCallBlock();
+            block.setType("tool_call");
+            block.setId(defaultString(buf.get("id")));
+            block.setName(defaultString(buf.get("name")));
+            block.setInput(args);
+            result.add(block);
         }
         return result;
     }

@@ -1,7 +1,6 @@
 package com.codex.miniagents.runtime;
 
 import com.codex.miniagents.common.SseBus;
-import com.codex.miniagents.config.MiniAgentsProperties;
 import com.codex.miniagents.domain.model.agent.Agent;
 import com.codex.miniagents.domain.model.session.Session;
 import com.codex.miniagents.domain.model.task.Task;
@@ -29,33 +28,19 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 @Slf4j
 @Component
 public class Observer {
-    private static final String OBSERVER_ASSESSMENT_GUIDE =
-        "你正在评估本轮任务执行结果。\n"
-            + "在同一个连续循环中完成两件事：\n"
-            + "1. 调用 `submit_task_assessment` 评估当前任务；\n"
-            + "2. 如果任务列表中存在可复核条目，再调用 `submit_task_reviews` 完成 reopen / skip。\n\n"
-            + "task_outcome 取值说明：\n"
-            + "- `success`：当前任务已完成；\n"
-            + "- `failed`：当前任务未完成；\n"
-            + "- `needs_user_input`：需要用户确认。\n\n"
-            + "当存在 FINISHED / PENDING 的兄弟任务时，你可以继续调用 `submit_task_reviews`。\n"
-            + "如果没有足够信息，不要编造 review。";
-
     private final LlmClientProvider llmClientProvider;
     private final ToolGateway toolGateway;
     private final TaskService taskService;
-    private final MiniAgentsProperties properties;
 
-    public Observer(LlmClientProvider llmClientProvider, ToolGateway toolGateway, TaskService taskService,
-        MiniAgentsProperties properties) {
+    public Observer(LlmClientProvider llmClientProvider, ToolGateway toolGateway, TaskService taskService) {
         this.llmClientProvider = llmClientProvider;
         this.toolGateway = toolGateway;
         this.taskService = taskService;
-        this.properties = properties;
     }
 
     public ObserverVerdict observe(Session session, Agent agent, ActorResult result, ReasoningContext context,
@@ -78,8 +63,6 @@ public class Observer {
         if (tokenPct > 0.9D) {
             taskService.finish(task.getId(), "Token budget nearly exhausted; treating as complete.");
             return ObserverVerdict.builder()
-                .taskOutcome("success")
-                .taskResult("Token budget nearly exhausted; treating as complete.")
                 .summary("Token budget nearly exhausted; stopping.")
                 .build();
         }
@@ -93,10 +76,6 @@ public class Observer {
                 : (result.getError() == null ? (result.getOutput() == null ? "" : result.getOutput()) : result.getError()));
         }
         return ObserverVerdict.builder()
-            .taskOutcome(success ? "success" : "failed")
-            .taskResult(success
-                ? (result.getOutput() == null ? "" : result.getOutput())
-                : (result.getError() == null ? (result.getOutput() == null ? "" : result.getOutput()) : result.getError()))
             .summary(success ? "Completed this turn's task." : "Task failed this turn.")
             .build();
     }
@@ -104,7 +83,7 @@ public class Observer {
     private ObserverVerdict llmObserve(Session session, Agent agent, ActorResult result, ReasoningContext context,
         Task task, List<Task> taskList, ChatClient llmClient) {
         ObserverPromptBuilder promptBuilder = PromptBuilderFactory.forObserver();
-        String systemPrompt = promptBuilder.buildSystemPrompt(context, OBSERVER_ASSESSMENT_GUIDE);
+        String systemPrompt = promptBuilder.buildSystemPrompt(context);
         List<LlmMessage> messages = promptBuilder.buildMessages(session, result, context, task, taskList);
         List<LlmTool> tools = context.getObserverResources() == null
             ? List.of()
@@ -115,16 +94,10 @@ public class Observer {
         int maxRounds = agent.getLoopGuard() != null ? agent.getLoopGuard().getObserverMaxToolRounds() : 5;
         String lastLlmText = "";
         boolean reviewsSubmitted = false;
-        List<Task> siblings = taskList == null ? List.of() : taskList.stream().filter(t -> t != null && !task.getId().equals(t.getId())).toList();
-        boolean hasPendingSiblings = siblings.stream().anyMatch(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING);
-        long reviewableCount = hasPendingSiblings
-            ? siblings.stream().filter(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.FINISHED
-                || t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING).count()
-            : 0L;
 
         for (int round = 0; round < maxRounds; round++) {
             String roundLabel = "observer_round_" + round;
-            pushLlmEvent(task.getSessionId(), roundLabel, systemPrompt, messages, tools, "observer");
+            pushLlmEvent(task.getSessionId(), roundLabel, systemPrompt, messages, tools);
             StreamResult roundResult = streamObserver(llmClient, messages, systemPrompt, tools, task.getSessionId(), roundLabel);
             if (hasText(roundResult.fullText())) {
                 lastLlmText = roundResult.fullText();
@@ -137,9 +110,7 @@ public class Observer {
             CallContext callContext = CallContext.builder()
                 .sessionId(task.getSessionId() == null ? "" : task.getSessionId())
                 .agentId(task.getAssignedAgentId() == null ? "" : task.getAssignedAgentId())
-                .agent(agent)
                 .task(task)
-                .workingDir(resolveWorkingDir(task, agent))
                 .build();
             for (ToolCallBlock call : toolCalls) {
                 if ("submit_task_reviews".equals(call.getName())) {
@@ -151,11 +122,20 @@ public class Observer {
             }
 
             Task latestTask = taskService.get(task.getId());
-            if (latestTask.getStatus() != com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED
-                && (reviewableCount == 0L || reviewsSubmitted)) {
-                return ObserverVerdict.builder()
-                    .summary(hasText(lastLlmText) ? lastLlmText : (latestTask.getResult() == null ? "" : latestTask.getResult()))
-                    .build();
+            if (latestTask.getStatus() != com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED) {
+                List<Task> liveSiblings = taskService.listBySession(task.getSessionId()).stream()
+                    .filter(t -> t != null
+                        && !task.getId().equals(t.getId())
+                        && Objects.equals(task.getAssignedAgentId(), t.getAssignedAgentId()))
+                    .toList();
+                boolean hasPending = liveSiblings.stream()
+                    .anyMatch(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING);
+                boolean liveReviewable = hasPending && liveSiblings.stream()
+                    .anyMatch(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.FINISHED
+                        || t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING);
+                if (!liveReviewable || reviewsSubmitted) {
+                    tools = List.of();
+                }
             }
         }
 
@@ -169,14 +149,14 @@ public class Observer {
     }
 
     private void pushLlmEvent(String sessionId, String roundLabel, String systemPrompt, List<LlmMessage> messages,
-        List<LlmTool> tools, String source) {
+        List<LlmTool> tools) {
         if (sessionId == null || sessionId.isBlank()) {
             return;
         }
         try {
             Map<String, Object> event = new LinkedHashMap<>();
             event.put("type", "llm_prompt");
-            event.put("source", source);
+            event.put("source", "observer");
             event.put("round_label", roundLabel);
             event.put("system_prompt", systemPrompt);
             List<Map<String, Object>> msg = new ArrayList<>();
@@ -184,20 +164,6 @@ public class Observer {
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("role", m.getRole());
                 item.put("content", m.getContent());
-                if (m.getToolCallId() != null && !m.getToolCallId().isBlank()) {
-                    item.put("tool_call_id", m.getToolCallId());
-                }
-                if (m.getToolCalls() != null && !m.getToolCalls().isEmpty()) {
-                    List<Map<String, Object>> toolCalls = new ArrayList<>();
-                    for (var tc : m.getToolCalls()) {
-                        Map<String, Object> call = new LinkedHashMap<>();
-                        call.put("id", tc.getId());
-                        call.put("name", tc.getName());
-                        call.put("input", tc.getInput());
-                        toolCalls.add(call);
-                    }
-                    item.put("tool_calls", toolCalls);
-                }
                 msg.add(item);
             }
             event.put("messages", msg);
@@ -251,28 +217,5 @@ public class Observer {
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();
     }
-
-    private String resolveWorkingDir(Task task, Agent agent) {
-        if (task != null && task.getSettings() != null) {
-            Object value = task.getSettings().get("working_dir");
-            if (value != null) {
-                String workingDir = String.valueOf(value);
-                if (!workingDir.isBlank()) {
-                    return workingDir;
-                }
-            }
-        }
-        if (agent != null && agent.getSettings() != null) {
-            Object value = agent.getSettings().get("working_dir");
-            if (value != null) {
-                String workingDir = String.valueOf(value);
-                if (!workingDir.isBlank()) {
-                    return workingDir;
-                }
-            }
-        }
-        return properties.getBashExecCwd() == null ? "" : properties.getBashExecCwd();
-    }
-
     private record StreamResult(String fullText, Map<Integer, Map<String, Object>> toolCallAcc) {}
 }

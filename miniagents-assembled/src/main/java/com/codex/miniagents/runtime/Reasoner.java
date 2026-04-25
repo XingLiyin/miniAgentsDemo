@@ -14,6 +14,7 @@ import com.codex.miniagents.skills.SkillRegistry;
 import com.codex.miniagents.skills.SkillStoreClient;
 import com.codex.miniagents.tools.ToolStoreClient;
 import com.codex.miniagents.tools.control.ControlToolProvider;
+import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.registry.ToolRegistry;
 import com.codex.miniagents.runtime.model.ContextResource;
 import com.codex.miniagents.runtime.model.ReasoningContext;
@@ -75,9 +76,10 @@ public class Reasoner {
             : new ArrayList<>();
         String summaryText = summary == null ? "" : summary.getSummaryText();
         String sessionGoal = defaultString(session.getGoal());
+        CallContext callContext = buildCallContext(session, agent, task);
         List<LlmTool> relevantTools = retrieveActTools(sessionGoal, agent);
-        List<SkillMeta> relevantSkills = retrieveSkills(sessionGoal, agent);
-        String skillInstructions = extractSkillInstructions(task);
+        List<SkillMeta> relevantSkills = retrieveSkills(sessionGoal, agent, callContext);
+        String skillInstructions = extractSkillInstructions(task, callContext);
         List<ContextResource> actorResources = buildActorResources(agent, relevantTools, relevantSkills);
         List<ContextResource> observerResources = buildObserverResources(agent);
         String sample = sessionGoal
@@ -125,15 +127,15 @@ public class Reasoner {
         return toolRegistry.toLlmTools(allowedNames);
     }
 
-    private List<SkillMeta> retrieveSkills(String goal, Agent agent) {
+    private List<SkillMeta> retrieveSkills(String goal, Agent agent, CallContext ctx) {
         List<SkillMeta> results = new ArrayList<>();
-        skillRegistry.listAll().forEach(meta -> results.add(
+        skillRegistry.listAll(ctx).forEach(meta -> results.add(
             SkillMeta.builder().name(meta.getName()).description(meta.getDescription()).build()
         ));
         return results;
     }
 
-    private String extractSkillInstructions(Task task) {
+    private String extractSkillInstructions(Task task, CallContext ctx) {
         if (task == null) {
             return "";
         }
@@ -145,7 +147,7 @@ public class Reasoner {
         if (!(skillNameObj instanceof String skillName) || skillName.isBlank()) {
             return "";
         }
-        var definition = skillRegistry.loadDefinition(skillName);
+        var definition = skillRegistry.loadDefinition(skillName, ctx);
         return definition == null ? "" : defaultString(definition.getInstructions());
     }
 
@@ -231,6 +233,15 @@ public class Reasoner {
         return taskService.listBySession(sessionId).stream()
             .filter(t -> t != null && parentTaskId.equals(t.getParentTaskId()))
             .toList();
+    }
+
+    private CallContext buildCallContext(Session session, Agent agent, Task task) {
+        return CallContext.builder()
+            .sessionId(session == null || session.getId() == null ? "" : session.getId())
+            .agentId(agent == null || agent.getId() == null ? "" : agent.getId())
+            .agent(agent)
+            .task(task)
+            .build();
     }
 
     private String defaultString(String value) {

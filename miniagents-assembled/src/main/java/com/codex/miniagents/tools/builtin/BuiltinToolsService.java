@@ -6,6 +6,7 @@ import com.codex.miniagents.domain.service.TaskService;
 import com.codex.miniagents.exception.AppException;
 import com.codex.miniagents.exception.ErrorCode;
 import com.codex.miniagents.skills.SkillLoader;
+import com.codex.miniagents.skills.SkillMcpConn;
 import com.codex.miniagents.skills.SkillRegistry;
 import com.codex.miniagents.skills.model.SkillMetadata;
 import com.codex.miniagents.tools.ToolStoreClient;
@@ -14,6 +15,7 @@ import com.codex.miniagents.tools.annotation.ToolSpec;
 import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.model.ToolResult;
 import com.codex.miniagents.dto.response.SearchResult;
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 import lombok.RequiredArgsConstructor;
 
@@ -317,14 +319,30 @@ public class BuiltinToolsService {
     }
 
     @ToolSpec(name = "load_skill_reference",
-        description = "Read a reference file from the current task's skill directory.")
+        description = "Read a reference file from the current task's skill directory. Use the relative path as shown in the skill instructions (e.g. 'references/background.md', 'checks/self_check.md').")
     public ToolResult loadSkillReference(
-        @ToolParam("Relative path to the reference file within the skill directory") String referencePath, CallContext ctx) {
+        @JsonProperty("reference_path")
+        @ToolParam("Relative path to the reference file within the skill directory") String referencePath,
+        CallContext ctx) {
         if (referencePath == null || referencePath.isBlank()) {
             throw new AppException(ErrorCode.INVALID_ARGUMENT, "reference_path is required");
         }
 
-        SkillMetadata skillMetadata = resolveSkillMetadata(ctx);
+        String skillName = resolveSkillName(ctx, "Task has no skill assigned; cannot load skill reference");
+        SkillMetadata skillMetadata = skillRegistry.getMetadata(skillName);
+        if (skillMetadata == null) {
+            SkillMcpConn conn = resolveRemoteSkillConn(skillName);
+            try {
+                String content = conn.loadSkillReference(skillName, referencePath, ctx);
+                return ToolResult.builder()
+                    .content(content)
+                    .metadata(Map.of("skill", skillName, "path", referencePath))
+                    .build();
+            } catch (Exception e) {
+                throw new AppException(ErrorCode.TOOL_EXEC_ERROR, e.getMessage());
+            }
+        }
+
         try {
             String content = skillLoader.loadResource(skillMetadata.getSkillDir(), referencePath);
             return ToolResult.builder()
@@ -339,31 +357,110 @@ public class BuiltinToolsService {
         }
     }
 
-    @ToolSpec(name = "exec_skill_script",
-        description = "Execute a script from the current task's skill directory.")
-    public ToolResult execSkillScript(
-        @ToolParam("Script filename without extension (e.g. 'extract_olt_config')") String scriptName,
-        @ToolParam(value = "Command-line argument string appended after the script path", required = false) String args,
+    @ToolSpec(name = "get_skill_files",
+        description = "List files available in the current task's skill directory. For local skills, supports glob patterns (e.g. 'scripts/*.py', 'references/**'). Returns a newline-separated list of file paths (local) or file names (remote). For remote skills, also returns file IDs usable with load_skill_reference and exec_skill_script.")
+    public ToolResult getSkillFiles(
+        @JsonProperty("pattern")
+        @ToolParam(value = "Glob pattern to match files (default: '**/*', local skills only)", required = false) String pattern,
+        @JsonProperty("limit")
+        @ToolParam(value = "Maximum number of results (default: 200, local skills only)", required = false) Integer limit,
         CallContext ctx) {
-        if (scriptName == null || scriptName.isBlank()) {
-            throw new AppException(ErrorCode.INVALID_ARGUMENT, "script_name is required");
+        String actualPattern = pattern == null || pattern.isBlank() ? "**/*" : pattern;
+        int actualLimit = limit == null ? 200 : limit;
+        String skillName = resolveSkillName(ctx, "Task has no skill assigned; cannot list skill files");
+
+        SkillMetadata skillMetadata = skillRegistry.getMetadata(skillName);
+        if (skillMetadata == null) {
+            SkillMcpConn conn = resolveRemoteSkillConn(skillName);
+            try {
+                String content = conn.getSkillFiles(skillName, actualPattern, actualLimit, ctx);
+                return ToolResult.builder()
+                    .content(content)
+                    .metadata(Map.of("skill", skillName, "source", "remote"))
+                    .build();
+            } catch (Exception e) {
+                throw new AppException(ErrorCode.TOOL_EXEC_ERROR, e.getMessage());
+            }
         }
 
-        SkillMetadata skillMetadata = resolveSkillMetadata(ctx);
+        Path skillDir = skillMetadata.getSkillDir();
+        if (skillDir == null || !Files.exists(skillDir)) {
+            throw new AppException(ErrorCode.FILE_NOT_FOUND,
+                "Skill directory '" + skillDir + "' does not exist");
+        }
+
+        List<String> files;
+        try {
+            FileSystem fs = FileSystems.getDefault();
+            var matcher = fs.getPathMatcher("glob:" + actualPattern);
+            try (var stream = Files.walk(skillDir)) {
+                files = stream
+                    .filter(Files::isRegularFile)
+                    .map(skillDir::relativize)
+                    .filter(path -> !hasHiddenPart(path))
+                    .map(Path::toString)
+                    .filter(rel -> matcher.matches(Path.of(rel)))
+                    .sorted()
+                    .toList();
+            }
+        } catch (IOException e) {
+            throw new AppException(ErrorCode.TOOL_EXEC_ERROR, "Failed to list skill files: " + e.getMessage());
+        }
+
+        boolean truncated = false;
+        if (files.size() > actualLimit) {
+            files = files.subList(0, actualLimit);
+            truncated = true;
+        }
+
+        String output = files.isEmpty() ? "(no files)" : String.join("\n", files);
+        if (truncated) {
+            output += "\n[truncated at " + actualLimit + " results]";
+        }
+
+        return ToolResult.builder()
+            .content(output)
+            .metadata(Map.of("skill", skillName, "source", "local", "count", files.size(), "truncated", truncated))
+            .build();
+    }
+
+    @ToolSpec(name = "exec_skill_script",
+        description = "Execute a script from the current task's skill directory. The working directory is set to the skill root. Construct args as described in the skill instructions.")
+    public ToolResult execSkillScript(
+        @JsonProperty("script_path")
+        @ToolParam("Relative path to the script within the skill directory (e.g. 'scripts/extract.py')") String scriptPath,
+        @JsonProperty("args")
+        @ToolParam(value = "Command-line argument string appended after the script path", required = false) String args,
+        CallContext ctx) {
+        if (scriptPath == null || scriptPath.isBlank()) {
+            throw new AppException(ErrorCode.INVALID_ARGUMENT, "script_path is required");
+        }
+
+        String skillName = resolveSkillName(ctx, "Task has no skill assigned; cannot execute skill script");
+        SkillMetadata skillMetadata = skillRegistry.getMetadata(skillName);
+        if (skillMetadata == null) {
+            SkillMcpConn conn = resolveRemoteSkillConn(skillName);
+            try {
+                return conn.execSkillScript(skillName, scriptPath, args == null ? "" : args, ctx);
+            } catch (Exception e) {
+                throw new AppException(ErrorCode.TOOL_EXEC_ERROR, e.getMessage());
+            }
+        }
+
         Path skillDir = skillMetadata.getSkillDir().toAbsolutePath().normalize();
-        Path scriptPath = resolveSkillScript(skillDir, scriptName);
+        Path resolvedScriptPath = resolveSkillScript(skillDir, scriptPath);
         Path requirements = skillDir.resolve("requirements.txt");
 
         String actualArgs = args == null ? "" : args.trim();
         List<String> command = new ArrayList<>();
-        if (scriptPath.toString().endsWith(".py")) {
+        if (resolvedScriptPath.toString().endsWith(".py")) {
             String python = requirementsExists(requirements)
                 ? ensureSkillPython(skillDir, requirements)
                 : discoverPythonBinary();
             command.add(python);
-            command.add(scriptPath.toString());
+            command.add(resolvedScriptPath.toString());
         } else {
-            command.add(scriptPath.toString());
+            command.add(resolvedScriptPath.toString());
         }
         if (!actualArgs.isBlank()) {
             command.addAll(splitArgs(actualArgs));
@@ -408,8 +505,8 @@ public class BuiltinToolsService {
                 .errorCode(isError ? "SCRIPT_NONZERO_EXIT" : null)
                 .metadata(Map.of(
                     "exit_code", process.exitValue(),
-                    "skill", skillMetadata.getName(),
-                    "script", scriptName,
+                    "skill", skillName,
+                    "script", scriptPath,
                     "cwd", cwd == null ? "" : cwd
                 ))
                 .build();
@@ -424,8 +521,8 @@ public class BuiltinToolsService {
                 .isError(true)
                 .errorCode("SCRIPT_LAUNCH_ERROR")
                 .metadata(Map.of(
-                    "skill", skillMetadata.getName(),
-                    "script", scriptName
+                    "skill", skillName,
+                    "script", scriptPath
                 ))
                 .build();
         }
@@ -469,7 +566,7 @@ public class BuiltinToolsService {
         return Path.of(cwd).resolve(candidate).normalize();
     }
 
-    private SkillMetadata resolveSkillMetadata(CallContext ctx) {
+    private String resolveSkillName(CallContext ctx, String missingMessage) {
         Task task = ctx == null ? null : ctx.getTask();
         if (task == null) {
             throw new AppException(ErrorCode.INVALID_ARGUMENT, "task context is required");
@@ -479,32 +576,38 @@ public class BuiltinToolsService {
             skillName = String.valueOf(task.getSettings().get("skill_name"));
         }
         if (skillName.isBlank()) {
-            throw new AppException(ErrorCode.INVALID_ARGUMENT, "Task has no skill assigned");
+            throw new AppException(ErrorCode.INVALID_ARGUMENT, missingMessage);
         }
-
-        SkillMetadata skillMetadata = skillRegistry.getMetadata(skillName);
-        if (skillMetadata == null) {
-            throw new AppException(ErrorCode.TOOL_EXEC_ERROR, "Skill '" + skillName + "' not found in registry");
-        }
-        return skillMetadata;
+        return skillName;
     }
 
-    private Path resolveSkillScript(Path skillDir, String scriptName) {
-        Path scriptsDir = skillDir.resolve("scripts");
-        List<Path> candidates = new ArrayList<>();
-        candidates.add(scriptsDir.resolve(scriptName + ".py"));
-        candidates.add(scriptsDir.resolve(scriptName + ".sh"));
-        candidates.add(scriptsDir.resolve(scriptName));
-        for (Path candidate : candidates) {
-            if (Files.isRegularFile(candidate)) {
-                Path normalized = candidate.toAbsolutePath().normalize();
-                if (!normalized.startsWith(skillDir)) {
-                    throw new AppException(ErrorCode.INVALID_ARGUMENT, "Script path escapes skill directory");
-                }
-                return normalized;
+    private SkillMcpConn resolveRemoteSkillConn(String skillName) {
+        SkillMcpConn conn = skillRegistry.getConnForSkill(skillName);
+        if (conn == null) {
+            throw new AppException(ErrorCode.TOOL_EXEC_ERROR, "Skill '" + skillName + "' not found in registry");
+        }
+        return conn;
+    }
+
+    private Path resolveSkillScript(Path skillDir, String scriptPath) {
+        Path normalized = skillDir.resolve(scriptPath).toAbsolutePath().normalize();
+        if (!normalized.startsWith(skillDir)) {
+            throw new AppException(ErrorCode.INVALID_ARGUMENT, "script_path escapes skill directory");
+        }
+        if (!Files.isRegularFile(normalized)) {
+            throw new AppException(ErrorCode.FILE_NOT_FOUND, "Script '" + scriptPath + "' not found");
+        }
+        return normalized;
+    }
+
+    private boolean hasHiddenPart(Path path) {
+        for (Path part : path) {
+            String name = part.toString();
+            if (name.startsWith(".")) {
+                return true;
             }
         }
-        throw new AppException(ErrorCode.FILE_NOT_FOUND, "Script '" + scriptName + "' not found");
+        return false;
     }
 
     private boolean requirementsExists(Path requirements) {

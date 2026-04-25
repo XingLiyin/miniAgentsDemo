@@ -93,6 +93,7 @@ public class SkillLoader {
             .triggers(triggers)
             .version(String.valueOf(versionValue))
             .skillDir(skillDir)
+            .source("local")
             .build();
     }
 

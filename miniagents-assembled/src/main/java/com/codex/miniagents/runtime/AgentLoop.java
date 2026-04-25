@@ -17,8 +17,6 @@ import com.codex.miniagents.runtime.compaction.CompactionStrategy;
 import com.codex.miniagents.runtime.model.ActorResult;
 import com.codex.miniagents.runtime.model.ObserverVerdict;
 import com.codex.miniagents.runtime.model.ReasoningContext;
-import com.codex.miniagents.runtime.model.TaskReview;
-import com.codex.miniagents.runtime.model.ReviewStatus;
 import com.codex.miniagents.runtime.model.ToolCallRecord;
 
 import lombok.extern.slf4j.Slf4j;
@@ -97,6 +95,7 @@ public class AgentLoop {
             ActorResult result = actor.act(task, context, agent);
             task = taskService.get(taskId);
             if (task.getStatus() == TaskStatus.SUSPENDED) {
+                appendActorMemory(sessionId, agentId, task, result);
                 return;
             }
             if (task.getStatus() != TaskStatus.TO_BE_OBSERVED
@@ -106,42 +105,12 @@ public class AgentLoop {
                 taskService.toBeObserved(taskId);
                 task = taskService.get(taskId);
             }
-            List<Task> taskList = taskService.listBySession(sessionId);
+            List<Task> taskList = taskService.listByAgent(sessionId, agentId);
             ObserverVerdict verdict = observer.observe(session, agent, result, context, task, taskList);
 
             task = taskService.get(taskId);
 
-            if (task.getUserPrompt() != null && !task.getUserPrompt().isBlank()) {
-                memoryService.appendMessage(sessionId, agentId, "user", task.getUserPrompt(), taskId);
-            }
-            if (result.getConversationTurns() != null) {
-                result.getConversationTurns().forEach(turn -> {
-                    if (turn.getToolCalls() != null && !turn.getToolCalls().isEmpty()) {
-                        memoryService.appendMessage(
-                            sessionId,
-                            agentId,
-                            "assistant",
-                            defaultString(turn.getLlmText()),
-                            taskId,
-                            null,
-                            toToolCallMaps(turn.getToolCalls())
-                        );
-                        for (ToolCallRecord call : turn.getToolCalls()) {
-                            memoryService.appendMessage(
-                                sessionId,
-                                agentId,
-                                "tool",
-                                defaultString(call.getResult()),
-                                taskId,
-                                call.getToolCallId(),
-                                List.of()
-                            );
-                        }
-                    } else if (turn.getLlmText() != null && !turn.getLlmText().isBlank()) {
-                        memoryService.appendMessage(sessionId, agentId, "assistant", turn.getLlmText(), taskId);
-                    }
-                });
-            }
+            appendActorMemory(sessionId, agentId, task, result);
             if (verdict.getSummary() != null && !verdict.getSummary().isBlank()) {
                 memoryService.appendMessage(sessionId, agentId, "assistant", verdict.getSummary(), taskId);
             }
@@ -159,28 +128,6 @@ public class AgentLoop {
 
             if (task.getStatus() == TaskStatus.FINISHED && task.getResult() != null && !task.getResult().isBlank()) {
                 blackboardService.publish(sessionId, task.getId(), agentId, task.getResult());
-            }
-
-            if (verdict.getTaskReviews() != null) {
-                for (TaskReview review : verdict.getTaskReviews()) {
-                    if (review == null || task.getId().equals(review.getTaskId())) {
-                        continue;
-                    }
-                    try {
-                        if (review.getReviewStatus() == ReviewStatus.REOPEN) {
-                            taskService.reopen(review.getTaskId());
-                            log.info("Task {} reopened by observer: {}", review.getTaskId(), review.getReasoning());
-                        } else if (review.getReviewStatus() == ReviewStatus.SKIP) {
-                            taskService.finish(review.getTaskId(),
-                                review.getReasoning() == null || review.getReasoning().isBlank()
-                                    ? "Completed indirectly per observer."
-                                    : review.getReasoning());
-                            log.info("Task {} skipped by observer: {}", review.getTaskId(), review.getReasoning());
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to apply task review for {}: {}", review.getTaskId(), e.getMessage());
-                    }
-                }
             }
 
             if (result.getConversationTurns() != null) {
@@ -234,6 +181,51 @@ public class AgentLoop {
 
     private String defaultString(String value) {
         return value == null ? "" : value;
+    }
+
+    private void appendActorMemory(String sessionId, String agentId, Task task, ActorResult result) {
+        String taskId = task == null ? "" : task.getId();
+        if (task != null && task.getUserPrompt() != null && !task.getUserPrompt().isBlank()
+            && !hasUserMemoryForTask(agentId, taskId)) {
+            memoryService.appendMessage(sessionId, agentId, "user", task.getUserPrompt(), taskId);
+        }
+        if (result == null || result.getConversationTurns() == null) {
+            return;
+        }
+        result.getConversationTurns().forEach(turn -> {
+            if (turn.getToolCalls() != null && !turn.getToolCalls().isEmpty()) {
+                memoryService.appendMessage(
+                    sessionId,
+                    agentId,
+                    "assistant",
+                    defaultString(turn.getLlmText()),
+                    taskId,
+                    null,
+                    toToolCallMaps(turn.getToolCalls())
+                );
+                for (ToolCallRecord call : turn.getToolCalls()) {
+                    memoryService.appendMessage(
+                        sessionId,
+                        agentId,
+                        "tool",
+                        defaultString(call.getResult()),
+                        taskId,
+                        call.getToolCallId(),
+                        List.of()
+                    );
+                }
+            } else if (turn.getLlmText() != null && !turn.getLlmText().isBlank()) {
+                memoryService.appendMessage(sessionId, agentId, "assistant", turn.getLlmText(), taskId);
+            }
+        });
+    }
+
+    private boolean hasUserMemoryForTask(String agentId, String taskId) {
+        if (taskId == null || taskId.isBlank()) {
+            return false;
+        }
+        return memoryService.getWindow(agentId, 10_000).stream()
+            .anyMatch(item -> taskId.equals(item.getTaskId()) && "user".equals(item.getRole()));
     }
 
     private List<Map<String, Object>> toToolCallMaps(List<ToolCallRecord> toolCalls) {

@@ -167,6 +167,12 @@ public class TaskService {
         return repository.findBySessionId(sessionId);
     }
 
+    public List<Task> listByAgent(String sessionId, String agentId) {
+        return listBySession(sessionId).stream()
+            .filter(task -> task != null && agentId != null && agentId.equals(task.getAssignedAgentId()))
+            .toList();
+    }
+
     public List<Task> listPending(String sessionId) {
         return repository.findBySessionAndStatus(sessionId, TaskStatus.PENDING);
     }

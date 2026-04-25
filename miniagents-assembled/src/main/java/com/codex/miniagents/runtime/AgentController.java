@@ -231,7 +231,7 @@ public class AgentController {
     }
 
     private ToolDefinition buildUpdateTaskMetadataTool() {
-        return definitionFromMethod("updateTaskMetadataTool", String.class, String.class);
+        return definitionFromMethod("updateTaskMetadataTool", String.class, String.class, String.class);
     }
 
     private ToolDefinition buildSubmitPlanTool() {
@@ -273,18 +273,23 @@ public class AgentController {
     }
 
     @ToolSpec(name = "update_task_metadata",
-        description = "Update the title and description of a target task.")
+        description = "Update the title and description of a target task, and optionally update the overall session goal.")
     public ToolResult updateTaskMetadataTool(
         @ToolParam("The task title to save") String title,
-        @ToolParam("The task description to save") String description) {
+        @ToolParam("The task description to save") String description,
+        @JsonProperty("session_goal")
+        @ToolParam(value = "Overall session goal (<=60 chars). Fill only on first setup or when user direction fundamentally changes; otherwise leave empty", required = false)
+        String sessionGoal) {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("title", stringValue(title));
             payload.put("description", stringValue(description));
+            payload.put("session_goal", stringValue(sessionGoal));
             return ToolResult.builder().content(OBJECT_MAPPER.writeValueAsString(payload)).build();
         } catch (Exception e) {
             return ToolResult.builder()
-                .content("{\"title\":\"" + stringValue(title) + "\",\"description\":\"" + stringValue(description) + "\"}")
+                .content("{\"title\":\"" + stringValue(title) + "\",\"description\":\"" + stringValue(description)
+                    + "\",\"session_goal\":\"" + stringValue(sessionGoal) + "\"}")
                 .build();
         }
     }
@@ -312,6 +317,7 @@ public class AgentController {
         String targetTaskId = task.getSettings() == null ? "" : stringValue(task.getSettings().get("target_task_id"));
         String title = stringValue(args.get("title")).trim();
         String description = stringValue(args.get("description")).trim();
+        String sessionGoal = stringValue(args.get("session_goal")).trim();
         if (!targetTaskId.isBlank()) {
             try {
                 Task target = taskService.get(targetTaskId);
@@ -329,6 +335,23 @@ public class AgentController {
                 log.debug("AgentController: updated metadata for task {}: title={}", targetTaskId, title);
             } catch (Exception e) {
                 log.warn("AgentController: failed to update metadata for task {}", targetTaskId, e);
+            }
+        }
+        if (!sessionGoal.isBlank()) {
+            try {
+                com.codex.miniagents.domain.model.session.Session session = sessionService.get(task.getSessionId());
+                session.setGoal(sessionGoal);
+                sessionService.save(session);
+                try {
+                    SseBus.getInstance().push(task.getSessionId(), java.util.Map.of(
+                        "type", "session_goal_updated",
+                        "session_id", task.getSessionId(),
+                        "goal", sessionGoal
+                    ));
+                } catch (Exception ignored) {
+                }
+            } catch (Exception e) {
+                log.warn("AgentController: failed to update session goal for session {}", task.getSessionId(), e);
             }
         }
         return ControlResult.builder()

@@ -14,7 +14,7 @@ import java.util.List;
 public class ObserverPromptBuilder extends BasePromptBuilder {
     private static final String ROLE_FALLBACK = "You are an objective observer evaluating task execution results.";
 
-    public String buildSystemPrompt(ReasoningContext context, String assessmentGuide) {
+    public String buildSystemPrompt(ReasoningContext context) {
         String role = hasText(context.getRole()) ? context.getRole() : ROLE_FALLBACK;
         List<ContextResource> tools = context.getObserverResources() == null ? List.of()
             : context.getObserverResources().stream()
@@ -22,13 +22,6 @@ public class ObserverPromptBuilder extends BasePromptBuilder {
                 .toList();
         List<String> parts = new ArrayList<>();
         parts.add(role);
-        parts.add(assessmentGuide);
-        if (hasText(context.getSkillInstructions())) {
-            parts.add("## Skill Instructions for This Task\n\n"
-                + "The task was executed under the following skill. Use these instructions to calibrate your evaluation criteria and emphasis. "
-                + "You may also call skill-related tools listed below to gather more information before submitting your assessment.\n\n"
-                + context.getSkillInstructions());
-        }
         if (!tools.isEmpty()) {
             List<String> lines = new ArrayList<>();
             lines.add("## Available Tools");

@@ -301,17 +301,25 @@ public class SessionManager {
             userPrompt, title, description, settings);
 
         if ((title.isBlank() || description.isBlank()) && lifecycleManager != null) {
+            Session session = sessionService.get(sessionId);
+            boolean firstGoalSetup = defaultString(session.getGoal()).equals(defaultString(session.getUserPrompt()));
+            String metadataDescription = firstGoalSetup
+                ? "Read the conversation history and current user prompt, then fill in task title, description, and initial session_goal."
+                : "Read the conversation history and current user prompt. Current stable session goal: "
+                    + defaultString(session.getGoal())
+                    + ". Fill title/description; only set session_goal if the user's direction fundamentally changed.";
             Map<String, Object> metadataSettings = new LinkedHashMap<>();
             metadataSettings.put("subagent_template", "metadata_filler");
             metadataSettings.put("target_task_id", initial.getId());
             metadataSettings.put("_daemon", true);
+            metadataSettings.put("inherit_memory", true);
             Task metaTask = taskService.create(
                 sessionId,
                 creatorAgentId,
                 creatorAgentId,
                 userPrompt,
                 "Update task meta data details",
-                "Summarize the user prompt (" + userPrompt + ") and fill in the task title and description accordingly",
+                metadataDescription,
                 metadataSettings
             );
             lifecycleManager.spawnDaemonTask(sessionId, creatorAgentId, metaTask.getId());

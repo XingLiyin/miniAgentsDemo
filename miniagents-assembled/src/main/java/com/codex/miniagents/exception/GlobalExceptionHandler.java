@@ -53,8 +53,8 @@ public class GlobalExceptionHandler {
 
         return switch (code) {
             case SESSION_NOT_FOUND, TASK_NOT_FOUND, AGENT_NOT_FOUND, MCP_NOT_FOUND, SUMMARY_NOT_FOUND, TEMPLATE_NOT_FOUND,
-                LLM_NOT_FOUND -> HttpStatus.NOT_FOUND;
-            case MCP_ALREADY_EXISTS, LLM_ALREADY_EXISTS -> HttpStatus.CONFLICT;
+                LLM_NOT_FOUND, SKILL_SOURCE_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case MCP_ALREADY_EXISTS, LLM_ALREADY_EXISTS, SKILL_SOURCE_ALREADY_EXISTS -> HttpStatus.CONFLICT;
             case MCP_CONNECT_CANCELLED -> HttpStatus.BAD_GATEWAY;
             case MCP_CONNECT_TIMEOUT -> HttpStatus.GATEWAY_TIMEOUT;
             case NOT_IMPLEMENTED -> HttpStatus.NOT_IMPLEMENTED;
