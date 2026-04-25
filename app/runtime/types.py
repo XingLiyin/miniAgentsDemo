@@ -90,9 +90,11 @@ class ActorResult:
     plan_task_count: int | None = None  # plan 模式专用；0 = 空计划（目标已达成）
     skill_used: str | None = None
     error: str | None = None
+    context_tokens: int = 0            # 本次执行中最大单轮 prompt_tokens
 
 
 @dataclass
 class ObserverVerdict:
     """Observer 阶段输出。task 状态由 ControlToolProvider handler 写入，此处只携带 memory 摘要。"""
     summary: str                       # 写入 Memory（role=assistant）
+    context_tokens: int = 0           # 本次 observe 中最大单轮 prompt_tokens

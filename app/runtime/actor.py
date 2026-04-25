@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 from app.config.settings import get_settings
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
+from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.llm.base import BaseChatClient, LLMMessage
 from app.runtime.prompt_builder import ActorPromptBuilder, PromptBuilderFactory
@@ -37,11 +38,13 @@ class Actor:
         llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
+        session_svc: SessionService | None = None,
         prompt_builder: ActorPromptBuilder | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
+        self._session_svc = session_svc
         self._prompt_builder = prompt_builder or PromptBuilderFactory.for_actor()
 
     def act(self, task: Task, ctx: ReasoningContext, agent: Agent) -> ActorResult:
@@ -66,15 +69,23 @@ class Actor:
         tool_calls_made: list[ToolCallRecord] = []
         conversation_turns: list[ConversationTurn] = []
         last_text = ""
+        max_context_tokens = 0
 
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
             messages = self._prompt_builder.sanitize_messages(messages)
             messages_sent = list(messages)
             self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx)
 
-            full_text, tool_call_acc, image_acc = self._stream_llm(
+            full_text, tool_call_acc, image_acc, _usage = self._stream_llm(
                 llm_client, messages, system_prompt, tools, _round, _sse, session_id
             )
+            if _usage:
+                if self._session_svc and session_id:
+                    tokens = _usage.total_tokens or (_usage.prompt_tokens or 0) + (_usage.completion_tokens or 0)
+                    if tokens:
+                        self._session_svc.add_tokens(session_id, tokens)
+                if _usage.prompt_tokens:
+                    max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
             last_text = full_text
             parsed = llm_client.parse_stream_acc(full_text, tool_call_acc, images=image_acc)
             tool_calls_from_stream = parsed.tool_calls
@@ -102,7 +113,7 @@ class Actor:
             if not tool_calls_from_stream or done:
                 break
 
-        return self._build_result(task, tool_calls_made, conversation_turns, last_text)
+        return self._build_result(task, tool_calls_made, conversation_turns, last_text, max_context_tokens)
 
     # ── 私有辅助方法 ──────────────────────────────────────────────────────────
 
@@ -181,7 +192,12 @@ class Actor:
                 "text": reasoning_text,
                 "round": _round,
             })
-        self._sse_push(_sse, session_id, {"type": "text_done", "text": full_text, "round": _round})
+        self._sse_push(_sse, session_id, {
+            "type": "text_done",
+            "text": full_text,
+            "round": _round,
+            "context_tokens": final_usage.prompt_tokens if final_usage else None,
+        })
         logger.info(
             "Actor LLM stream finished: round=%s finish_reason=%s usage=%s text_len=%s reasoning_len=%s tool_calls=%s images=%s",
             _round,
@@ -192,7 +208,7 @@ class Actor:
             len(tool_call_acc),
             len(image_acc),
         )
-        return full_text, tool_call_acc, image_acc
+        return full_text, tool_call_acc, image_acc, final_usage
 
     def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages, _sse, session_id: str):
         from app.common.utils import now_iso
@@ -248,6 +264,7 @@ class Actor:
         tool_calls_made: list[ToolCallRecord],
         conversation_turns: list[ConversationTurn],
         last_text: str,
+        context_tokens: int = 0,
     ) -> ActorResult:
         """plan 和 act 统一走文本路径；task 创建由 Observer 阶段负责。"""
         skill_used = task.settings.get("skill_name")
@@ -260,4 +277,5 @@ class Actor:
             conversation_turns=conversation_turns,
             actor_mode=actor_mode,
             skill_used=skill_used,
+            context_tokens=context_tokens,
         )

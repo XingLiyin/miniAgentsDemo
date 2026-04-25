@@ -1,5 +1,5 @@
 ---
-name: default
+name: default-test
 version: 1.3.0
 description: 默认通用执行代理。
 tools:

@@ -96,6 +96,10 @@ class AgentLoop:
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
 
+            if result.context_tokens:
+                agent.loop_guard.context_tokens = result.context_tokens
+                self._agent_store.save(agent.to_dict())
+
             task = self._task_svc.get(task_id)
 
             if task.status == "SUSPENDED":
@@ -107,6 +111,13 @@ class AgentLoop:
 
             task_list = self._task_svc.list_by_agent(session_id, agent_id)
             verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
+
+            if verdict.context_tokens:
+                agent = self._load_agent(agent_id)
+                agent.loop_guard.context_tokens = max(
+                    agent.loop_guard.context_tokens, verdict.context_tokens
+                )
+                self._agent_store.save(agent.to_dict())
 
             # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
             task = self._task_svc.get(task_id)
@@ -154,7 +165,12 @@ class AgentLoop:
                 for tool_call in result_turn.tool_calls:
                     self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
 
-            if self._memory_svc.should_summarize(agent_id):
+            agent = self._load_agent(agent_id)
+            if self._memory_svc.should_summarize(
+                agent_id,
+                context_tokens=agent.loop_guard.context_tokens,
+                context_limit=agent.loop_guard.context_limit,
+            ):
                 self._do_summarize(session_id, agent_id, verdict.summary)
 
         except AppError as e:

@@ -122,6 +122,7 @@ def get_actor() -> Actor:
         llm_client=_get_llm_client(),
         tool_gateway=get_tool_gateway(),
         task_svc=get_task_service(),
+        session_svc=get_session_service(),
     )
 
 
@@ -137,7 +138,7 @@ def get_agent_loop() -> AgentLoop:
         llm_client=llm_client,
         reasoner=get_reasoner(),
         actor=get_actor(),
-        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service()),
+        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
     )
 
 
