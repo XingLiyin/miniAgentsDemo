@@ -28,7 +28,6 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 
 @Slf4j
 @Component
@@ -93,9 +92,9 @@ public class Observer {
                 .toList();
         int maxRounds = agent.getLoopGuard() != null ? agent.getLoopGuard().getObserverMaxToolRounds() : 5;
         String lastLlmText = "";
-        boolean reviewsSubmitted = false;
+        boolean stopObserver = false;
 
-        for (int round = 0; round < maxRounds; round++) {
+        for (int round = 0; round < maxRounds && !stopObserver; round++) {
             String roundLabel = "observer_round_" + round;
             pushLlmEvent(task.getSessionId(), roundLabel, systemPrompt, messages, tools);
             StreamResult roundResult = streamObserver(llmClient, messages, systemPrompt, tools, task.getSessionId(), roundLabel);
@@ -113,38 +112,25 @@ public class Observer {
                 .task(task)
                 .build();
             for (ToolCallBlock call : toolCalls) {
-                if ("submit_task_reviews".equals(call.getName())) {
-                    reviewsSubmitted = true;
-                }
                 ToolResult toolResult = toolGateway.call(call.getName(),
                     call.getInput() == null ? Map.of() : call.getInput(), null, task.getId(), callContext);
                 messages = promptBuilder.appendToolResult(messages, call.getName(), toolResult, call.getId());
-            }
 
-            Task latestTask = taskService.get(task.getId());
-            if (latestTask.getStatus() != com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED) {
-                List<Task> liveSiblings = taskService.listBySession(task.getSessionId()).stream()
-                    .filter(t -> t != null
-                        && !task.getId().equals(t.getId())
-                        && Objects.equals(task.getAssignedAgentId(), t.getAssignedAgentId()))
-                    .toList();
-                boolean hasPending = liveSiblings.stream()
-                    .anyMatch(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING);
-                boolean liveReviewable = hasPending && liveSiblings.stream()
-                    .anyMatch(t -> t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.FINISHED
-                        || t.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.PENDING);
-                if (!liveReviewable || reviewsSubmitted) {
-                    tools = List.of();
+                Task latestTask = taskService.get(task.getId());
+                if (latestTask.getStatus() != com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED) {
+                    stopObserver = true;
+                    break;
                 }
             }
         }
 
-        if (taskService.get(task.getId()).getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED) {
+        Task latestTask = taskService.get(task.getId());
+        if (latestTask.getStatus() == com.codex.miniagents.domain.model.task.TaskStatus.TO_BE_OBSERVED) {
             throw new RuntimeException("Observer: no assessment submitted by LLM");
         }
         return ObserverVerdict.builder()
-            .summary(hasText(lastLlmText) ? lastLlmText
-                : (taskService.get(task.getId()).getResult() == null ? "" : taskService.get(task.getId()).getResult()))
+            .summary(hasText(task.getActorResult()) ? task.getActorResult()
+                : (hasText(lastLlmText) ? lastLlmText : defaultString(latestTask.getResult())))
             .build();
     }
 
@@ -217,5 +203,10 @@ public class Observer {
     private boolean hasText(String s) {
         return s != null && !s.trim().isEmpty();
     }
+
+    private String defaultString(String s) {
+        return s == null ? "" : s;
+    }
+
     private record StreamResult(String fullText, Map<Integer, Map<String, Object>> toolCallAcc) {}
 }

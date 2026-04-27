@@ -181,11 +181,17 @@ public class AgentController {
         if (!"success".equals(taskOutcome) && !"failed".equals(taskOutcome) && !"needs_user_input".equals(taskOutcome)) {
             taskOutcome = "failed";
         }
+        String taskResult = stringValue(args.get("task_result"));
+        String nextStepHint = stringValue(args.get("next_step_hint")).trim();
+        if (!nextStepHint.isBlank()) {
+            taskResult = taskResult + "\n\n下一步建议：" + nextStepHint;
+        }
 
         Map<String, Object> signalData = new LinkedHashMap<>();
         signalData.put("task_outcome", taskOutcome);
-        signalData.put("task_result", stringValue(args.get("task_result")));
-        signalData.put("summary", stringValue(args.get("summary")));
+        signalData.put("task_result", taskResult);
+        signalData.put("summary", taskResult);
+        signalData.put("task_reviews", args.get("task_reviews"));
         signalData.put("proceed_to_review", true);
 
         return ControlResult.builder()
@@ -239,7 +245,7 @@ public class AgentController {
     }
 
     private ToolDefinition buildSubmitTaskAssessmentTool() {
-        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class, String.class);
+        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class, List.class, String.class);
     }
 
     private ToolDefinition buildReplanTool() {
@@ -370,10 +376,15 @@ public class AgentController {
     public ToolResult submitTaskAssessmentTool(
         @JsonProperty("task_outcome") @ToolParam("'success', 'failed', or 'needs_user_input'")
         String taskOutcome,
-        @JsonProperty("task_result") @ToolParam("What was accomplished, or why the task could not be completed")
+        @JsonProperty("task_result")
+        @ToolParam("Complete progress/result description. This field is written directly into memory for the next actor turn.")
         String taskResult,
-        @JsonProperty("summary") @ToolParam("Concise summary of this turn (1-3 sentences)")
-        String summary) {
+        @JsonProperty("task_reviews")
+        @ToolParam(value = "Optional reviews for FINISHED/PENDING tasks. Each entry: task_title, current_status, review_status ('confirmed' | 'reopen' | 'skip'), reasoning.", required = false)
+        List<Map<String, Object>> taskReviews,
+        @JsonProperty("next_step_hint")
+        @ToolParam(value = "Optional risk, caveat, or next-step hint to append to task_result for the next actor.", required = false)
+        String nextStepHint) {
         return ToolResult.builder().content("").build();
     }
 

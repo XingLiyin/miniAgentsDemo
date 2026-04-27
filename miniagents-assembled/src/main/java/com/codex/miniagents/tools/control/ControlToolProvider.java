@@ -80,7 +80,6 @@ public class ControlToolProvider implements ToolProvider {
         register(buildSubmitTaskAssessmentTool(), "observer", this::handleSubmitTaskAssessment);
         register(buildReplanTool(), "observer", this::handleReplan);
         register(buildSubmitTaskTool(), "observer", this::handleSubmitTask);
-        register(buildSubmitTaskReviewsTool(), "observer", this::handleSubmitTaskReviews);
     }
 
     private void register(ToolDefinition schema, String scope, ControlToolHandler handler) {
@@ -194,6 +193,10 @@ public class ControlToolProvider implements ToolProvider {
             taskOutcome = "failed";
         }
         String taskResult = stringValue(args.get("task_result"));
+        String nextStepHint = stringValue(args.get("next_step_hint")).trim();
+        if (!nextStepHint.isBlank()) {
+            taskResult = taskResult + "\n\n下一步建议：" + nextStepHint;
+        }
         task.setActorOutcome(taskOutcome);
         task.setActorResult(taskResult);
         task.setProceedToReview(true);
@@ -209,6 +212,7 @@ public class ControlToolProvider implements ToolProvider {
             task.setActorOutcome(taskOutcome);
             task.setActorResult(taskResult);
         }
+        applyReviews(args.get("task_reviews"), ctx);
         return toolResultWithSignal(
             "Assessment recorded: outcome=" + taskOutcome + ". " + taskResult,
             ControlSignal.NONE,
@@ -350,10 +354,13 @@ public class ControlToolProvider implements ToolProvider {
             .build();
     }
 
-    private ToolResult handleSubmitTaskReviews(Map<String, Object> args, CallContext ctx) {
-        String sessionId = stringValue(ctx.getSessionId());
-        String agentId = stringValue(ctx.getAgentId());
-        String currentTaskId = ctx.getTask() == null ? "" : stringValue(ctx.getTask().getId());
+    private List<String> applyReviews(Object reviewsObj, CallContext ctx) {
+        String sessionId = ctx == null ? "" : stringValue(ctx.getSessionId());
+        String agentId = ctx == null ? "" : stringValue(ctx.getAgentId());
+        String currentTaskId = ctx == null || ctx.getTask() == null ? "" : stringValue(ctx.getTask().getId());
+        if (sessionId.isBlank()) {
+            return List.of();
+        }
         List<Task> sessionTasks = taskService.listBySession(sessionId);
 
         Map<String, Task> reviewable = new LinkedHashMap<>();
@@ -370,7 +377,6 @@ public class ControlToolProvider implements ToolProvider {
             }
         }
 
-        Object reviewsObj = args.get("reviews");
         List<String> applied = new ArrayList<>();
         if (reviewsObj instanceof List<?> reviews) {
             for (Object item : reviews) {
@@ -385,7 +391,7 @@ public class ControlToolProvider implements ToolProvider {
                 }
                 Task matched = reviewable.get(title);
                 if (matched == null) {
-                    log.warn("submit_task_reviews: no reviewable task with title '{}', skipping", title);
+                    log.warn("submit_task_assessment.task_reviews: no reviewable task with title '{}', skipping", title);
                     continue;
                 }
                 try {
@@ -401,14 +407,11 @@ public class ControlToolProvider implements ToolProvider {
                     }
                     applied.add(title + " -> " + reviewStatus);
                 } catch (Exception e) {
-                    log.warn("submit_task_reviews: failed to apply review for {}: {}", matched.getId(), e.getMessage());
+                    log.warn("submit_task_assessment.task_reviews: failed to apply review for {}: {}", matched.getId(), e.getMessage());
                 }
             }
         }
-
-        return ToolResult.builder()
-            .content("Reviews applied: " + (applied.isEmpty() ? "none" : String.join(", ", applied)))
-            .build();
+        return applied;
     }
 
     private ToolDefinition buildRequestHumanInputTool() {
@@ -424,7 +427,7 @@ public class ControlToolProvider implements ToolProvider {
     }
 
     private ToolDefinition buildSubmitTaskAssessmentTool() {
-        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class);
+        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class, List.class, String.class);
     }
 
     private ToolDefinition buildReplanTool() {
@@ -434,10 +437,6 @@ public class ControlToolProvider implements ToolProvider {
     private ToolDefinition buildSubmitTaskTool() {
         return definitionFromMethod("submitTaskTool", String.class, String.class, String.class, boolean.class,
             boolean.class, String.class);
-    }
-
-    private ToolDefinition buildSubmitTaskReviewsTool() {
-        return definitionFromMethod("submitTaskReviewsTool", List.class);
     }
 
     private ToolDefinition definitionFromMethod(String methodName, Class<?>... parameterTypes) {
@@ -503,8 +502,15 @@ public class ControlToolProvider implements ToolProvider {
     public ToolResult submitTaskAssessmentTool(
         @JsonProperty("task_outcome") @ToolParam("'success', 'failed', 'active', or 'needs_user_input'")
         String taskOutcome,
-        @JsonProperty("task_result") @ToolParam("What was accomplished, progress made, or why the task could not be completed")
-        String taskResult) {
+        @JsonProperty("task_result")
+        @ToolParam("Complete progress/result description. This field is written directly into memory for the next actor turn.")
+        String taskResult,
+        @JsonProperty("task_reviews")
+        @ToolParam(value = "Optional reviews for FINISHED/PENDING tasks. Each entry: task_title, current_status, review_status ('confirmed' | 'reopen' | 'skip'), reasoning.", required = false)
+        List<Map<String, Object>> taskReviews,
+        @JsonProperty("next_step_hint")
+        @ToolParam(value = "Optional risk, caveat, or next-step hint to append to task_result for the next actor.", required = false)
+        String nextStepHint) {
         return ToolResult.builder().content("").build();
     }
 
@@ -537,16 +543,6 @@ public class ControlToolProvider implements ToolProvider {
         @ToolParam(value = "True (default) for sub-agents that need session history", required = false)
         boolean inheritMemory,
         @ToolParam(value = "The user prompt that triggered this task, or empty", required = false) String userPrompt) {
-        return ToolResult.builder().content("").build();
-    }
-
-    @ToolSpec(name = "submit_task_reviews",
-        description = "Submit your review of all FINISHED and PENDING tasks in the session.")
-    public ToolResult submitTaskReviewsTool(
-        @ToolParam(
-            "Review entries for FINISHED and PENDING tasks in the session. Each entry: task_title, current_status, "
-                + "review_status ('confirmed' | 'reopen' | 'skip'), reasoning."
-        ) List<Map<String, Object>> reviews) {
         return ToolResult.builder().content("").build();
     }
 
