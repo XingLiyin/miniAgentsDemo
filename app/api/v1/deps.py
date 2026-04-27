@@ -16,6 +16,7 @@ from app.llm.registry import get_llm_registry
 from app.orchestrator.lifecycle_manager import LifecycleManager
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
+from app.orchestrator.task_queue import TaskQueue
 from app.runtime.actor import Actor
 from app.runtime.agent_loop import AgentLoop
 from app.tools.control_tools import register_control_tools
@@ -68,11 +69,17 @@ def get_agent_template_service() -> AgentTemplateService:
 
 
 @lru_cache
+def get_task_queue() -> TaskQueue:
+    return TaskQueue(task_svc=get_task_service())
+
+
+@lru_cache
 def get_task_manager() -> TaskManager:
     settings = get_settings()
     return TaskManager(
         task_svc=get_task_service(),
         session_svc=get_session_service(),
+        task_queue=get_task_queue(),
         lifecycle_manager=get_lifecycle_manager(),
         event_bus=get_event_bus(),
         max_task_retries=settings.max_task_retries,

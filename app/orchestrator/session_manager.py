@@ -160,6 +160,9 @@ class SessionManager:
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session.id)
             self._lifecycle_manager.register_root_agent(session.id, agent.id)
+        # 初始化 TaskQueue（必须在 task 创建前）
+        if self._task_manager is not None:
+            self._task_manager.init_session(session.id)
 
         # 创建初始 task（默认由 root 直接执行，不创建 sub-agent）
         if self._task_svc is not None:
@@ -287,6 +290,9 @@ class SessionManager:
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session_id)
             self._lifecycle_manager.register_root_agent(session_id, agent.id)
+        # 重新初始化 TaskQueue（必须在 task 创建前）
+        if self._task_manager is not None:
+            self._task_manager.init_session(session_id)
 
         # 创建新 task，携带完整多模态内容
         if self._task_svc is not None:

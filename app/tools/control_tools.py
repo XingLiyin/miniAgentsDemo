@@ -228,6 +228,7 @@ class ControlToolProvider:
         task = ctx.task if ctx else None
         task_ids: list[str] = []
         titles:   list[str] = []
+        prev_id:  str | None = None
 
         for spec in args.get("tasks", []):
             inputs: dict = {}
@@ -248,16 +249,23 @@ class ControlToolProvider:
                 description=spec.get("description", ""),
                 inputs=inputs,
                 parent_task_id=task.id if task else None,
+                dag_deps=[prev_id] if prev_id else [],
             )
             task_ids.append(t.id)
             titles.append(spec.get("title", ""))
+            prev_id = t.id
 
         result_text = (
             f"Planned {len(task_ids)} tasks: {', '.join(titles)}"
             if task_ids else "No further tasks needed — goal already achieved."
         )
-        if task is not None:
-            task.actor_done = True
+
+        # Suspend parent task and wait for sub-tasks to complete,
+        # then LLM evaluates results and finishes (same pattern as submit_task)
+        if task is not None and task_ids:
+            self._task_svc.transition(task.id, "SUSPENDED")
+            task.status = "SUSPENDED"
+        task.actor_done = True
         return ToolResult(content=result_text)
 
     def _handle_replan(self, args: dict, ctx: CallContext | None) -> ToolResult:

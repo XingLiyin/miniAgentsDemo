@@ -1,12 +1,12 @@
 """Task Manager：任务调度与 session 终结决策。
 
 职责：
-- 订阅 TASK_EXECUTION_FINISHED / TASK_EXECUTION_FAILED，以 on_task_finished / on_task_failed 响应
-- 决策：resume 父任务、查找下一个 PENDING task、判断 session 是否结束、重试
+- 订阅 TASK_CREATED / TASK_EXECUTION_FINISHED / TASK_EXECUTION_FAILED
+- 显式管理 TaskQueue：task 创建、父任务恢复、失败重试 三个 push 点
+- 决策：从队列取下一个就绪 task、判断 session 是否结束、重试
 - 读取 task 属性（use_subagent / subagent_template / inherit_memory），决定执行方式
-- 调用 LifecycleManager 原子操作执行 agent 侧后果
+- 调用 LifecycleManager 操作执行 agent 侧后果
 - 管理 session.failure_counter
-- 提供 start_session、spawn_daemon_task 作为 session 启动入口
 
 不做：agent 注册/回收的具体操作、线程管理
 """
@@ -17,10 +17,11 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
-from app.domain.events.event_types import TASK_EXECUTION_FAILED, TASK_EXECUTION_FINISHED
+from app.domain.events.event_types import TASK_CREATED, TASK_EXECUTION_FAILED, TASK_EXECUTION_FINISHED
 from app.domain.models.task import Task
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
+from app.orchestrator.task_queue import TaskQueue
 
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
@@ -36,20 +37,32 @@ class TaskManager:
         self,
         task_svc: TaskService,
         session_svc: SessionService,
+        task_queue: TaskQueue,
         lifecycle_manager: "LifecycleManager | None" = None,
         event_bus: "EventBus | None" = None,
         max_task_retries: int = 3,
     ) -> None:
         self._task_svc = task_svc
         self._session_svc = session_svc
+        self._task_queue = task_queue
         self._lm = lifecycle_manager
-        self._bus = event_bus
         self._max_task_retries = max_task_retries
         self._session_locks: dict[str, threading.Lock] = {}
 
         if event_bus is not None:
+            event_bus.subscribe(TASK_CREATED, self.on_task_created)
             event_bus.subscribe(TASK_EXECUTION_FINISHED, self.on_task_finished)
             event_bus.subscribe(TASK_EXECUTION_FAILED, self.on_task_failed)
+
+    # ── Session lifecycle ─────────────────────────────────────────────────────
+
+    def init_session(self, session_id: str) -> None:
+        """Initialize per-session queue. Must be called before any task is created."""
+        self._task_queue.init_session(session_id)
+
+    def cleanup_session(self, session_id: str) -> None:
+        self._task_queue.cleanup_session(session_id)
+        self._session_locks.pop(session_id, None)
 
     # ── Session start ─────────────────────────────────────────────────────────
 
@@ -67,15 +80,15 @@ class TaskManager:
             logger.exception("TM: failed to activate session %s", session_id)
             return
 
-        pending = self._task_svc.list_pending(session_id)
-        if not pending:
-            logger.error("TM: no pending task for session %s", session_id)
+        next_task = self._task_queue.pop(session_id)
+        if not next_task:
+            logger.error("TM: no ready task for session %s", session_id)
             return
 
-        self._dispatch_next(session_id, agent_id, pending[0])
+        self._dispatch_next(session_id, agent_id, next_task)
 
     def spawn_daemon_task(self, session_id: str, parent_agent_id: str, task_id: str) -> None:
-        """Pre-activate a daemon task (keeps it out of list_pending) and spawn its agent."""
+        """Pre-activate a daemon task (keeps it out of the queue) and spawn its agent."""
         if self._lm is None:
             logger.error("TM: LifecycleManager not set, cannot spawn daemon task %s", task_id)
             return
@@ -98,6 +111,13 @@ class TaskManager:
 
     # ── Event handlers ────────────────────────────────────────────────────────
 
+    def on_task_created(self, event_type: str, payload: dict) -> None:
+        """Push newly created task onto the stack."""
+        task_id = payload.get("task_id", "")
+        session_id = payload.get("session_id", "")
+        if task_id and session_id:
+            self._task_queue.push(session_id, task_id)
+
     def on_task_finished(self, event_type: str, payload: dict) -> None:
         session_id = payload.get("session_id", "")
         agent_id = payload.get("agent_id", "")
@@ -117,16 +137,20 @@ class TaskManager:
                 self._lm_recycle_finished(session_id, agent_id)
                 return
 
+            self._task_queue.notify_completed(session_id, finished_task_id)
             self._try_resume_parent(session_id, finished_task_id)
 
-            pending = self._task_svc.list_pending(session_id)
-            if not pending:
-                try:
-                    self._session_svc.transition(session_id, "SUCCEEDED")
-                except Exception:
-                    logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
-            else:
-                next_task = pending[0]
+            next_task = self._task_queue.pop(session_id)
+            if next_task is None:
+                if self._task_queue.is_empty(session_id):
+                    try:
+                        self._session_svc.transition(session_id, "SUCCEEDED")
+                    except Exception:
+                        logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
+                else:
+                    # _blocked has tasks waiting on deps; they will be promoted
+                    # when further active tasks complete
+                    logger.debug("TM: tasks blocked on deps for session %s", session_id)
 
         self._dispatch_next(session_id, agent_id, next_task)
 
@@ -140,7 +164,6 @@ class TaskManager:
         next_task: Task | None = None
 
         with self._get_lock(session_id):
-            # Transition task ACTIVE → FAILED (LM._execute no longer does this)
             if failed_task_id:
                 try:
                     self._task_svc.fail(failed_task_id, error=payload.get("error", ""))
@@ -162,16 +185,15 @@ class TaskManager:
                 )
                 try:
                     self._task_svc.retry(failed_task_id)
-                    next_task = self._task_svc.get(failed_task_id)
+                    self._task_queue.push(session_id, failed_task_id)
                 except Exception:
                     logger.exception("TM: failed to retry task %s", failed_task_id)
                     self._fail_session(session_id)
-            else:
-                pending = self._task_svc.list_pending(session_id)
-                if not pending:
-                    self._fail_session(session_id)
-                else:
-                    next_task = pending[0]
+
+            self._task_queue.notify_completed(session_id, failed_task_id)
+            next_task = self._task_queue.pop(session_id)
+            if next_task is None and self._task_queue.is_empty(session_id):
+                self._fail_session(session_id)
 
         self._dispatch_next(session_id, agent_id, next_task)
 
@@ -198,8 +220,7 @@ class TaskManager:
     # ── Queue interface ───────────────────────────────────────────────────────
 
     def next_task(self, session_id: str) -> Task | None:
-        tasks = self._task_svc.list_pending(session_id)
-        return tasks[0] if tasks else None
+        return self._task_queue.pop(session_id)
 
     def activate(self, task_id: str) -> Task:
         return self._task_svc.transition(task_id, "ACTIVE")
@@ -244,12 +265,13 @@ class TaskManager:
             self._lm.run_agent(session_id, agent_id, next_task.id)
 
     def _lm_recycle_finished(self, session_id: str, finished_agent_id: str) -> None:
-        """Release agents when session is externally terminated."""
         if self._lm is not None:
             self._lm.release(session_id, finished_agent_id)
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
-        """Resume a SUSPENDED parent task once all its children reach a terminal state."""
+        """Resume a SUSPENDED parent task once all its children reach a terminal state.
+        Pushes the resumed task back into the queue.
+        """
         if not finished_task_id:
             return
         try:
@@ -263,6 +285,7 @@ class TaskManager:
             _terminal = {"FINISHED", "FAILED", "CANCELED"}
             if children and all(t.status in _terminal for t in children):
                 self._task_svc.resume(parent.id)
+                self._task_queue.push(session_id, parent.id)
         except Exception:
             logger.exception("TM: failed to resume parent for task %s", finished_task_id)
 
