@@ -81,16 +81,6 @@ class AgentLoop:
                     f"({session.token_used}/{session.token_budget})",
                 )
 
-            guard = agent.loop_guard
-            guard.turns_used += 1
-            self._agent_store.save(agent.to_dict())
-
-            if guard.turns_used > guard.max_turns:
-                raise AppError(
-                    "MAX_TURNS_EXCEEDED",
-                    f"Agent {agent_id} reached max_turns={guard.max_turns}",
-                )
-
             task = self._task_svc.get(task_id)
 
             ctx = self._reasoner.reason(session, agent, task)
@@ -103,6 +93,22 @@ class AgentLoop:
             task = self._task_svc.get(task_id)
 
             if task.status == "SUSPENDED":
+                if task.user_prompt:
+                    self._memory_svc.append_message(
+                        agent_id=agent_id,
+                        role="user",
+                        content=task.user_prompt,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
+                spawn_note = _summarize_spawn(result)
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=spawn_note,
+                    session_id=session_id,
+                    task_id=task_id,
+                )
                 return
 
             if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
@@ -199,14 +205,37 @@ class AgentLoop:
         from app.domain.models.memory import MemorySummary
 
         summary_text = latest_summary
+        messages = self._memory_svc.get_window(agent_id, 10000)
 
         if self._compaction_strategy is not None:
-            messages = self._memory_svc.get_window(agent_id, 10000)
-            _, compacted_summary = self._compaction_strategy.compact(messages)
+            # 将旧摘要注入消息头，让新摘要能接续上一次的上下文
+            previous = self._memory_svc.get_summary(agent_id)
+            if previous and previous.summary_text:
+                messages_for_compact = [
+                    {"role": "system", "content": f"[Context so far]: {previous.summary_text}"}
+                ] + messages
+            else:
+                messages_for_compact = messages
+
+            kept, compacted_summary = self._compaction_strategy.compact(messages_for_compact)
+
+            # 去掉注入的 system 头，得到真正需要写回的消息
+            kept_real = [
+                m for m in kept
+                if not (
+                    m.get("role") == "system"
+                    and str(m.get("content", "")).startswith("[Context so far]")
+                )
+            ]
+
+            # 写回裁剪后的消息（文件缩小，下轮 get_window 自然读到更少内容）
+            if len(kept_real) < len(messages):
+                self._memory_svc.rewrite_messages(agent_id, kept_real)
+
             if compacted_summary:
                 summary_text = compacted_summary
 
-        count = len(self._memory_svc.get_window(agent_id, 10000))
+        count = self._memory_svc.count_messages(agent_id)
         summary = MemorySummary(
             session_id=session_id,
             agent_id=agent_id,
@@ -215,3 +244,22 @@ class AgentLoop:
             created_at=now_iso(),
         )
         self._memory_svc.save_summary(agent_id, summary)
+
+        # compact 后 messages 变少，旧的 context_tokens 测量值已失效，强制重新测量
+        agent = self._load_agent(agent_id)
+        agent.loop_guard.context_tokens = 0
+        self._agent_store.save(agent.to_dict())
+
+
+def _summarize_spawn(result: "ActorResult") -> str:
+    """从 actor result 的 tool_calls_made 里提取 submit_task 调用，生成挂起摘要。"""
+    from app.runtime.types import ActorResult  # noqa: F401  (TYPE_CHECKING 外的运行时引用)
+    titles = [
+        tc.arguments.get("title", "")
+        for tc in result.tool_calls_made
+        if tc.tool_name == "submit_task" and isinstance(tc.arguments, dict)
+    ]
+    if titles:
+        listed = ", ".join(f"'{t}'" for t in titles if t)
+        return f"Delegated to sub-task(s): {listed}. Awaiting completion."
+    return "Delegated to sub-task(s). Awaiting completion."

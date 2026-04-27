@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     max_concurrent_agents: int = 5
     max_concurrent_tasks: int = 10
     max_spawn_depth: int = 1
-    max_retries: int = 1
+    max_task_retries: int = 3
 
     # Tool 约束
     bash_exec_cwd: str = ""

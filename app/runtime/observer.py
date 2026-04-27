@@ -100,7 +100,7 @@ class Observer:
         last_llm_text       = ""
         reviews_submitted   = False
         max_context_tokens  = 0
-
+        
         for _round in range(max_rounds):
             _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools)
             full_text, tool_call_acc, image_acc, _usage = _stream_observer(
@@ -125,8 +125,6 @@ class Observer:
                 messages, full_text, tool_calls
             )
             for tool_call in tool_calls:
-                if tool_call.name == "submit_task_reviews":
-                    reviews_submitted = True
                 tool_result = self._tool_gateway.call(
                     tool_call.name, tool_call.input, None, task.id, toolcall_ctx
                 )
@@ -139,26 +137,17 @@ class Observer:
                     tool_result.content if hasattr(tool_result, "content") else str(tool_result),
                     bool(getattr(tool_result, "is_error", False)),
                 )
+                if task.status != "TO_BE_OBSERVED":
+                    break
 
             if task.status != "TO_BE_OBSERVED":
-                live_siblings = [
-                    t for t in self._task_svc.list_by_session(session_id)
-                    if t.id != task.id and t.assigned_agent_id == task.assigned_agent_id
-                ]
-                has_pending = any(t.status == "PENDING" for t in live_siblings)
-                live_reviewable = has_pending and any(
-                    t.status in ("FINISHED", "PENDING") for t in live_siblings
-                )
-                if not live_reviewable or reviews_submitted:
-                    # Task is settled and no reviews pending — let LLM output one final
-                    # summary turn (no tools), then exit via the `if not tool_calls` branch.
-                    tools = []
+                break
 
         if task.status == "TO_BE_OBSERVED":
             raise RuntimeError("Observer: no assessment submitted by LLM")
 
         return ObserverVerdict(
-            summary=last_llm_text or task.actor_summary or "",
+            summary=task.actor_result or last_llm_text or "",
             context_tokens=max_context_tokens,
         )
 

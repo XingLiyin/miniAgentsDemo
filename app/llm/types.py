@@ -82,6 +82,7 @@ class LLMMessage:
     content: MessageContent
     tool_call_id: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None
+    reasoning_content: Optional[str] = None
 
 
 @dataclass

@@ -37,6 +37,24 @@ def read_json(path: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def write_jsonl_atomic(path: Path, records: list[dict[str, Any]]) -> None:
+    """原子写入 .jsonl 文件（先写 .tmp，再 rename；与 write_json_atomic 同策略）。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    content = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
+    if content:
+        content += "\n"
+    tmp.write_text(content, encoding="utf-8")
+    for attempt in range(5):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (2 ** attempt))
+
+
 def append_jsonl(path: Path, record: dict[str, Any]) -> None:
     """追加一行 JSON 到 .jsonl 文件（append 模式，文件不存在自动创建）。"""
     path.parent.mkdir(parents=True, exist_ok=True)

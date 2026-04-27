@@ -159,7 +159,7 @@ class Reasoner:
         """
         if not agent.has_spawn_permission or not self._agent_template_registry:
             return []
-        own_meta = self._agent_template_registry.get_metadata(agent.template_id or "")
+        own_meta = self._agent_template_registry.get_metadata_by_id(agent.template_id or "")
         allowlist: set[str] | None = set(own_meta.subagents) if own_meta and own_meta.subagents else None
         return [
             ContextResource(name=m.name, description=m.description, kind="agent")

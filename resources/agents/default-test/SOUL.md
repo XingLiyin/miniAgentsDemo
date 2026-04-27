@@ -13,8 +13,7 @@ tools:
     - exec_skill_script
     - submit_task
   forbidden: []
-mcp_servers:
-  - web-search
+mcp_servers: []
 subagents:
     - image-crafter
     - planner

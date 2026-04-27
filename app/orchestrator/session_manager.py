@@ -28,6 +28,7 @@ from app.storage.file.tool_call_store import ToolCallStore
 if TYPE_CHECKING:
     from app.agent_template.definition import AgentDefContent
     from app.orchestrator.lifecycle_manager import LifecycleManager
+    from app.orchestrator.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +76,13 @@ class SessionManager:
         self._blackboard_store = blackboard_store
         self._template_registry = template_registry
         self._lifecycle_manager: "LifecycleManager | None" = None
+        self._task_manager: "TaskManager | None" = None
 
     def set_lifecycle_manager(self, lm: "LifecycleManager") -> None:
-        """注入 LifecycleManager（避免循环导入）。"""
         self._lifecycle_manager = lm
+
+    def set_task_manager(self, tm: "TaskManager") -> None:
+        self._task_manager = tm
 
     def create_session(
         self,
@@ -126,7 +130,7 @@ class SessionManager:
             act_tool_list=tpl.act_tool_list if tpl else [],
             observe_tool_list=tpl.observe_tool_list if tpl else [],
             soul_path=tpl.source_dir or None if tpl else None,
-            loop_guard=LoopGuard(turns_used=0, max_turns=session.root_max_turns),
+            loop_guard=LoopGuard(),
             llm_provider=llm_provider or settings.default_llm_provider,
             llm_model=llm_model or "",
             has_spawn_permission=True,
@@ -152,9 +156,10 @@ class SessionManager:
         except Exception:
             pass
 
-        # 初始化 LifecycleManager session 状态
+        # 初始化 LifecycleManager session 状态，并注册 root agent
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session.id)
+            self._lifecycle_manager.register_root_agent(session.id, agent.id)
 
         # 创建初始 task（默认由 root 直接执行，不创建 sub-agent）
         if self._task_svc is not None:
@@ -168,18 +173,11 @@ class SessionManager:
         return session, agent.id
 
     def schedule_loop(self, session_id: str, agent_id: str) -> None:
-        """找到 session 的第一个 PENDING task，交由 LifecycleManager 启动。"""
-        if self._lifecycle_manager is None:
-            logger.warning("LifecycleManager not set, session %s will not run", session_id)
+        """通知 TaskManager session 可以开始运行，由 TM 负责找到并调度第一个 task。"""
+        if self._task_manager is None:
+            logger.warning("TaskManager not set, session %s will not run", session_id)
             return
-        if self._task_svc is None:
-            logger.error("task_svc not set, cannot schedule session %s", session_id)
-            return
-        tasks = self._task_svc.list_pending(session_id)
-        if not tasks:
-            logger.error("No pending task found for session %s", session_id)
-            return
-        self._lifecycle_manager.schedule_initial_task(session_id, agent_id, tasks[0].id)
+        self._task_manager.start_session(session_id, agent_id)
 
     def _create_initial_task(
         self,
@@ -209,19 +207,38 @@ class SessionManager:
             inputs=inputs,
         )
         if (not title or not description) and self._lifecycle_manager is not None:
+            try:
+                _session = self._session_svc.get(session_id)
+                _existing_goal = _session.goal if _session.goal != _session.user_prompt else ""
+            except Exception:
+                _existing_goal = ""
+
+            if _existing_goal:
+                _meta_desc = (
+                    f"根据用户指令（{_extract_text(user_prompt)}）和完整对话上下文，生成任务标题和描述。"
+                    f"当前 session goal 为「{_existing_goal}」，如无重大方向调整请保持不变。"
+                )
+            else:
+                _meta_desc = (
+                    f"根据用户指令（{_extract_text(user_prompt)}）和完整对话上下文，"
+                    f"生成任务标题和描述，并判断 session goal。"
+                )
+
             meta_task = self._task_svc.create(
                 session_id=session_id,
                 creator_agent_id=creator_agent_id,
                 user_prompt=user_prompt,
                 title="Update task meta data details",
-                description=f"Summarize the user prompt ({_extract_text(user_prompt)}) and fill in the task title and description accordingly",
+                description=_meta_desc,
                 inputs={
                     "subagent_template": "metadata_filler",
                     "target_task_id": task.id,
                     "_daemon": True,
+                    "inherit_memory": True,
                 },
             )
-            self._lifecycle_manager.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
+            if self._task_manager is not None:
+                self._task_manager.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
 
     def continue_session(self, session_id: str, user_message: str | list, *, initial_task: InitialTaskConfig | None = None) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
@@ -263,13 +280,13 @@ class SessionManager:
             raise AppError("AGENT_NOT_FOUND", f"Root agent {session.root_agent_id} not found")
         agent = Agent.from_dict(agent_data)
         agent.status = "IDLE"
-        agent.loop_guard.turns_used = 0
         agent.updated_at = now_iso()
         self._agent_store.save(agent.to_dict())
         self._session_svc.transition(session_id, "QUEUED")
-        # 重新初始化 LM 状态（旧 session 的状态已过期）
+        # 重新初始化 LM 状态（旧 session 的状态已过期），并重新注册 root agent
         if self._lifecycle_manager is not None:
             self._lifecycle_manager.init_session(session_id)
+            self._lifecycle_manager.register_root_agent(session_id, agent.id)
 
         # 创建新 task，携带完整多模态内容
         if self._task_svc is not None:

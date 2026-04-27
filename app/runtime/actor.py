@@ -76,7 +76,7 @@ class Actor:
             messages_sent = list(messages)
             self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx)
 
-            full_text, tool_call_acc, image_acc, _usage = self._stream_llm(
+            full_text, reasoning_text, tool_call_acc, image_acc, _usage = self._stream_llm(
                 llm_client, messages, system_prompt, tools, _round, _sse, session_id
             )
             if _usage:
@@ -95,7 +95,7 @@ class Actor:
 
             if tool_calls_from_stream:
                 messages = self._prompt_builder.append_assistant_tool_calls(
-                    messages, full_text, tool_calls_from_stream
+                    messages, full_text, tool_calls_from_stream, reasoning_text or None
                 )
                 round_tool_calls, messages, done = self._execute_tools(
                     tool_calls_from_stream, agent, task, toolcall_ctx, messages, _sse, session_id
@@ -110,7 +110,19 @@ class Actor:
                 images=parsed.images,
             ))
 
-            if not tool_calls_from_stream or done:
+            context_limit_hit = (
+                _usage is not None
+                and _usage.prompt_tokens is not None
+                and agent.loop_guard.context_limit > 0
+                and _usage.prompt_tokens >= agent.loop_guard.context_limit
+            )
+            if context_limit_hit:
+                logger.warning(
+                    "Actor context limit reached: prompt_tokens=%s >= context_limit=%s, stopping loop",
+                    _usage.prompt_tokens, agent.loop_guard.context_limit,
+                )
+
+            if not tool_calls_from_stream or done or context_limit_hit:
                 break
 
         return self._build_result(task, tool_calls_made, conversation_turns, last_text, max_context_tokens)
@@ -152,7 +164,7 @@ class Actor:
             "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
         })
 
-    def _stream_llm(self, llm_client, messages, system_prompt, tools, _round: int, _sse, session_id: str):
+    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str):
         full_text = ""
         reasoning_text = ""
         tool_call_acc: dict[int, dict] = {}
@@ -208,7 +220,7 @@ class Actor:
             len(tool_call_acc),
             len(image_acc),
         )
-        return full_text, tool_call_acc, image_acc, final_usage
+        return full_text, reasoning_text, tool_call_acc, image_acc, final_usage
 
     def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages, _sse, session_id: str):
         from app.common.utils import now_iso

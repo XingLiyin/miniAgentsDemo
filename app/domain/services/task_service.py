@@ -124,9 +124,10 @@ class TaskService:
         return self.transition(task_id, "PENDING")
 
     def retry(self, task_id: str) -> Task:
-        """将 FAILED 任务打回 PENDING（LifecycleManager 重试调度时使用）。"""
+        """将 FAILED 任务打回 PENDING，并递增重试计数。"""
         task = self.get(task_id)
         task.error = None
+        task.retry_count += 1
         self.save(task)
         return self.transition(task_id, "PENDING")
 

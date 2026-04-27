@@ -69,7 +69,14 @@ def get_agent_template_service() -> AgentTemplateService:
 
 @lru_cache
 def get_task_manager() -> TaskManager:
-    return TaskManager(task_svc=get_task_service(), session_svc=get_session_service())
+    settings = get_settings()
+    return TaskManager(
+        task_svc=get_task_service(),
+        session_svc=get_session_service(),
+        lifecycle_manager=get_lifecycle_manager(),
+        event_bus=get_event_bus(),
+        max_task_retries=settings.max_task_retries,
+    )
 
 
 @lru_cache
@@ -147,14 +154,11 @@ def get_lifecycle_manager() -> LifecycleManager:
     settings = get_settings()
     lm = LifecycleManager(
         session_svc=get_session_service(),
-        task_svc=get_task_service(),
         agent_store=AgentStore(),
         event_bus=get_event_bus(),
-        task_manager=get_task_manager(),
         max_concurrent_agents=settings.max_concurrent_agents,
         max_concurrent_tasks=settings.max_concurrent_tasks,
         max_spawn_depth=settings.max_spawn_depth,
-        max_retries=settings.max_retries,
         template_svc=get_agent_template_service(),
         memory_svc=get_memory_service(),
         template_registry=get_agent_template_registry(),
@@ -178,4 +182,5 @@ def get_session_manager() -> SessionManager:
         template_registry=get_agent_template_registry(),
     )
     mgr.set_lifecycle_manager(get_lifecycle_manager())
+    mgr.set_task_manager(get_task_manager())
     return mgr

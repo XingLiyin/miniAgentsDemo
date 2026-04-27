@@ -69,10 +69,9 @@ class BaseAdapter(ABC):
 class BaseChatClient:
     """统一的 LLM 调用客户端。"""
 
-    def __init__(self, adapter: BaseAdapter, model: str, default_max_tokens: int = 8096) -> None:
+    def __init__(self, adapter: BaseAdapter, model: str) -> None:
         self._adapter = adapter
         self._model = model
-        self._default_max_tokens = default_max_tokens
 
     def send_message(
         self,
@@ -175,7 +174,7 @@ class BaseChatClient:
             system_prompt=system_prompt,
             tools=tools,
             temperature=temperature,
-            max_tokens=max_tokens if max_tokens is not None else self._default_max_tokens,
+            max_tokens=max_tokens,
             top_p=top_p,
             stop=stop,
             metadata=metadata or {},
