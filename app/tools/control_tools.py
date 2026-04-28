@@ -12,6 +12,7 @@ register_control_tools()：创建 ControlToolProvider 实例，批量调用 regi
 
 from __future__ import annotations
 
+import logging
 import sys
 from typing import TYPE_CHECKING, Annotated
 
@@ -69,8 +70,9 @@ def request_human_input(
 def update_task_metadata(
     title: Annotated[str, "简短的任务标题（≤20字）"],
     description: Annotated[str, "任务描述（≤80字）"],
+    session_goal: Annotated[str, "对整个 session 整体目的的理解（≤60字）；首次设定或确认用户方向发生根本性转变时填写，否则留空"] = "",
 ) -> ToolResult:
-    """将生成的标题和描述保存到目标任务。调用一次后任务即完成。"""
+    """将生成的标题、描述和 session goal 保存。调用一次后任务即完成。"""
 
 
 @control_tool
@@ -91,9 +93,21 @@ def submit_task_assessment(
         "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn); "
         "'needs_user_input' if completion cannot be determined without user confirmation.",
     ],
-    task_result: Annotated[str, "What was accomplished, progress made, or why the task could not be completed"],
+    task_result: Annotated[str, "Complete description of current progress: what was accomplished, what was produced or modified, what remains, and why the task could not be completed if applicable. This field is written directly to memory and read by the next actor turn — be thorough, not a one-liner."],
+    task_reviews: Annotated[
+        list,
+        "Optional reviews for FINISHED/PENDING sibling tasks in the session. "
+        "Each entry: task_title (str, exact match from task list), "
+        "review_status ('confirmed'|'reopen'|'skip'), reasoning (str, required). "
+        "Omit tasks you have no information about. "
+        "Leave empty if no session task list was provided.",
+    ] = [],
+    next_step_hint: Annotated[
+        str,
+        "Optional. If there are obvious risks, blockers, or important concerns the next actor turn should be aware of, describe them here. Leave empty if nothing notable.",
+    ] = "",
 ) -> ToolResult:
-    """Submit your assessment of the current task's execution result."""
+    """Submit your assessment of the current task's execution result, and optionally review sibling tasks in one call."""
 
 
 @control_tool
@@ -129,21 +143,6 @@ def submit_task(
     """Create a single new task in the current session. The current task continues running.
     Use when you need to delegate work to another task/agent without replacing the current plan."""
 
-
-@control_tool
-def submit_task_reviews(
-    reviews: Annotated[
-        list,
-        "Review entries for FINISHED and PENDING tasks in the session. "
-        "Each entry: "
-        "  task_title (str, exact match from task list); "
-        "  current_status ('FINISHED' or 'PENDING'); "
-        "  review_status ('confirmed' | 'reopen' | 'skip'); "
-        "  reasoning (str, brief explanation, required). "
-        "Omit tasks you have no information about.",
-    ],
-) -> ToolResult:
-    """Submit your review of all FINISHED and PENDING tasks in the session."""
 
 
 # ── ControlToolProvider ───────────────────────────────────────────────────────
@@ -229,6 +228,7 @@ class ControlToolProvider:
         task = ctx.task if ctx else None
         task_ids: list[str] = []
         titles:   list[str] = []
+        prev_id:  str | None = None
 
         for spec in args.get("tasks", []):
             inputs: dict = {}
@@ -249,16 +249,23 @@ class ControlToolProvider:
                 description=spec.get("description", ""),
                 inputs=inputs,
                 parent_task_id=task.id if task else None,
+                dag_deps=[prev_id] if prev_id else [],
             )
             task_ids.append(t.id)
             titles.append(spec.get("title", ""))
+            prev_id = t.id
 
         result_text = (
             f"Planned {len(task_ids)} tasks: {', '.join(titles)}"
             if task_ids else "No further tasks needed — goal already achieved."
         )
-        if task is not None:
-            task.actor_done = True
+
+        # Suspend parent task and wait for sub-tasks to complete,
+        # then LLM evaluates results and finishes (same pattern as submit_task)
+        if task is not None and task_ids:
+            self._task_svc.transition(task.id, "SUSPENDED")
+            task.status = "SUSPENDED"
+        task.actor_done = True
         return ToolResult(content=result_text)
 
     def _handle_replan(self, args: dict, ctx: CallContext | None) -> ToolResult:
@@ -290,11 +297,13 @@ class ControlToolProvider:
         task_outcome = args.get("task_outcome", "failed")
         if task_outcome not in ("success", "failed", "active", "needs_user_input"):
             task_outcome = "failed"
-        task_result = args.get("task_result", "")
+        task_result     = args.get("task_result", "")
+        next_step_hint  = args.get("next_step_hint", "")
+        actor_result    = f"{task_result}\n\n下一步建议：{next_step_hint}" if next_step_hint else task_result
 
         if task is not None:
             task.actor_outcome = task_outcome
-            task.actor_result  = task_result
+            task.actor_result  = actor_result
             task.proceed_to_review = True
             outputs = {"progress_text": task.progress_text} if getattr(task, "progress_text", None) else None
 
@@ -314,7 +323,12 @@ class ControlToolProvider:
                 task.actor_result  = task_result
                 task.status = "FINISHED" if task_outcome == "success" else "FAILED"
 
-        return ToolResult(content=f"Assessment recorded: outcome={task_outcome}. {task_result}")
+        review_msg = ""
+        task_reviews = args.get("task_reviews") or []
+        if task_reviews and ctx:
+            review_msg = self._apply_reviews(task_reviews, ctx)
+
+        return ToolResult(content=f"Assessment recorded: outcome={task_outcome}. {task_result}{review_msg}")
 
     def _confirm_with_user(self, task, task_result: str, outputs) -> tuple[str, str]:
         """需要用户确认任务完成状态时阻塞等待，返回 (outcome, result)。"""
@@ -357,10 +371,13 @@ class ControlToolProvider:
         target_task_id = task.settings.get("target_task_id", "") if task else ""
         title          = str(args.get("title", "")).strip()
         description    = str(args.get("description", "")).strip()
+        session_goal   = str(args.get("session_goal", "")).strip()
 
+        session_id = ""
         if target_task_id:
             try:
                 target = self._task_svc.get(target_task_id)
+                session_id = target.session_id
                 if title:
                     target.title = title
                 if description:
@@ -368,7 +385,7 @@ class ControlToolProvider:
                 self._task_svc.save(target)
                 try:
                     from app.common.sse_bus import get_sse_bus
-                    get_sse_bus().push(target.session_id,
+                    get_sse_bus().push(session_id,
                                        {"type": "task_updated", "task": target.to_dict()})
                 except Exception:
                     pass
@@ -376,6 +393,21 @@ class ControlToolProvider:
                 import logging
                 logging.getLogger(__name__).exception(
                     "control_tools: failed to update metadata for task %s", target_task_id)
+
+        if session_goal and session_id:
+            try:
+                session = self._session_svc.get(session_id)
+                session.goal = session_goal
+                self._session_svc.save(session)
+                try:
+                    from app.common.sse_bus import get_sse_bus
+                    get_sse_bus().push(session_id, {"type": "session_goal_updated", "goal": session_goal})
+                except Exception:
+                    pass
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "control_tools: failed to update session goal for session %s", session_id)
 
         if task is not None:
             task.actor_done    = True
@@ -411,14 +443,12 @@ class ControlToolProvider:
             task.actor_done = True
         return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
 
-    def _handle_submit_task_reviews(self, args: dict, ctx: CallContext | None) -> ToolResult:
-        import logging
+    def _apply_reviews(self, reviews: list, ctx: "CallContext") -> str:
+        """Apply task reviews; returns a summary string."""
         _log = logging.getLogger(__name__)
-
         session_id = ctx.session_id if ctx else ""
         agent_id   = ctx.agent_id   if ctx else ""
         current_id = ctx.task.id    if ctx and ctx.task else ""
-        reviews    = args.get("reviews") or []
 
         session_tasks = self._task_svc.list_by_session(session_id)
         reviewable = {
@@ -428,6 +458,7 @@ class ControlToolProvider:
             and t.id != current_id
         }
 
+        applied: list[str] = []
         for item in reviews:
             if not isinstance(item, dict):
                 continue
@@ -440,7 +471,7 @@ class ControlToolProvider:
 
             matched = reviewable.get(title)
             if matched is None:
-                _log.warning("submit_task_reviews: no reviewable task with title %r, skipping", title)
+                _log.warning("task_reviews: no reviewable task with title %r, skipping", title)
                 continue
 
             try:
@@ -450,18 +481,13 @@ class ControlToolProvider:
                 elif review_status == "skip":
                     self._task_svc.finish(matched.id, result=reasoning or "Completed indirectly per observer.")
                     _log.info("Task %s skipped by observer: %s", matched.id, reasoning)
-                # "confirmed" → 无操作
             except Exception as e:
-                _log.warning("submit_task_reviews: failed to apply review for %s: %s", matched.id, e)
+                _log.warning("task_reviews: failed to apply review for %s: %s", matched.id, e)
 
-        applied = [
-            f"{item.get('task_title')} → {item.get('review_status')}"
-            for item in reviews
-            if isinstance(item, dict)
-            and item.get("review_status") in ("confirmed", "reopen", "skip")
-            and item.get("task_title")
-        ]
-        return ToolResult(content=f"Reviews applied: {', '.join(applied) if applied else 'none'}")
+            applied.append(f"{title} → {review_status}")
+
+        return f" Reviews applied: {', '.join(applied)}" if applied else ""
+
 
 
 # ── 注册函数 ──────────────────────────────────────────────────────────────────

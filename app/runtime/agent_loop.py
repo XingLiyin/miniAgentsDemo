@@ -28,7 +28,7 @@ from app.storage.file.agent_store import AgentStore
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.runtime.compaction import CompactionStrategy
+    from app.runtime.memory_compaction import MemoryCompactionAgent
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class AgentLoop:
         reasoner: Reasoner,
         actor: Actor,
         observer: Observer,
-        compaction_strategy: "CompactionStrategy | None" = None,
+        compaction_agent: "MemoryCompactionAgent | None" = None,
     ) -> None:
         self._session_svc = session_svc
         self._task_svc = task_svc
@@ -58,7 +58,7 @@ class AgentLoop:
         self._reasoner = reasoner
         self._actor = actor
         self._observer = observer
-        self._compaction_strategy = compaction_strategy
+        self._compaction_agent = compaction_agent
 
     def run(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Execute one task synchronously inside a worker thread.
@@ -81,24 +81,34 @@ class AgentLoop:
                     f"({session.token_used}/{session.token_budget})",
                 )
 
-            guard = agent.loop_guard
-            guard.turns_used += 1
-            self._agent_store.save(agent.to_dict())
-
-            if guard.turns_used > guard.max_turns:
-                raise AppError(
-                    "MAX_TURNS_EXCEEDED",
-                    f"Agent {agent_id} reached max_turns={guard.max_turns}",
-                )
-
             task = self._task_svc.get(task_id)
 
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
 
+            if result.context_tokens:
+                agent.loop_guard.context_tokens = result.context_tokens
+                self._agent_store.save(agent.to_dict())
+
             task = self._task_svc.get(task_id)
 
             if task.status == "SUSPENDED":
+                if task.user_prompt:
+                    self._memory_svc.append_message(
+                        agent_id=agent_id,
+                        role="user",
+                        content=task.user_prompt,
+                        session_id=session_id,
+                        task_id=task_id,
+                    )
+                spawn_note = _summarize_spawn(result)
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=spawn_note,
+                    session_id=session_id,
+                    task_id=task_id,
+                )
                 return
 
             if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
@@ -107,6 +117,13 @@ class AgentLoop:
 
             task_list = self._task_svc.list_by_agent(session_id, agent_id)
             verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
+
+            if verdict.context_tokens:
+                agent = self._load_agent(agent_id)
+                agent.loop_guard.context_tokens = max(
+                    agent.loop_guard.context_tokens, verdict.context_tokens
+                )
+                self._agent_store.save(agent.to_dict())
 
             # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
             task = self._task_svc.get(task_id)
@@ -154,7 +171,12 @@ class AgentLoop:
                 for tool_call in result_turn.tool_calls:
                     self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
 
-            if self._memory_svc.should_summarize(agent_id):
+            agent = self._load_agent(agent_id)
+            if self._memory_svc.should_summarize(
+                agent_id,
+                context_tokens=agent.loop_guard.context_tokens,
+                context_limit=agent.loop_guard.context_limit,
+            ):
                 self._do_summarize(session_id, agent_id, verdict.summary)
 
         except AppError as e:
@@ -167,7 +189,11 @@ class AgentLoop:
         finally:
             agent = self._load_agent(agent_id)
             if agent.status == "RUNNING":
-                agent.status = "FINISHED"
+                try:
+                    task = self._task_svc.get(task_id)
+                    agent.status = "WAITING" if task.status == "SUSPENDED" else "FINISHED"
+                except Exception:
+                    agent.status = "FINISHED"
                 self._agent_store.save(agent.to_dict())
 
     def _load_agent(self, agent_id: str) -> Agent:
@@ -182,20 +208,64 @@ class AgentLoop:
         from app.common.utils import now_iso
         from app.domain.models.memory import MemorySummary
 
+        messages = self._memory_svc.get_window(agent_id, 10000)
         summary_text = latest_summary
 
-        if self._compaction_strategy is not None:
-            messages = self._memory_svc.get_window(agent_id, 10000)
-            _, compacted_summary = self._compaction_strategy.compact(messages)
-            if compacted_summary:
-                summary_text = compacted_summary
+        if self._compaction_agent is not None:
+            try:
+                session = self._session_svc.get(session_id)
+                agent_data = self._agent_store.get(agent_id) or {}
+                working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
 
-        count = len(self._memory_svc.get_window(agent_id, 10000))
-        summary = MemorySummary(
+                kept, compacted_summary = self._compaction_agent.compact(
+                    messages=messages,
+                    session_goal=session.goal,
+                    working_dir=working_dir,
+                    session_id=session_id,
+                    agent_id=agent_id,
+                )
+
+                if compacted_summary:
+                    summary_text = compacted_summary
+                    kept = [{"role": "assistant", "content": f"[Context so far]:\n{compacted_summary}"}] + kept
+
+                if len(kept) < len(messages):
+                    self._memory_svc.rewrite_messages(agent_id, kept)
+            except Exception:
+                logger.exception("AgentLoop: compaction failed for agent %s, keeping original messages", agent_id)
+
+        count = self._memory_svc.count_messages(agent_id)
+        self._memory_svc.save_summary(agent_id, MemorySummary(
             session_id=session_id,
             agent_id=agent_id,
             summary_text=summary_text,
             covered_up_to=count,
             created_at=now_iso(),
-        )
-        self._memory_svc.save_summary(agent_id, summary)
+        ))
+
+        agent = self._load_agent(agent_id)
+        agent.loop_guard.context_tokens = 0
+        self._agent_store.save(agent.to_dict())
+
+
+def _summarize_spawn(result: "ActorResult") -> str:
+    """从 actor result 的 tool_calls_made 里提取 submit_task / submit_plan 调用，生成挂起摘要。"""
+    from app.runtime.types import ActorResult  # noqa: F401  (TYPE_CHECKING 外的运行时引用)
+    titles: list[str] = []
+    for tc in result.tool_calls_made:
+        if not isinstance(tc.arguments, dict):
+            continue
+        if tc.tool_name == "submit_task":
+            title = tc.arguments.get("title", "")
+            if title:
+                titles.append(title)
+        elif tc.tool_name == "submit_plan":
+            for spec in tc.arguments.get("tasks", []):
+                if isinstance(spec, dict):
+                    title = spec.get("title", "")
+                    if title:
+                        titles.append(title)
+    if titles:
+        listed = ", ".join(f"'{t}'" for t in titles)
+        return f"Delegated to sub-task(s): {listed}. Awaiting completion."
+    return "Delegated to sub-task(s). Awaiting completion."

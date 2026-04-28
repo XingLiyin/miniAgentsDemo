@@ -17,6 +17,7 @@ from app.domain.models.session import Session
 from app.llm.base import BaseChatClient
 from app.llm.types import LLMMessage
 from app.tools.definition import CallContext
+from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.runtime.prompt_builder import ObserverPromptBuilder, PromptBuilderFactory
 from app.runtime.types import (
@@ -46,11 +47,13 @@ class Observer:
         llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
+        session_svc: SessionService | None = None,
         prompt_builder: ObserverPromptBuilder | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
+        self._session_svc = session_svc
         self._prompt_builder = prompt_builder or PromptBuilderFactory.for_observer()
 
     def observe(
@@ -94,14 +97,22 @@ class Observer:
         toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task)
         max_rounds    = agent.loop_guard.observer_max_tool_rounds if agent else 5
 
-        last_llm_text     = ""
-        reviews_submitted = False
-
+        last_llm_text       = ""
+        reviews_submitted   = False
+        max_context_tokens  = 0
+        
         for _round in range(max_rounds):
             _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools)
-            full_text, tool_call_acc, image_acc = _stream_observer(
+            full_text, tool_call_acc, image_acc, _usage = _stream_observer(
                 llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}"
             )
+            if _usage:
+                if self._session_svc and session_id:
+                    tokens = _usage.total_tokens or (_usage.prompt_tokens or 0) + (_usage.completion_tokens or 0)
+                    if tokens:
+                        self._session_svc.add_tokens(session_id, tokens)
+                if _usage.prompt_tokens:
+                    max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
             if full_text:
                 last_llm_text = full_text
 
@@ -114,8 +125,6 @@ class Observer:
                 messages, full_text, tool_calls
             )
             for tool_call in tool_calls:
-                if tool_call.name == "submit_task_reviews":
-                    reviews_submitted = True
                 tool_result = self._tool_gateway.call(
                     tool_call.name, tool_call.input, None, task.id, toolcall_ctx
                 )
@@ -128,25 +137,19 @@ class Observer:
                     tool_result.content if hasattr(tool_result, "content") else str(tool_result),
                     bool(getattr(tool_result, "is_error", False)),
                 )
+                if task.status != "TO_BE_OBSERVED":
+                    break
 
             if task.status != "TO_BE_OBSERVED":
-                live_siblings = [
-                    t for t in self._task_svc.list_by_session(session_id)
-                    if t.id != task.id and t.assigned_agent_id == task.assigned_agent_id
-                ]
-                has_pending = any(t.status == "PENDING" for t in live_siblings)
-                live_reviewable = has_pending and any(
-                    t.status in ("FINISHED", "PENDING") for t in live_siblings
-                )
-                if not live_reviewable or reviews_submitted:
-                    # Task is settled and no reviews pending — let LLM output one final
-                    # summary turn (no tools), then exit via the `if not tool_calls` branch.
-                    tools = []
+                break
 
         if task.status == "TO_BE_OBSERVED":
             raise RuntimeError("Observer: no assessment submitted by LLM")
 
-        return ObserverVerdict(summary=last_llm_text or task.actor_summary or "")
+        return ObserverVerdict(
+            summary=task.actor_result or last_llm_text or "",
+            context_tokens=max_context_tokens,
+        )
 
     def _resolve_llm_client(self, agent: "Agent | None") -> BaseChatClient:
         """按 agent.llm_name 动态解析 LLM 客户端，缺省用注入的默认客户端。"""
@@ -276,6 +279,7 @@ def _stream_observer(
                 "type": "observer_text_done",
                 "text": full_text,
                 "round_label": round_label,
+                "context_tokens": final_usage.prompt_tokens if final_usage else None,
             })
         except Exception:
             pass
@@ -291,7 +295,7 @@ def _stream_observer(
         len(image_acc),
     )
 
-    return full_text, tool_call_acc, image_acc
+    return full_text, tool_call_acc, image_acc, final_usage
 
 
 def _push_observer_tool_call(

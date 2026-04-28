@@ -34,6 +34,7 @@ class TaskService:
         inputs: dict | None = None,
         assigned_agent_id: str | None = None,
         parent_task_id: str | None = None,
+        dag_deps: list[str] | None = None,
     ) -> Task:
         """创建新 Task，初始状态 PENDING。
 
@@ -51,6 +52,7 @@ class TaskService:
             settings=inputs or {},
             status="PENDING",
             parent_task_id=parent_task_id,
+            dag_deps=dag_deps or [],
             created_at=now,
             updated_at=now,
         )
@@ -124,9 +126,10 @@ class TaskService:
         return self.transition(task_id, "PENDING")
 
     def retry(self, task_id: str) -> Task:
-        """将 FAILED 任务打回 PENDING（LifecycleManager 重试调度时使用）。"""
+        """将 FAILED 任务打回 PENDING，并递增重试计数。"""
         task = self.get(task_id)
         task.error = None
+        task.retry_count += 1
         self.save(task)
         return self.transition(task_id, "PENDING")
 

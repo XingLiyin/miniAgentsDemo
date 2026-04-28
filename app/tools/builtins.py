@@ -468,42 +468,47 @@ def _make_load_skill_reference() -> ToolDefinition:
 
 # ── skill venv helpers ────────────────────────────────────────────────────
 
-def _venv_python(skill_dir: Path) -> str:
-    """Return the Python executable to use for a skill script.
+def _venv_python(working_dir: Path, skill_dir: Path) -> str:
+    """Return the Python executable for running a skill script.
 
-    If skill_dir/requirements.txt exists, ensure a .venv is created and
-    dependencies are installed, then return its interpreter path.
-    Falls back to sys.executable when no requirements.txt is present.
+    venv lives in working_dir, not skill_dir. Priority:
+    1. working_dir/.venv exists → use it as-is (user manages deps)
+    2. working_dir/.venv absent + skill_dir/requirements.txt exists → create venv
+       at working_dir/.venv and install skill deps
+    3. No requirements.txt → sys.executable
     """
+    if sys.platform == "win32":
+        _python = lambda d: d / "Scripts" / "python.exe"
+        _pip    = lambda d: d / "Scripts" / "pip.exe"
+    else:
+        _python = lambda d: d / "bin" / "python"
+        _pip    = lambda d: d / "bin" / "pip"
+
+    venv_dir = working_dir / ".venv"
+
+    # Case 1: venv already exists — use it without touching deps
+    if _python(venv_dir).exists():
+        return str(_python(venv_dir))
+
+    # Case 2: no venv yet — only create if skill has requirements
     reqs = skill_dir / "requirements.txt"
     if not reqs.exists():
         return sys.executable
 
-    venv_dir = skill_dir / ".venv"
-    # Determine platform-specific interpreter path inside the venv
-    if sys.platform == "win32":
-        python_bin = venv_dir / "Scripts" / "python.exe"
-        pip_bin    = venv_dir / "Scripts" / "pip.exe"
-    else:
-        python_bin = venv_dir / "bin" / "python"
-        pip_bin    = venv_dir / "bin" / "pip"
-
-    if not python_bin.exists():
-        logger.info("exec_skill_script: creating venv at '%s'", venv_dir)
-        result = subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    logger.info("exec_skill_script: creating venv at '%s'", venv_dir)
+    result = subprocess.run(
+        [sys.executable, "-m", "venv", str(venv_dir)],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    )
+    if result.returncode != 0:
+        raise AppError(
+            "VENV_CREATE_FAILED",
+            f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
         )
-        if result.returncode != 0:
-            raise AppError(
-                "VENV_CREATE_FAILED",
-                f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
-            )
 
-    # Always sync requirements so new packages are picked up
     logger.info("exec_skill_script: installing requirements from '%s'", reqs)
     result = subprocess.run(
-        [str(pip_bin), "install", "-r", str(reqs), "--disable-pip-version-check"],
+        [str(_pip(venv_dir)), "install", "-r", str(reqs), "--disable-pip-version-check"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
     )
     if result.returncode != 0:
@@ -512,7 +517,7 @@ def _venv_python(skill_dir: Path) -> str:
             f"pip install failed: {((result.stdout or '') + (result.stderr or '')).strip()}",
         )
 
-    return str(python_bin)
+    return str(_python(venv_dir))
 
 
 # ── exec_skill_script ─────────────────────────────────────────────────────
@@ -557,7 +562,11 @@ def _make_exec_skill_script() -> ToolDefinition:
 
         abs_skill_dir = metadata.skill_dir.resolve()
         if resolved.suffix == ".py":
-            python_exe = _venv_python(abs_skill_dir)
+            wd_str = ctx.working_dir if ctx else ""
+            if wd_str:
+                python_exe = _venv_python(Path(wd_str), abs_skill_dir)
+            else:
+                python_exe = sys.executable
             command = f'"{python_exe}" "{resolved}" {args}'.strip()
         else:
             command = f'"{resolved}" {args}'.strip()

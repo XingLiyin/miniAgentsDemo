@@ -32,6 +32,7 @@ class BasePromptBuilder:
         messages: list[LLMMessage],
         full_text: str,
         tool_calls: list[ToolCallBlock],
+        reasoning_content: str | None = None,
     ) -> list[LLMMessage]:
         """在工具结果之前插入 assistant 工具调用消息（provider 协议要求配对）。"""
         messages.append(LLMMessage(
@@ -41,6 +42,7 @@ class BasePromptBuilder:
                 {"id": tc.id, "name": tc.name, "input": tc.input}
                 for tc in tool_calls
             ],
+            reasoning_content=reasoning_content,
         ))
         return messages
 
@@ -83,6 +85,7 @@ class BasePromptBuilder:
                     content=m.content,
                     tool_call_id=m.tool_call_id,
                     tool_calls=m.tool_calls,
+                    reasoning_content=m.reasoning_content,
                 ))
         return merged
 
@@ -94,13 +97,42 @@ class ActorPromptBuilder(BasePromptBuilder):
     """构建 actor 的 system prompt 和 messages。"""
 
     def build_system_prompt(self, ctx: "ReasoningContext") -> str:
-        """组装 system prompt：soul → 资源列表 → skill instructions。"""
-        parts = [p for p in [ctx.soul, self._build_resources_section(ctx), ctx.skill_instructions] if p]
+        """组装 system prompt：soul → 项目背景 → 资源列表 → skill instructions。"""
+        parts = [p for p in [
+            ctx.soul,
+            f"## Project Background\n\n{ctx.project_background}" if ctx.project_background else "",
+            self._build_resources_section(ctx),
+            ctx.skill_instructions,
+        ] if p]
         return "\n\n---\n\n".join(parts)
 
     def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
-        """组装 actor messages：历史记忆 + 当前 task 指令。"""
+        """组装 actor messages：历史记忆 + 当前 task 指令。
+
+        Resume 场景（memory 里已有 task_id == task.id 的记录）：直接还原 memory，
+        并追加一条"子任务已完成，请继续"的 user 消息，不重复注入 user_prompt。
+        """
         messages: list[LLMMessage] = []
+
+        # 检测 resume：memory 里存在本 task 的挂起记录
+        is_resume = any(m.get("task_id") == task.id for m in ctx.recent_messages)
+
+        if is_resume:
+            for m in ctx.recent_messages:
+                messages.append(LLMMessage(
+                    role=m.get("role", "user"),
+                    content=content_from_raw(m.get("content", "")),
+                    tool_call_id=m.get("tool_call_id"),
+                    tool_calls=m.get("tool_calls"),
+                ))
+            resume_parts: list[str] = []
+            if ctx.blackboard_snippets:
+                resume_parts.append(
+                    "Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets)
+                )
+            resume_parts.append("Sub-tasks have completed. Please review the results and continue.")
+            messages.append(LLMMessage(role="user", content="\n\n".join(resume_parts)))
+            return messages
 
         recent_messages = (
             ctx.recent_messages[:-1]
@@ -120,8 +152,6 @@ class ActorPromptBuilder(BasePromptBuilder):
             parts.append("Task Background:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
         if task.title and task.description:
             parts.append(f"Current goal: {task.title}\nDescription: {task.description}")
-        if ctx.summary_text:
-            parts.append(f"Previous progress:\n{ctx.summary_text}")
 
         user_prompt = ctx.current_task.user_prompt
         parts.append(f"Current message: {content_to_text(user_prompt)}")
@@ -201,7 +231,6 @@ class ObserverPromptBuilder(BasePromptBuilder):
         )
 
         content_parts = [
-            f"Previous progress summary: {ctx.summary_text or 'None'}",
             (
                 f"Current task: {task.title}\n"
                 f"Task description: {task.description or task.title}"

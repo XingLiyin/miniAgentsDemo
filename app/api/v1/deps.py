@@ -16,6 +16,7 @@ from app.llm.registry import get_llm_registry
 from app.orchestrator.lifecycle_manager import LifecycleManager
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
+from app.orchestrator.task_queue import TaskQueue
 from app.runtime.actor import Actor
 from app.runtime.agent_loop import AgentLoop
 from app.tools.control_tools import register_control_tools
@@ -68,8 +69,21 @@ def get_agent_template_service() -> AgentTemplateService:
 
 
 @lru_cache
+def get_task_queue() -> TaskQueue:
+    return TaskQueue(task_svc=get_task_service())
+
+
+@lru_cache
 def get_task_manager() -> TaskManager:
-    return TaskManager(task_svc=get_task_service(), session_svc=get_session_service())
+    settings = get_settings()
+    return TaskManager(
+        task_svc=get_task_service(),
+        session_svc=get_session_service(),
+        task_queue=get_task_queue(),
+        lifecycle_manager=get_lifecycle_manager(),
+        event_bus=get_event_bus(),
+        max_task_retries=settings.max_task_retries,
+    )
 
 
 @lru_cache
@@ -122,6 +136,37 @@ def get_actor() -> Actor:
         llm_client=_get_llm_client(),
         tool_gateway=get_tool_gateway(),
         task_svc=get_task_service(),
+        session_svc=get_session_service(),
+    )
+
+
+@lru_cache
+def get_compaction_agent():
+    from app.runtime.memory_compaction import MemoryCompactionAgent
+
+    agents_dir = get_settings().agents_dir
+    soul_path = agents_dir / "memory-compactor" / "SOUL.md"
+    soul = ""
+    tool_allowlist: list[str] = []
+    try:
+        from app.agent_template.loader import _parse_agent_md
+        raw = soul_path.read_text(encoding="utf-8")
+        frontmatter, soul = _parse_agent_md(raw)
+        tools = frontmatter.get("tools") or {}
+        if isinstance(tools, dict):
+            tool_allowlist = tools.get("required") or []
+        elif isinstance(tools, list):
+            tool_allowlist = tools
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("deps: failed to load memory-compactor SOUL.md from %s", soul_path)
+
+    return MemoryCompactionAgent(
+        llm_client=_get_llm_client(),
+        tool_registry=get_tool_registry(),
+        soul=soul,
+        tool_allowlist=tool_allowlist,
+        keep_last=get_settings().compaction_keep_last,
     )
 
 
@@ -137,7 +182,8 @@ def get_agent_loop() -> AgentLoop:
         llm_client=llm_client,
         reasoner=get_reasoner(),
         actor=get_actor(),
-        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service()),
+        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
+        compaction_agent=get_compaction_agent(),
     )
 
 
@@ -146,14 +192,11 @@ def get_lifecycle_manager() -> LifecycleManager:
     settings = get_settings()
     lm = LifecycleManager(
         session_svc=get_session_service(),
-        task_svc=get_task_service(),
         agent_store=AgentStore(),
         event_bus=get_event_bus(),
-        task_manager=get_task_manager(),
         max_concurrent_agents=settings.max_concurrent_agents,
         max_concurrent_tasks=settings.max_concurrent_tasks,
         max_spawn_depth=settings.max_spawn_depth,
-        max_retries=settings.max_retries,
         template_svc=get_agent_template_service(),
         memory_svc=get_memory_service(),
         template_registry=get_agent_template_registry(),
@@ -177,4 +220,5 @@ def get_session_manager() -> SessionManager:
         template_registry=get_agent_template_registry(),
     )
     mgr.set_lifecycle_manager(get_lifecycle_manager())
+    mgr.set_task_manager(get_task_manager())
     return mgr

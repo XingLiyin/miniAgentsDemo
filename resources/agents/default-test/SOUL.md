@@ -1,5 +1,5 @@
 ---
-name: default
+name: default-test
 version: 1.3.0
 description: 默认通用执行代理。
 tools:
@@ -13,8 +13,7 @@ tools:
     - exec_skill_script
     - submit_task
   forbidden: []
-mcp_servers:
-  - web-search
+mcp_servers: []
 subagents:
     - image-crafter
     - planner

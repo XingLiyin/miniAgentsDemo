@@ -36,12 +36,13 @@ class Settings(BaseSettings):
     default_root_max_turns: int = 20
     default_summary_threshold: int = 20
     default_short_window_size: int = 20
+    compaction_keep_last: int = 6
 
     # Lifecycle Manager 并发限制
     max_concurrent_agents: int = 5
     max_concurrent_tasks: int = 10
     max_spawn_depth: int = 1
-    max_retries: int = 1
+    max_task_retries: int = 3
 
     # Tool 约束
     bash_exec_cwd: str = ""

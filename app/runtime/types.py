@@ -29,7 +29,6 @@ class ReasoningContext:
     # Memory 层
     goal: str
     recent_messages: list[dict]
-    summary_text: str
     blackboard_snippets: list[str | list]
     # Agent 身份（由 Reasoner 从 Agent 对象提取）
     soul: str = ""                       # agent.soul_md or agent.system_prompt
@@ -43,6 +42,8 @@ class ReasoningContext:
     current_task: "Task | None" = None
     # Token 估算（给 guard 用）
     token_estimate: int = 0
+    # 项目背景（从 working_dir/BACKGROUND.md 读入）
+    project_background: str = ""
 
 
 class PlannedTask(BaseModel):
@@ -90,9 +91,11 @@ class ActorResult:
     plan_task_count: int | None = None  # plan 模式专用；0 = 空计划（目标已达成）
     skill_used: str | None = None
     error: str | None = None
+    context_tokens: int = 0            # 本次执行中最大单轮 prompt_tokens
 
 
 @dataclass
 class ObserverVerdict:
     """Observer 阶段输出。task 状态由 ControlToolProvider handler 写入，此处只携带 memory 摘要。"""
     summary: str                       # 写入 Memory（role=assistant）
+    context_tokens: int = 0           # 本次 observe 中最大单轮 prompt_tokens

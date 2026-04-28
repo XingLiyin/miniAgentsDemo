@@ -1,0 +1,276 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 880" width="1200" height="880">
+<title>BNG机房搬迁方案图</title>
+<defs>
+  <marker id="blueArrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+    <path d="M0,0.5 L8,3.5 L0,6.5 Z" fill="#2196F3"/>
+  </marker>
+  <marker id="redArrow" markerWidth="8" markerHeight="7" refX="7" refY="3.5" orient="auto">
+    <path d="M0,0.5 L8,3.5 L0,6.5 Z" fill="#E53935"/>
+  </marker>
+</defs>
+
+<style>
+  .title { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 22px; font-weight: bold; fill: #1a1a2e; text-anchor: middle; }
+  .label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 12px; fill: #333; text-anchor: middle; }
+  .label-white { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 13px; fill: #fff; text-anchor: middle; font-weight: bold; }
+  .label-small { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 10px; fill: #555; text-anchor: middle; }
+  .oss-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 13px; fill: #555; text-anchor: middle; font-weight: bold; }
+  .step-circle { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 10px; fill: #fff; text-anchor: middle; font-weight: bold; }
+  .legend-title { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 13px; fill: #333; text-anchor: start; font-weight: bold; }
+  .legend-text { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 11px; fill: #555; text-anchor: start; }
+  .box-title { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 13px; fill: #1a1a2e; text-anchor: middle; font-weight: bold; }
+  .port-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 9px; fill: #666; text-anchor: middle; }
+  .ont-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 10px; fill: #00796B; text-anchor: middle; font-weight: bold; }
+  .mdu-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 10px; fill: #00796B; text-anchor: middle; font-weight: bold; }
+  .cutover-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 10px; fill: #E53935; text-anchor: middle; font-weight: bold; }
+  .arrow-label { font-family: 'Microsoft YaHei', 'SimHei', Arial, sans-serif; font-size: 9px; fill: #2196F3; text-anchor: middle; font-weight: bold; }
+</style>
+
+<!-- 背景 -->
+<rect width="1200" height="880" fill="#f8f9fa"/>
+
+<!-- 标题 -->
+<text x="600" y="30" class="title">BNG机房搬迁方案图</text>
+
+<!-- ========== 站点边界虚线框 ========== -->
+<!-- 新垦旧站 -->
+<rect x="80" y="195" width="310" height="400" rx="8" ry="8" fill="none" stroke="#999" stroke-width="1.8" stroke-dasharray="8,4"/>
+<rect x="130" y="185" width="110" height="20" rx="4" ry="4" fill="#f8f9fa"/>
+<text x="185" y="200" class="box-title">新垦旧站</text>
+
+<!-- 新垦新站 -->
+<rect x="810" y="195" width="310" height="400" rx="8" ry="8" fill="none" stroke="#999" stroke-width="1.8" stroke-dasharray="8,4"/>
+<rect x="860" y="185" width="110" height="20" rx="4" ry="4" fill="#f8f9fa"/>
+<text x="915" y="200" class="box-title">新垦新站</text>
+
+<!-- ========== 第一层：OSS, Internet, CR ========== -->
+<!-- OSS -->
+<g transform="translate(55, 80)">
+  <circle cx="0" cy="-16" r="7" fill="#888"/>
+  <path d="M-10,-5 C-10,5 10,5 10,-5" fill="none" stroke="#888" stroke-width="2.5"/>
+  <line x1="0" y1="5" x2="0" y2="20" stroke="#888" stroke-width="2"/>
+  <line x1="-7" y1="20" x2="7" y2="20" stroke="#888" stroke-width="2"/>
+  <rect x="-16" y="24" width="32" height="16" rx="2" fill="#777" stroke="#666" stroke-width="1"/>
+  <rect x="-13" y="27" width="7" height="2.5" rx="1" fill="#aaa"/>
+  <rect x="-4" y="27" width="7" height="2.5" rx="1" fill="#aaa"/>
+  <rect x="-13" y="32" width="7" height="2.5" rx="1" fill="#aaa"/>
+  <rect x="-4" y="32" width="7" height="2.5" rx="1" fill="#aaa"/>
+  <text x="0" y="56" class="oss-label">OSS</text>
+</g>
+
+<!-- Internet -->
+<ellipse cx="500" cy="58" rx="90" ry="24" fill="#FF9800" stroke="#E65100" stroke-width="2"/>
+<text x="500" y="64" class="label-white" font-size="15">Internet</text>
+
+<!-- CR层容器 -->
+<ellipse cx="500" cy="130" rx="165" ry="38" fill="#E3F2FD" stroke="#90CAF9" stroke-width="1.5"/>
+
+<!-- CR1 -->
+<g transform="translate(400, 130)">
+  <circle cx="0" cy="0" r="24" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <circle cx="0" cy="-2" r="3" fill="#fff"/>
+  <line x1="-6" y1="4" x2="6" y2="4" stroke="#fff" stroke-width="1.5"/>
+  <line x1="-4" y1="4" x2="-4" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <line x1="0" y1="4" x2="0" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <line x1="4" y1="4" x2="4" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <text x="0" y="40" class="label" font-weight="bold">CR1</text>
+</g>
+
+<!-- CR2 -->
+<g transform="translate(600, 130)">
+  <circle cx="0" cy="0" r="24" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <circle cx="0" cy="-2" r="3" fill="#fff"/>
+  <line x1="-6" y1="4" x2="6" y2="4" stroke="#fff" stroke-width="1.5"/>
+  <line x1="-4" y1="4" x2="-4" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <line x1="0" y1="4" x2="0" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <line x1="4" y1="4" x2="4" y2="10" stroke="#fff" stroke-width="1.2"/>
+  <text x="0" y="40" class="label" font-weight="bold">CR2</text>
+</g>
+
+<!-- ========== 第二层：BNG ========== -->
+<!-- BNG 新垦旧站 -->
+<g transform="translate(235, 295)">
+  <circle cx="0" cy="0" r="28" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <text x="0" y="5" class="label-white" font-size="16">M</text>
+  <text x="0" y="48" class="label" font-weight="bold" font-size="11">BNG(ME60)</text>
+  <text x="0" y="60" class="label" font-size="10">新垦旧站</text>
+</g>
+
+<!-- BNG 南沙2机房 -->
+<g transform="translate(600, 295)">
+  <circle cx="0" cy="0" r="28" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <text x="-7" y="-1" class="label-white" font-size="13">S</text>
+  <text x="9" y="12" class="label-white" font-size="11">M</text>
+  <text x="0" y="48" class="label" font-weight="bold" font-size="11">BNG(ME60)</text>
+  <text x="0" y="60" class="label" font-size="10">南沙2机房</text>
+</g>
+
+<!-- BNG 新垦新站 -->
+<g transform="translate(965, 295)">
+  <circle cx="0" cy="0" r="28" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <text x="0" y="5" class="label-white" font-size="16">M</text>
+  <text x="0" y="48" class="label" font-weight="bold" font-size="11">BNG(ME60)</text>
+  <text x="0" y="60" class="label" font-size="10">新垦新站</text>
+</g>
+
+<!-- ========== 第三层：OLT ========== -->
+<!-- OLT_001 -->
+<g transform="translate(235, 470)">
+  <rect x="-24" y="-20" width="48" height="40" rx="4" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <rect x="-16" y="-12" width="32" height="16" rx="2" fill="#1565C0" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="-7" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <circle cx="0" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <circle cx="7" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <rect x="-16" y="7" width="32" height="4" rx="1" fill="#1565C0"/>
+  <text x="-16" y="-28" class="port-label">上行0/10/0</text>
+  <text x="16" y="-28" class="port-label">上行0/9/0</text>
+  <text x="0" y="38" class="label" font-weight="bold">OLT_001</text>
+</g>
+
+<!-- 鱼窝头大道节点 -->
+<g transform="translate(600, 480)">
+  <polygon points="0,-14 -14,9 14,9" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <text x="0" y="28" class="label" font-weight="bold" font-size="10">至鱼窝头大道</text>
+</g>
+
+<!-- OLT_001_NEW -->
+<g transform="translate(965, 470)">
+  <rect x="-24" y="-20" width="48" height="40" rx="4" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <rect x="-16" y="-12" width="32" height="16" rx="2" fill="#1565C0" stroke="#fff" stroke-width="0.8"/>
+  <circle cx="-7" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <circle cx="0" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <circle cx="7" cy="-4" r="2.2" fill="#4FC3F7"/>
+  <rect x="-16" y="7" width="32" height="4" rx="1" fill="#1565C0"/>
+  <text x="-16" y="-28" class="port-label">上行0/9/0</text>
+  <text x="16" y="-28" class="port-label">上行0/10/0</text>
+  <text x="0" y="38" class="label" font-weight="bold">OLT_001_NEW</text>
+</g>
+
+<!-- ========== 第四层：底部设备 ========== -->
+<!-- 光分路器 -->
+<g transform="translate(600, 580)">
+  <polygon points="0,-12 -12,8 12,8" fill="#1976D2" stroke="#0D47A1" stroke-width="2"/>
+  <text x="0" y="24" class="label-small">光分路器</text>
+</g>
+
+<!-- ONT家庭组网 -->
+<g transform="translate(500, 655)">
+  <rect x="-20" y="-14" width="40" height="28" rx="3" fill="#B2DFDB" stroke="#00796B" stroke-width="2"/>
+  <text x="0" y="4" class="ont-label">ONT</text>
+  <text x="0" y="26" class="label" font-size="10">家庭组网</text>
+</g>
+
+<!-- MDU政企用户 -->
+<g transform="translate(700, 655)">
+  <rect x="-20" y="-14" width="40" height="28" rx="3" fill="#B2DFDB" stroke="#00796B" stroke-width="2"/>
+  <text x="0" y="4" class="mdu-label">MDU</text>
+  <text x="0" y="26" class="label" font-size="10">政企用户</text>
+</g>
+
+<!-- ========== 连线：黑色实线（现网链路） ========== -->
+<!-- Internet → CR1, CR2 -->
+<line x1="435" y1="78" x2="408" y2="110" stroke="#444" stroke-width="1.8"/>
+<line x1="565" y1="78" x2="592" y2="110" stroke="#444" stroke-width="1.8"/>
+<!-- CR1 — CR2 -->
+<line x1="424" y1="130" x2="576" y2="130" stroke="#444" stroke-width="1.8"/>
+
+<!-- CR → BNG -->
+<line x1="390" y1="154" x2="250" y2="270" stroke="#444" stroke-width="1.8"/>
+<line x1="425" y1="154" x2="585" y2="270" stroke="#444" stroke-width="1.8"/>
+<line x1="575" y1="154" x2="615" y2="270" stroke="#444" stroke-width="1.8"/>
+<line x1="610" y1="154" x2="950" y2="270" stroke="#444" stroke-width="1.8"/>
+
+<!-- CR2 → BNG新垦新站 -->
+<line x1="600" y1="500" x2="600" y2="568" stroke="#444" stroke-width="1.8"/>
+
+<!-- 鱼窝头 → 光分路器 → ONT/MDU -->
+<line x1="592" y1="592" x2="512" y2="641" stroke="#444" stroke-width="1.8"/>
+<line x1="608" y1="592" x2="688" y2="641" stroke="#444" stroke-width="1.8"/>
+
+<!-- ========== 连线：红色实线+大X（废除链路） ========== -->
+<!-- OLT_001 左端口 → BNG新垦旧站 -->
+<line x1="219" y1="442" x2="235" y2="326" stroke="#E53935" stroke-width="2"/>
+<g transform="translate(227, 384)">
+  <line x1="-5" y1="-5" x2="5" y2="5" stroke="#E53935" stroke-width="3"/>
+  <line x1="5" y1="-5" x2="-5" y2="5" stroke="#E53935" stroke-width="3"/>
+</g>
+
+<!-- OLT_001 右端口 → BNG新垦旧站 -->
+<line x1="251" y1="442" x2="235" y2="326" stroke="#E53935" stroke-width="2"/>
+<g transform="translate(243, 384)">
+  <line x1="-5" y1="-5" x2="5" y2="5" stroke="#E53935" stroke-width="3"/>
+  <line x1="5" y1="-5" x2="-5" y2="5" stroke="#E53935" stroke-width="3"/>
+</g>
+
+<!-- OLT_001 → 鱼窝头大道 -->
+<line x1="259" y1="470" x2="586" y2="480" stroke="#E53935" stroke-width="2"/>
+<g transform="translate(422, 476)">
+  <line x1="-6" y1="-6" x2="6" y2="6" stroke="#E53935" stroke-width="3"/>
+  <line x1="6" y1="-6" x2="-6" y2="6" stroke="#E53935" stroke-width="3"/>
+</g>
+
+<!-- BNG新垦旧站 → BNG新垦新站 (割接) -->
+<line x1="265" y1="295" x2="935" y2="295" stroke="#E53935" stroke-width="2" stroke-dasharray="6,3"/>
+<text x="600" y="278" class="cutover-label">— 割接关系 —</text>
+
+<!-- ========== 连线：红色虚线（新建路径，带步骤编号） ========== -->
+<!-- ① BNG新垦旧站 → BNG南沙2机房 -->
+<line x1="263" y1="312" x2="572" y2="312" stroke="#E53935" stroke-width="1.8" stroke-dasharray="6,4"/>
+<circle cx="418" cy="300" r="10" fill="#E53935"/>
+<text x="418" y="304" class="step-circle">①</text>
+
+<!-- ② BNG南沙2机房 → BNG新垦新站 -->
+<line x1="628" y1="312" x2="937" y2="312" stroke="#E53935" stroke-width="1.8" stroke-dasharray="6,4"/>
+<circle cx="783" cy="300" r="10" fill="#E53935"/>
+<text x="783" y="304" class="step-circle">②</text>
+
+<!-- ③ OLT_001_NEW 左端口 → BNG新垦新站 -->
+<path d="M949,442 Q940,390 965,326" stroke="#E53935" stroke-width="1.8" stroke-dasharray="6,4" fill="none"/>
+<circle cx="935" cy="384" r="10" fill="#E53935"/>
+<text x="935" y="388" class="step-circle">③</text>
+
+<!-- ④ OLT_001_NEW 右端口 → BNG新垦新站 -->
+<path d="M981,442 Q990,390 965,326" stroke="#E53935" stroke-width="1.8" stroke-dasharray="6,4" fill="none"/>
+<circle cx="995" cy="384" r="10" fill="#E53935"/>
+<text x="995" y="388" class="step-circle">④</text>
+
+<!-- ========== 蓝色粗箭头（割接方向，小型化） ========== -->
+<!-- 箭头1：旧站→南沙，位于①路径下方 -->
+<line x1="380" y1="340" x2="430" y2="340" stroke="#2196F3" stroke-width="3" marker-end="url(#blueArrow)"/>
+<text x="405" y="354" class="arrow-label">割接方向</text>
+
+<!-- 箭头2：南沙→新站，位于②路径下方 -->
+<line x1="745" y1="340" x2="795" y2="340" stroke="#2196F3" stroke-width="3" marker-end="url(#blueArrow)"/>
+<text x="770" y="354" class="arrow-label">割接方向</text>
+
+<!-- 箭头3：OLT_NEW→新站，位于③路径右侧 -->
+<line x1="1010" y1="370" x2="1050" y2="370" stroke="#2196F3" stroke-width="3" marker-end="url(#blueArrow)"/>
+<text x="1030" y="384" class="arrow-label">割接方向</text>
+
+<!-- ========== 图例 ========== -->
+<g transform="translate(850, 720)">
+  <rect x="-10" y="-22" width="320" height="150" rx="6" fill="#fff" stroke="#ccc" stroke-width="1" opacity="0.96"/>
+  <text x="0" y="-5" class="legend-title">图 例</text>
+  
+  <line x1="0" y1="16" x2="55" y2="16" stroke="#E53935" stroke-width="2"/>
+  <line x1="23" y1="10" x2="32" y2="22" stroke="#E53935" stroke-width="2.5"/>
+  <line x1="32" y1="10" x2="23" y2="22" stroke="#E53935" stroke-width="2.5"/>
+  <text x="72" y="20" class="legend-text">废除链路（红色实线 + 红色大X）</text>
+  
+  <line x1="0" y1="42" x2="55" y2="42" stroke="#E53935" stroke-width="1.8" stroke-dasharray="6,4"/>
+  <circle cx="27" cy="32" r="8" fill="#E53935"/>
+  <text x="27" y="36" font-size="9" fill="#fff" text-anchor="middle" font-weight="bold">①</text>
+  <text x="72" y="46" class="legend-text">新建路径（红色虚线 + 编号①②③④）</text>
+  
+  <line x1="0" y1="68" x2="55" y2="68" stroke="#2196F3" stroke-width="3" marker-end="url(#blueArrow)"/>
+  <text x="72" y="72" class="legend-text">割接方向（蓝色箭头 →）</text>
+  
+  <rect x="0" y="86" width="55" height="12" fill="none" stroke="#999" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="72" y="96" class="legend-text">站点边界（黑色虚线矩形框）</text>
+  
+  <ellipse cx="27" cy="113" rx="27" ry="8" fill="#E3F2FD" stroke="#90CAF9" stroke-width="1"/>
+  <text x="72" y="117" class="legend-text">CR层容器（浅蓝色椭圆背景框）</text>
+</g>
+
+</svg>

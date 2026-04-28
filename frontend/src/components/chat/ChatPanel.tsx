@@ -657,11 +657,27 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     connected,
   } = useSessionSSE(sessionId)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const userScrolledUp = useRef(false)
 
-  // Auto-scroll to bottom on new items or streaming updates
+  const handleScroll = () => {
+    const el = scrollContainerRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+    userScrolledUp.current = !atBottom
+  }
+
+  // Auto-scroll to bottom on new items or streaming updates, unless user scrolled up
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (userScrolledUp.current) return
+    bottomRef.current?.scrollIntoView({ behavior: 'instant' })
   }, [items.length, streamingText, streamingReasoning, observerStreamingText, observerStreamingReasoning])
+
+  // When new message items arrive, reset scroll lock and jump to bottom
+  useEffect(() => {
+    userScrolledUp.current = false
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [items.length])
 
   const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
   const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(session.status)
@@ -696,7 +712,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       </div>
 
       {/* Message list */}
-      <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+      <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
         {!session ? (
           <div className="flex justify-center py-12">
             <Spinner />

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from app.common.errors import AppError
@@ -28,11 +29,15 @@ logger = logging.getLogger(__name__)
 class SkillRegistry:
     """本地 skill 内存索引 + 远端 skill source 连接管理。"""
 
+    _CONNECT_COOLDOWN = 30.0
+
     def __init__(self) -> None:
-        self._skills: dict[str, SkillMetadata] = {}       # local only
+        self._skills: dict[str, SkillMetadata] = {}                       # local only
         self._loader = SkillLoader()
-        self._mcp_conns: dict[str, SkillMCPConn] = {}     # source_name → 连接
-        self._remote_index: dict[str, str] = {}            # skill_name → source_name（ephemeral）
+        self._source_configs: dict[str, RemoteSkillSourceConfig] = {}     # 所有已注册的 source 配置
+        self._mcp_conns: dict[str, SkillMCPConn] = {}                     # 已建立连接的 source
+        self._last_connect_attempt: dict[str, float] = {}                 # 冷却时间追踪
+        self._remote_index: dict[str, str] = {}                           # skill_name → source_name（ephemeral）
 
     # ── 本地 skill ────────────────────────────────────────────────────────────
 
@@ -62,19 +67,19 @@ class SkillRegistry:
     # ── 远端 skill source ─────────────────────────────────────────────────────
 
     def register_remote_source(self, config: RemoteSkillSourceConfig) -> None:
-        """注册远端 skill source：建连接 + 校验，不写 _skills。"""
-        if config.source_name in self._mcp_conns:
+        """注册远端 skill source（懒连接：首次 list_all 时才建立连接）。"""
+        if config.source_name in self._source_configs:
             raise AppError(
                 "SKILL_SOURCE_ALREADY_EXISTS",
                 f"Remote skill source '{config.source_name}' already registered",
             )
-        conn = self._build_conn(config)
-        self._validate_connection(conn, config)
-        self._mcp_conns[config.source_name] = conn
-        logger.info("SkillRegistry: registered remote source '%s'", config.source_name)
+        self._source_configs[config.source_name] = config
+        logger.info("SkillRegistry: registered remote source '%s' (lazy)", config.source_name)
 
     def unregister_remote_source(self, source_name: str) -> None:
-        """注销远端 source：断连接，清理 _remote_index 中该 source 的条目。"""
+        """注销远端 source：断连接，清理所有相关状态。"""
+        self._source_configs.pop(source_name, None)
+        self._last_connect_attempt.pop(source_name, None)
         stale = [n for n, s in self._remote_index.items() if s == source_name]
         for n in stale:
             del self._remote_index[n]
@@ -154,10 +159,18 @@ class SkillRegistry:
     # ── 内部工具 ──────────────────────────────────────────────────────────────
 
     def _fetch_remote_live(self, ctx: CallContext | None = None) -> list[SkillMetadata]:
-        """实时从每个远端 source 拉取 skill 列表，刷新 _remote_index。"""
+        """实时从每个已注册的远端 source 拉取 skill 列表，刷新 _remote_index。
+        未连接的 source 按冷却时间懒启动。
+        """
         self._remote_index.clear()
         result: list[SkillMetadata] = []
-        for source_name, conn in self._mcp_conns.items():
+        for source_name, config in self._source_configs.items():
+            if source_name not in self._mcp_conns:
+                if not self._try_connect_source(source_name, config):
+                    continue
+            conn = self._mcp_conns.get(source_name)
+            if conn is None:
+                continue
             try:
                 items = conn.list_skills(ctx)
                 for item in items:
@@ -176,13 +189,27 @@ class SkillRegistry:
                     ))
                 logger.debug(
                     "SkillRegistry: live-fetched %d skill(s) from '%s'",
-                    len(result), source_name,
+                    len(items), source_name,
                 )
             except Exception as e:
-                logger.warning(
-                    "SkillRegistry: live-fetch from '%s' failed: %s", source_name, e
-                )
+                logger.warning("SkillRegistry: live-fetch from '%s' failed: %s", source_name, e)
         return result
+
+    def _try_connect_source(self, source_name: str, config: RemoteSkillSourceConfig) -> bool:
+        """尝试建立连接并校验，冷却期内跳过。返回是否连接成功。"""
+        now = time.monotonic()
+        if now - self._last_connect_attempt.get(source_name, 0) < self._CONNECT_COOLDOWN:
+            return False
+        self._last_connect_attempt[source_name] = now
+        try:
+            conn = self._build_conn(config)
+            self._validate_connection(conn, config)
+            self._mcp_conns[source_name] = conn
+            logger.info("SkillRegistry: connected remote source '%s'", source_name)
+            return True
+        except Exception as e:
+            logger.warning("SkillRegistry: failed to connect '%s': %s", source_name, e)
+            return False
 
     def _validate_connection(self, conn: SkillMCPConn, config: RemoteSkillSourceConfig) -> None:
         """校验 MCP 连接：tool 存在性 + schema + listSkills 可用。失败时 stop conn 并抛出。"""

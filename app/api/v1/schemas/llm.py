@@ -12,7 +12,6 @@ class RegisterLLMRequest(BaseModel):
     models: list[str] = []
     default_model: str = ""
     timeout_sec: Optional[int] = None
-    max_tokens: Optional[int] = None
 
 
 class AddModelRequest(BaseModel):
@@ -30,4 +29,3 @@ class LLMProviderResponse(BaseModel):
     models: list[str]
     default_model: str
     timeout_sec: int
-    max_tokens: int

@@ -20,6 +20,7 @@ class AgentTemplateRegistry:
 
     def __init__(self, template_service: AgentTemplateService) -> None:
         self._agents: dict[str, AgentDefMetadata] = {}
+        self._agents_by_id: dict[str, AgentDefMetadata] = {}
         self._loader = AgentLoader()
         self._template_svc = template_service
 
@@ -27,7 +28,7 @@ class AgentTemplateRegistry:
         """扫描目录，批量 upsert AgentTemplate（类比 SkillRegistry.load_from_dir）。"""
         for metadata in self._loader.scan(agents_dir):
             self._agents[metadata.name] = metadata
-            self._template_svc.upsert_by_name(
+            tpl = self._template_svc.upsert_by_name(
                 name=metadata.name,
                 version=metadata.version,
                 description=metadata.description,
@@ -37,6 +38,7 @@ class AgentTemplateRegistry:
                 mcp_observe_servers=metadata.mcp_observe_servers,
                 source_dir=str(metadata.agent_dir),
             )
+            self._agents_by_id[tpl.id] = metadata
             logger.debug("AgentTemplateRegistry: upserted template '%s'", metadata.name)
 
         logger.info(
@@ -46,6 +48,9 @@ class AgentTemplateRegistry:
 
     def get_metadata(self, name: str) -> AgentDefMetadata | None:
         return self._agents.get(name)
+
+    def get_metadata_by_id(self, template_id: str) -> AgentDefMetadata | None:
+        return self._agents_by_id.get(template_id)
 
     def list_all(self) -> list[AgentDefMetadata]:
         return list(self._agents.values())

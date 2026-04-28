@@ -9,26 +9,26 @@ from typing import Any
 @dataclass
 class LoopGuard:
     """Agent Loop Guard 运行时计数。"""
-    turns_used: int = 0
-    max_turns: int = 20
     actor_max_tool_rounds: int = 50      # 单个 atomic task 内最多工具调用轮次
-    observer_max_tool_rounds: int = 5   # observer ReAct 循环最多轮次
+    observer_max_tool_rounds: int = 5    # observer ReAct 循环最多轮次
+    context_tokens: int = 0             # 最近一次 LLM 调用的 prompt_tokens（当前窗口大小）
+    context_limit: int = 180_000        # 触发 compaction 的 prompt_tokens 阈值
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "turns_used": self.turns_used,
-            "max_turns": self.max_turns,
             "actor_max_tool_rounds": self.actor_max_tool_rounds,
             "observer_max_tool_rounds": self.observer_max_tool_rounds,
+            "context_tokens": self.context_tokens,
+            "context_limit": self.context_limit,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "LoopGuard":
         return cls(
-            turns_used=d.get("turns_used", 0),
-            max_turns=d.get("max_turns", 20),
             actor_max_tool_rounds=d.get("actor_max_tool_rounds", 50),
-            observer_max_tool_rounds=d.get("observer_max_tool_rounds", 50),
+            observer_max_tool_rounds=d.get("observer_max_tool_rounds", 5),
+            context_tokens=d.get("context_tokens", 0),
+            context_limit=d.get("context_limit", 180_000),
         )
 
 
@@ -65,8 +65,8 @@ class Agent:
     # Spawn 字段
     has_spawn_permission: bool = False          # 是否允许 spawn sub-agent
     spawn_depth: int = 0                        # 嵌套深度（root=0）
-    parent_task_id: str | None = None          # 本 agent 正在执行的 Task（sub-agent 填充）
 
+    settings: dict[str, Any] = field(default_factory=dict)  # 运行时配置，如 working_dir
     created_at: str = ""
     updated_at: str = ""
 
@@ -91,7 +91,7 @@ class Agent:
             "llm_model": self.llm_model,
             "has_spawn_permission": self.has_spawn_permission,
             "spawn_depth": self.spawn_depth,
-            "parent_task_id": self.parent_task_id,
+            "settings": self.settings,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -118,7 +118,7 @@ class Agent:
             llm_model=d.get("llm_model", ""),
             has_spawn_permission=d.get("has_spawn_permission", False),
             spawn_depth=d.get("spawn_depth", 0),
-            parent_task_id=d.get("parent_task_id"),
+            settings=d.get("settings", {}),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

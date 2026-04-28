@@ -23,8 +23,7 @@ def _to_response(p: LLMProvider) -> LLMProviderResponse:
         base_url=p.base_url,
         models=p.models,
         default_model=p.default_model,
-        timeout_sec=p.timeout_sec,
-        max_tokens=p.max_tokens,
+        timeout_sec=p.timeout_sec
     )
 
 
@@ -47,7 +46,6 @@ def register_provider(req: RegisterLLMRequest) -> LLMProviderResponse:
         models=req.models,
         default_model=req.default_model,
         timeout_sec=req.timeout_sec or settings.default_llm_timeout_sec,
-        max_tokens=req.max_tokens or 8096,
     )
     try:
         registry.register(provider)

@@ -73,14 +73,31 @@ class MemoryService:
     def save_summary(self, agent_id: str, summary: MemorySummary) -> None:
         self._store.save_summary(agent_id, summary.to_dict())
 
-    def should_summarize(self, agent_id: str, threshold: int | None = None) -> bool:
-        """判断该 agent 是否达到摘要阈值。"""
+    def should_summarize(
+        self,
+        agent_id: str,
+        threshold: int | None = None,
+        context_tokens: int = 0,
+        context_limit: int = 0,
+    ) -> bool:
+        """判断该 agent 是否达到摘要阈值。
+
+        两个维度任一满足即触发：
+        - 消息数超过 threshold（原有逻辑）
+        - context_tokens 超过 context_limit 的 80%（上下文窗口将满）
+        """
+        if context_limit and context_tokens >= int(context_limit * 0.8):
+            return True
         if threshold is None:
             threshold = get_settings().default_summary_threshold
         count = self._store.count_messages(agent_id)
         summary = self.get_summary(agent_id)
         covered = summary.covered_up_to if summary else 0
         return (count - covered) >= threshold
+
+    def rewrite_messages(self, agent_id: str, messages: list[dict[str, Any]]) -> None:
+        """用 compact 后的消息替换活跃窗口（原内容归档到 .bak）。"""
+        self._store.rewrite_messages(agent_id, messages)
 
     def delete_agent(self, agent_id: str) -> None:
         """删除该 agent 的全部记忆文件。"""

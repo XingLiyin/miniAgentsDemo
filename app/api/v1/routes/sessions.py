@@ -48,6 +48,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             root_max_turns=req.root_max_turns,
             llm_provider=req.llm_name,
             llm_model=req.llm_model,
+            working_dir=req.working_dir,
             initial_task=req.initial_task,
         )
         # 异步启动 AgentLoop（在当前 asyncio event loop 中）

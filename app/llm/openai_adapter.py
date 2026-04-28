@@ -368,6 +368,8 @@ def _serialize_messages_openai(messages: list[LLMMessage]) -> list[dict]:
     for m in messages:
         if m.role == "assistant" and m.tool_calls:
             entry: dict = {"role": "assistant"}
+            if m.reasoning_content:
+                entry["reasoning_content"] = m.reasoning_content
             text = _content_to_text(m.content)
             if text:
                 entry["content"] = text

@@ -1,147 +1,108 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" width="800" height="600">
-  <title>SPN网络拓扑示意图</title>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 700" width="100%" height="100%">
+  <defs>
+    <style>
+      text { font-family: Arial, 'Microsoft YaHei', 'PingFang SC', sans-serif; }
+    </style>
+    
+    <g id="cube">
+      <ellipse cx="0" cy="15" rx="28" ry="8" fill="#000000" fill-opacity="0.08"/>
+      <polygon points="0,-28 26,-14 0,0 -26,-14" fill="#FABE4B" stroke="#CC8818" stroke-width="1"/>
+      <polygon points="-26,-14 0,0 0,15 -26,1" fill="#D48A1E" stroke="#CC8818" stroke-width="1"/>
+      <polygon points="0,0 26,-14 26,1 0,15" fill="#F0A020" stroke="#CC8818" stroke-width="1"/>
+      <line x1="0" y1="0" x2="0" y2="15" stroke="#C8841E" stroke-width="1.5"/>
+      <polygon points="0,-28 26,-14 13,-7 -13,-7" fill="#FFF5DE" fill-opacity="0.3"/>
+      <rect x="-12" y="4" width="24" height="4" rx="1" fill="#E09520" fill-opacity="0.5"/>
+      <rect x="-10" y="10" width="20" height="2" rx="1" fill="#D48A1E" fill-opacity="0.4"/>
+    </g>
+  </defs>
   
-  <!-- 背景 -->
-  <rect width="800" height="600" fill="#f8f9fa"/>
+  <rect width="900" height="700" fill="#FAFAFA"/>
   
-  <style>
-    .node-body { fill: #f5a623; stroke: #d4881c; stroke-width: 2; }
-    .node-top { fill: #fbbf6a; stroke: #d4881c; stroke-width: 2; }
-    .node-side { fill: #e89520; stroke: #d4881c; stroke-width: 1.5; }
-    .node-front { fill: #f5a623; stroke: #d4881c; stroke-width: 2; }
-    .link { stroke: #2c3e50; stroke-width: 2.5; fill: none; }
-    .link-label { font-family: Arial, sans-serif; font-size: 12px; fill: #7f8c8d; }
-    .node-label { font-family: Arial, sans-serif; font-size: 14px; font-weight: bold; fill: #2c3e50; text-anchor: middle; }
-    .ring-label { font-family: Arial, sans-serif; font-size: 16px; font-weight: bold; fill: #3498db; text-anchor: middle; }
-    .room-label { font-family: Arial, sans-serif; font-size: 13px; fill: #e74c3c; text-anchor: middle; }
-    .title-text { font-family: Arial, sans-serif; font-size: 22px; font-weight: bold; fill: #2c3e50; text-anchor: middle; }
-  </style>
-  
-  <!-- 标题 -->
-  <text class="title-text" x="400" y="38">SPN 网络拓扑示意图</text>
-  
-  <!-- ===== 连线 ===== -->
-  
-  <!-- 汇聚环连线 (蓝色虚线背景表示环) -->
-  <polygon points="180,150 620,150 620,310 180,310" fill="none" stroke="#3498db" stroke-width="1" stroke-dasharray="8,4" opacity="0.3"/>
-  
-  <!-- 接入环连线 (绿色虚线背景表示环) -->
-  <polygon points="180,310 620,310 400,470" fill="none" stroke="#27ae60" stroke-width="1" stroke-dasharray="8,4" opacity="0.3"/>
-  
-  <!-- A-B 连线 -->
-  <line x1="180" y1="150" x2="620" y2="150" class="link"/>
-  
-  <!-- A-C 连线 -->
-  <line x1="180" y1="150" x2="180" y2="310" class="link"/>
-  
-  <!-- B-D 连线 -->
-  <line x1="620" y1="150" x2="620" y2="310" class="link"/>
-  
-  <!-- C-D 连线 (汇聚环和接入环共用) -->
-  <line x1="180" y1="310" x2="620" y2="310" class="link"/>
-  
-  <!-- C-E 连线 -->
-  <line x1="180" y1="310" x2="400" y2="470" class="link"/>
-  
-  <!-- D-E 连线 -->
-  <line x1="620" y1="310" x2="400" y2="470" class="link"/>
-  
-  <!-- ===== 连线上的方向箭头 ===== -->
-  <!-- A-B -->
-  <polygon points="400,144 400,156 420,150" fill="#2c3e50"/>
-  <polygon points="400,144 400,156 380,150" fill="#2c3e50"/>
-  
-  <!-- C-D -->
-  <polygon points="400,304 400,316 420,310" fill="#2c3e50"/>
-  <polygon points="400,304 400,316 380,310" fill="#2c3e50"/>
-  
-  <!-- ===== 节点 ===== -->
-  
-  <!-- 节点A (P1410) - 左上 -->
-  <g transform="translate(180, 150)">
-    <!-- 3D立方体效果 -->
-    <polygon points="-18,-12 0,-22 18,-12" class="node-top"/>
-    <polygon points="-18,-12 -18,12 0,2" class="node-side"/>
-    <polygon points="18,-12 18,12 0,2" class="node-body"/>
-    <polygon points="-18,12 0,22 18,12 0,2" class="node-front"/>
-    <!-- 前面板细节 -->
-    <rect x="-10" y="8" width="20" height="8" rx="1" fill="#e89520" stroke="#c07a18" stroke-width="1"/>
-    <circle cx="-5" cy="12" r="2" fill="#3498db"/>
-    <circle cx="5" cy="12" r="2" fill="#27ae60"/>
-    <!-- 标签 -->
-    <text class="node-label" x="0" y="42">P1410</text>
+  <g opacity="0.12">
+    <defs>
+      <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+        <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#D0D0D0" stroke-width="0.5"/>
+      </pattern>
+    </defs>
+    <rect width="900" height="700" fill="url(#grid)"/>
   </g>
   
-  <!-- 节点B (右上匿名) -->
-  <g transform="translate(620, 150)">
-    <polygon points="-18,-12 0,-22 18,-12" class="node-top"/>
-    <polygon points="-18,-12 -18,12 0,2" class="node-side"/>
-    <polygon points="18,-12 18,12 0,2" class="node-body"/>
-    <polygon points="-18,12 0,22 18,12 0,2" class="node-front"/>
-    <rect x="-10" y="8" width="20" height="8" rx="1" fill="#e89520" stroke="#c07a18" stroke-width="1"/>
-    <circle cx="-5" cy="12" r="2" fill="#3498db"/>
-    <circle cx="5" cy="12" r="2" fill="#27ae60"/>
+  <!-- ========== SPN 汇聚环 蓝色线 ========== -->
+  <!-- A顶 - B顶 -->
+  <line x1="150" y1="99" x2="600" y2="99" stroke="#2B7CE9" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- A右下 - C左上 -->
+  <line x1="176" y1="142" x2="224" y2="301" stroke="#2B7CE9" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- B左下 - D右上 -->
+  <line x1="574" y1="142" x2="526" y2="301" stroke="#2B7CE9" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- C右 - D左 -->
+  <line x1="276" y1="327" x2="474" y2="327" stroke="#2B7CE9" stroke-width="3.5" stroke-linecap="round"/>
+  
+  <!-- ========== SPN 接入环 绿色线 ========== -->
+  <!-- C底 - E顶 -->
+  <line x1="250" y1="342" x2="375" y2="501" stroke="#2E7D32" stroke-width="3.5" stroke-linecap="round"/>
+  <!-- D底 - E顶 -->
+  <line x1="500" y1="342" x2="375" y2="501" stroke="#2E7D32" stroke-width="3.5" stroke-linecap="round"/>
+  
+  <!-- 端点圆标记 -->
+  <circle cx="150" cy="99" r="5" fill="#2B7CE9"/>
+  <circle cx="600" cy="99" r="5" fill="#2B7CE9"/>
+  <circle cx="176" cy="142" r="5" fill="#2B7CE9"/>
+  <circle cx="224" cy="301" r="5" fill="#2B7CE9"/>
+  <circle cx="574" cy="142" r="5" fill="#2B7CE9"/>
+  <circle cx="526" cy="301" r="5" fill="#2B7CE9"/>
+  <circle cx="276" cy="327" r="5" fill="#2B7CE9"/>
+  <circle cx="474" cy="327" r="5" fill="#2B7CE9"/>
+  <circle cx="250" cy="342" r="5" fill="#2E7D32"/>
+  <circle cx="500" cy="342" r="5" fill="#2E7D32"/>
+  <circle cx="375" cy="501" r="5" fill="#2E7D32"/>
+  
+  <!-- ========== FlexE 100G 标注 ========== -->
+  <g>
+    <rect x="345" y="73" width="92" height="24" rx="5" fill="#FFFFFF" fill-opacity="0.93" stroke="#2B7CE9" stroke-width="1.2"/>
+    <text x="391" y="89" text-anchor="middle" fill="#2B7CE9" font-size="11" font-weight="bold">FlexE 100G</text>
   </g>
   
-  <!-- 节点C (P1543) - 中左 -->
-  <g transform="translate(180, 310)">
-    <polygon points="-18,-12 0,-22 18,-12" class="node-top"/>
-    <polygon points="-18,-12 -18,12 0,2" class="node-side"/>
-    <polygon points="18,-12 18,12 0,2" class="node-body"/>
-    <polygon points="-18,12 0,22 18,12 0,2" class="node-front"/>
-    <rect x="-10" y="8" width="20" height="8" rx="1" fill="#e89520" stroke="#c07a18" stroke-width="1"/>
-    <circle cx="-5" cy="12" r="2" fill="#3498db"/>
-    <circle cx="5" cy="12" r="2" fill="#27ae60"/>
-    <text class="node-label" x="0" y="42">P1543</text>
+  <g>
+    <rect x="145" y="195" width="92" height="24" rx="5" fill="#FFFFFF" fill-opacity="0.90" stroke="#2B7CE9" stroke-width="1"/>
+    <text x="191" y="211" text-anchor="middle" fill="#2B7CE9" font-size="11" font-weight="bold">FlexE 100G</text>
   </g>
   
-  <!-- 节点D (P1621) - 中右 -->
-  <g transform="translate(620, 310)">
-    <polygon points="-18,-12 0,-22 18,-12" class="node-top"/>
-    <polygon points="-18,-12 -18,12 0,2" class="node-side"/>
-    <polygon points="18,-12 18,12 0,2" class="node-body"/>
-    <polygon points="-18,12 0,22 18,12 0,2" class="node-front"/>
-    <rect x="-10" y="8" width="20" height="8" rx="1" fill="#e89520" stroke="#c07a18" stroke-width="1"/>
-    <circle cx="-5" cy="12" r="2" fill="#3498db"/>
-    <circle cx="5" cy="12" r="2" fill="#27ae60"/>
-    <text class="node-label" x="0" y="42">P1621</text>
+  <!-- ========== 环名称标注 ========== -->
+  <g>
+    <rect x="305" y="28" width="152" height="36" rx="8" fill="#FFFFFF" fill-opacity="0.95" stroke="#2B7CE9" stroke-width="2"/>
+    <text x="381" y="51" text-anchor="middle" fill="#2B7CE9" font-size="17" font-weight="bold">SPN汇聚环</text>
   </g>
   
-  <!-- 节点E (底部匿名) -->
-  <g transform="translate(400, 470)">
-    <polygon points="-18,-12 0,-22 18,-12" class="node-top"/>
-    <polygon points="-18,-12 -18,12 0,2" class="node-side"/>
-    <polygon points="18,-12 18,12 0,2" class="node-body"/>
-    <polygon points="-18,12 0,22 18,12 0,2" class="node-front"/>
-    <rect x="-10" y="8" width="20" height="8" rx="1" fill="#e89520" stroke="#c07a18" stroke-width="1"/>
-    <circle cx="-5" cy="12" r="2" fill="#3498db"/>
-    <circle cx="5" cy="12" r="2" fill="#27ae60"/>
+  <g>
+    <rect x="325" y="410" width="140" height="30" rx="8" fill="#FFFFFF" fill-opacity="0.95" stroke="#2E7D32" stroke-width="2"/>
+    <text x="395" y="430" text-anchor="middle" fill="#2E7D32" font-size="16" font-weight="bold">SPN接入环</text>
   </g>
   
-  <!-- ===== 新垦机房虚线框 ===== -->
-  <rect x="125" y="255" width="110" height="110" rx="8" fill="rgba(231,76,60,0.05)" stroke="#e74c3c" stroke-width="2" stroke-dasharray="8,4"/>
-  <text class="room-label" x="180" y="270">新垦机房</text>
+  <!-- ========== 节点设备（3D立方体） ========== -->
   
-  <!-- ===== 环标注 ===== -->
-  <!-- 汇聚环标注 -->
-  <rect x="300" y="190" width="200" height="40" rx="20" fill="rgba(52,152,219,0.1)" stroke="#3498db" stroke-width="1.5"/>
-  <text class="ring-label" x="400" y="216">SPN汇聚环</text>
+  <!-- 节点A: P1410 左上 -->
+  <use href="#cube" x="150" y="127"/>
+  <text x="150" y="165" text-anchor="middle" fill="#222222" font-size="16" font-weight="bold">P1410</text>
   
-  <!-- 接入环标注 -->
-  <rect x="300" y="380" width="200" height="40" rx="20" fill="rgba(39,174,96,0.1)" stroke="#27ae60" stroke-width="1.5"/>
-  <text class="ring-label" x="400" y="406" fill="#27ae60">SPN接入环</text>
+  <!-- 节点B: 匿名 右上 -->
+  <use href="#cube" x="600" y="127"/>
   
-  <!-- ===== 图例 ===== -->
-  <g transform="translate(620, 520)">
-    <rect x="-80" y="-15" width="160" height="70" rx="5" fill="white" stroke="#ddd" stroke-width="1"/>
-    <text x="0" y="5" font-family="Arial" font-size="11" font-weight="bold" fill="#555" text-anchor="middle">图例</text>
-    <!-- 汇聚环 -->
-    <line x1="-65" y1="20" x2="-45" y2="20" stroke="#3498db" stroke-width="2.5"/>
-    <text x="-38" y="24" font-family="Arial" font-size="10" fill="#555">汇聚环链路</text>
-    <!-- 接入环 -->
-    <line x1="-65" y1="38" x2="-45" y2="38" stroke="#27ae60" stroke-width="2.5"/>
-    <text x="-38" y="42" font-family="Arial" font-size="10" fill="#555">接入环链路</text>
+  <!-- 节点C: P1543 中左 -->
+  <use href="#cube" x="250" y="327"/>
+  <text x="250" y="365" text-anchor="middle" fill="#222222" font-size="16" font-weight="bold">P1543</text>
+  
+  <!-- 节点D: P1621 中右 -->
+  <use href="#cube" x="500" y="327"/>
+  <text x="500" y="365" text-anchor="middle" fill="#222222" font-size="16" font-weight="bold">P1621</text>
+  
+  <!-- 节点E: 匿名 底部 -->
+  <use href="#cube" x="375" y="527"/>
+  
+  <!-- ========== 新垦机房 虚线框 ========== -->
+  <g>
+    <rect x="186" y="270" width="138" height="120" rx="8" fill="#F8F8F8" fill-opacity="0.15" stroke="#999999" stroke-width="2.5" stroke-dasharray="8,6"/>
+    <rect x="286" y="376" width="76" height="26" rx="5" fill="#FAFAFA" stroke="#999999" stroke-width="1.2"/>
+    <text x="324" y="393" text-anchor="middle" fill="#555555" font-size="14">新垦机房</text>
   </g>
   
 </svg>

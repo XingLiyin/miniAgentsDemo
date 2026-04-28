@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config.settings import get_settings
-from app.storage.file.base import append_jsonl, read_jsonl, write_json_atomic, read_json
+from app.storage.file.base import append_jsonl, read_jsonl, write_json_atomic, write_jsonl_atomic, read_json
 
 
 class MemoryStore:
@@ -42,6 +42,15 @@ class MemoryStore:
     def get_summary(self, agent_id: str) -> dict[str, Any] | None:
         """读取最新摘要，不存在返回 None。"""
         return read_json(self._summaries_path(agent_id))
+
+    def rewrite_messages(self, agent_id: str, messages: list[dict[str, Any]]) -> None:
+        """原子性替换活跃消息窗口；原文件内容追加到 messages.bak.jsonl 作为审计 log。"""
+        path = self._messages_path(agent_id)
+        if path.exists():
+            bak = path.with_name("messages.bak.jsonl")
+            with bak.open("a", encoding="utf-8") as f:
+                f.write(path.read_text(encoding="utf-8"))
+        write_jsonl_atomic(path, messages)
 
     def count_messages(self, agent_id: str) -> int:
         return len(self.read_messages(agent_id))

@@ -27,7 +27,6 @@ class LLMProvider:
     models: list[str] = field(default_factory=list)
     default_model: str = ""
     timeout_sec: int = 60
-    max_tokens: int = 8096
 
 
 class LLMRegistry:
@@ -100,7 +99,7 @@ class LLMRegistry:
         if not resolved_model:
             raise ValueError(f"Provider '{name}' 无可用模型")
         adapter = self._provider_registry.get(name)
-        return BaseChatClient(adapter=adapter, model=resolved_model, default_max_tokens=provider.max_tokens)
+        return BaseChatClient(adapter=adapter, model=resolved_model)
 
     def get_provider(self, name: str) -> LLMProvider:
         return self._get(name)
@@ -128,7 +127,6 @@ class LLMRegistry:
                     models=data.get("models", []),
                     default_model=data.get("default_model", ""),
                     timeout_sec=data.get("timeout_sec", 60),
-                    max_tokens=data.get("max_tokens", 8096),
                 )
                 self.register(provider, persist=False)
                 count += 1
