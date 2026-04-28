@@ -1,2 +1,0 @@
-This is a test file created by the AI agent.
-Created for testing file write capabilities.
