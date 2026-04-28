@@ -20,16 +20,19 @@ class PolicyEngine:
         """校验 agent 是否有权限调用 tool_name。
 
         第一层：tool_name 必须在 ToolRegistry 中已注册（工具存在性）
-        第二层：tool_name 在 act_tool_list 中，或属于已订阅的 MCP server（模板级授权）
+        第二层：tool_name 必须在 agent 的 act_tool_list 中，或在 agent 订阅的 mcp_act_servers 中（工具授权）
         """
         if not self._registry.is_registered(tool_name):
             raise AppError(
                 "TOOL_NOT_FOUND",
                 f"Tool '{tool_name}' is not a registered tool",
             )
-        if tool_name in agent.act_tool_list:
+        if tool_name in agent.act_tool_list or tool_name in agent.observe_tool_list:
             return
         for server_name in (agent.mcp_act_servers or []):
+            if tool_name in self._registry.get_server_tool_names(server_name):
+                return
+        for server_name in (agent.mcp_observe_servers or []):
             if tool_name in self._registry.get_server_tool_names(server_name):
                 return
         raise AppError(

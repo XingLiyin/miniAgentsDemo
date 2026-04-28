@@ -169,6 +169,7 @@ class TaskManager:
                     self._task_svc.fail(failed_task_id, error=payload.get("error", ""))
                 except Exception:
                     logger.exception("TM: failed to mark task %s as FAILED", failed_task_id)
+                self._cascade_fail(session_id, failed_task_id)
 
             try:
                 failed_task = self._task_svc.get(failed_task_id) if failed_task_id else None
@@ -269,8 +270,10 @@ class TaskManager:
             self._lm.release(session_id, finished_agent_id)
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
-        """Resume a SUSPENDED parent task once all its children reach a terminal state.
-        Pushes the resumed task back into the queue.
+        """Conclude a SUSPENDED parent once all its children are terminal.
+
+        Any child FAILED → fail parent (cascade).
+        All children succeeded → resume parent and push to queue.
         """
         if not finished_task_id:
             return
@@ -283,11 +286,34 @@ class TaskManager:
                 return
             children = self._task_svc.list_children(finished_task.parent_task_id, session_id)
             _terminal = {"FINISHED", "FAILED", "CANCELED"}
-            if children and all(t.status in _terminal for t in children):
+            if not children or not all(t.status in _terminal for t in children):
+                return
+            if any(t.status == "FAILED" for t in children):
+                self._task_svc.fail(parent.id, error="cascade: child task failed")
+                self._task_queue.remove(session_id, parent.id)
+                self._cascade_fail(session_id, parent.id)
+            else:
                 self._task_svc.resume(parent.id)
                 self._task_queue.push(session_id, parent.id)
         except Exception:
-            logger.exception("TM: failed to resume parent for task %s", finished_task_id)
+            logger.exception("TM: failed to conclude parent for task %s", finished_task_id)
+
+    def _cascade_fail(self, session_id: str, failed_task_id: str) -> None:
+        """Cascade failure to all PENDING tasks whose dag_deps include failed_task_id."""
+        try:
+            all_tasks = self._task_svc.list_by_session(session_id)
+        except Exception:
+            logger.exception("TM: _cascade_fail: cannot list tasks for session %s", session_id)
+            return
+        for task in all_tasks:
+            if task.status != "PENDING" or failed_task_id not in task.dag_deps:
+                continue
+            try:
+                self._task_svc.fail(task.id, error=f"cascade: dependency {failed_task_id} failed")
+                self._task_queue.remove(session_id, task.id)
+                self._cascade_fail(session_id, task.id)
+            except Exception:
+                logger.exception("TM: _cascade_fail: failed to fail task %s", task.id)
 
     def _fail_session(self, session_id: str) -> None:
         try:

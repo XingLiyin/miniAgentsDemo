@@ -23,6 +23,7 @@ const DEFAULT_FORM: CreateSessionRequest = {
   root_max_turns: 20,
   llm_name: null,
   llm_model: null,
+  working_dir: null,
   initial_task: null,
 }
 
@@ -126,6 +127,15 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
             </Select>
           )
         })()}
+
+        <Input
+          label="工作目录"
+          placeholder="留空则使用服务器默认目录"
+          value={form.working_dir ?? ''}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, working_dir: e.target.value || null }))
+          }
+        />
 
         <div className="grid grid-cols-2 gap-3">
           <Input

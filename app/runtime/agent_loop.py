@@ -28,7 +28,7 @@ from app.storage.file.agent_store import AgentStore
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from app.runtime.compaction import CompactionStrategy
+    from app.runtime.memory_compaction import MemoryCompactionAgent
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ class AgentLoop:
         reasoner: Reasoner,
         actor: Actor,
         observer: Observer,
-        compaction_strategy: "CompactionStrategy | None" = None,
+        compaction_agent: "MemoryCompactionAgent | None" = None,
     ) -> None:
         self._session_svc = session_svc
         self._task_svc = task_svc
@@ -58,7 +58,7 @@ class AgentLoop:
         self._reasoner = reasoner
         self._actor = actor
         self._observer = observer
-        self._compaction_strategy = compaction_strategy
+        self._compaction_agent = compaction_agent
 
     def run(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Execute one task synchronously inside a worker thread.
@@ -189,7 +189,11 @@ class AgentLoop:
         finally:
             agent = self._load_agent(agent_id)
             if agent.status == "RUNNING":
-                agent.status = "FINISHED"
+                try:
+                    task = self._task_svc.get(task_id)
+                    agent.status = "WAITING" if task.status == "SUSPENDED" else "FINISHED"
+                except Exception:
+                    agent.status = "FINISHED"
                 self._agent_store.save(agent.to_dict())
 
     def _load_agent(self, agent_id: str) -> Agent:
@@ -204,62 +208,64 @@ class AgentLoop:
         from app.common.utils import now_iso
         from app.domain.models.memory import MemorySummary
 
-        summary_text = latest_summary
         messages = self._memory_svc.get_window(agent_id, 10000)
+        summary_text = latest_summary
 
-        if self._compaction_strategy is not None:
-            # 将旧摘要注入消息头，让新摘要能接续上一次的上下文
-            previous = self._memory_svc.get_summary(agent_id)
-            if previous and previous.summary_text:
-                messages_for_compact = [
-                    {"role": "system", "content": f"[Context so far]: {previous.summary_text}"}
-                ] + messages
-            else:
-                messages_for_compact = messages
+        if self._compaction_agent is not None:
+            try:
+                session = self._session_svc.get(session_id)
+                agent_data = self._agent_store.get(agent_id) or {}
+                working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
 
-            kept, compacted_summary = self._compaction_strategy.compact(messages_for_compact)
-
-            # 去掉注入的 system 头，得到真正需要写回的消息
-            kept_real = [
-                m for m in kept
-                if not (
-                    m.get("role") == "system"
-                    and str(m.get("content", "")).startswith("[Context so far]")
+                kept, compacted_summary = self._compaction_agent.compact(
+                    messages=messages,
+                    session_goal=session.goal,
+                    working_dir=working_dir,
+                    session_id=session_id,
+                    agent_id=agent_id,
                 )
-            ]
 
-            # 写回裁剪后的消息（文件缩小，下轮 get_window 自然读到更少内容）
-            if len(kept_real) < len(messages):
-                self._memory_svc.rewrite_messages(agent_id, kept_real)
+                if compacted_summary:
+                    summary_text = compacted_summary
+                    kept = [{"role": "assistant", "content": f"[Context so far]:\n{compacted_summary}"}] + kept
 
-            if compacted_summary:
-                summary_text = compacted_summary
+                if len(kept) < len(messages):
+                    self._memory_svc.rewrite_messages(agent_id, kept)
+            except Exception:
+                logger.exception("AgentLoop: compaction failed for agent %s, keeping original messages", agent_id)
 
         count = self._memory_svc.count_messages(agent_id)
-        summary = MemorySummary(
+        self._memory_svc.save_summary(agent_id, MemorySummary(
             session_id=session_id,
             agent_id=agent_id,
             summary_text=summary_text,
             covered_up_to=count,
             created_at=now_iso(),
-        )
-        self._memory_svc.save_summary(agent_id, summary)
+        ))
 
-        # compact 后 messages 变少，旧的 context_tokens 测量值已失效，强制重新测量
         agent = self._load_agent(agent_id)
         agent.loop_guard.context_tokens = 0
         self._agent_store.save(agent.to_dict())
 
 
 def _summarize_spawn(result: "ActorResult") -> str:
-    """从 actor result 的 tool_calls_made 里提取 submit_task 调用，生成挂起摘要。"""
+    """从 actor result 的 tool_calls_made 里提取 submit_task / submit_plan 调用，生成挂起摘要。"""
     from app.runtime.types import ActorResult  # noqa: F401  (TYPE_CHECKING 外的运行时引用)
-    titles = [
-        tc.arguments.get("title", "")
-        for tc in result.tool_calls_made
-        if tc.tool_name == "submit_task" and isinstance(tc.arguments, dict)
-    ]
+    titles: list[str] = []
+    for tc in result.tool_calls_made:
+        if not isinstance(tc.arguments, dict):
+            continue
+        if tc.tool_name == "submit_task":
+            title = tc.arguments.get("title", "")
+            if title:
+                titles.append(title)
+        elif tc.tool_name == "submit_plan":
+            for spec in tc.arguments.get("tasks", []):
+                if isinstance(spec, dict):
+                    title = spec.get("title", "")
+                    if title:
+                        titles.append(title)
     if titles:
-        listed = ", ".join(f"'{t}'" for t in titles if t)
+        listed = ", ".join(f"'{t}'" for t in titles)
         return f"Delegated to sub-task(s): {listed}. Awaiting completion."
     return "Delegated to sub-task(s). Awaiting completion."

@@ -92,6 +92,7 @@ class SessionManager:
         root_max_turns: int | None = None,
         llm_provider: str | None = None,
         llm_model: str | None = None,
+        working_dir: str | None = None,
         initial_task: InitialTaskConfig | None = None,
     ) -> tuple[Session, str]:
         """创建 Session + root Agent，返回 (Session, root_agent_id)。
@@ -135,6 +136,7 @@ class SessionManager:
             llm_model=llm_model or "",
             has_spawn_permission=True,
             spawn_depth=0,
+            settings={"working_dir": working_dir or get_settings().bash_exec_cwd},
             created_at=now,
             updated_at=now,
         )

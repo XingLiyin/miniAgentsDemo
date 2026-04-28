@@ -109,6 +109,18 @@ class TaskQueue:
                 st.ready.append(tid)
                 logger.debug("TaskQueue: promoted %s from blocked to ready (session %s)", tid, session_id)
 
+    def remove(self, session_id: str, task_id: str) -> None:
+        """Remove a task from ready stack or blocked set (used on cascade failure)."""
+        st = self._sessions.get(session_id)
+        if st is None:
+            return
+        with st.lock:
+            st.blocked.discard(task_id)
+            try:
+                st.ready.remove(task_id)
+            except ValueError:
+                pass
+
     def is_empty(self, session_id: str) -> bool:
         """True when both ready stack and blocked set are empty."""
         st = self._sessions.get(session_id)

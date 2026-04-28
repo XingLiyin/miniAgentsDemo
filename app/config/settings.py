@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     default_root_max_turns: int = 20
     default_summary_threshold: int = 20
     default_short_window_size: int = 20
+    compaction_keep_last: int = 6
 
     # Lifecycle Manager 并发限制
     max_concurrent_agents: int = 5

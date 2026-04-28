@@ -141,6 +141,36 @@ def get_actor() -> Actor:
 
 
 @lru_cache
+def get_compaction_agent():
+    from app.runtime.memory_compaction import MemoryCompactionAgent
+
+    agents_dir = get_settings().agents_dir
+    soul_path = agents_dir / "memory-compactor" / "SOUL.md"
+    soul = ""
+    tool_allowlist: list[str] = []
+    try:
+        from app.agent_template.loader import _parse_agent_md
+        raw = soul_path.read_text(encoding="utf-8")
+        frontmatter, soul = _parse_agent_md(raw)
+        tools = frontmatter.get("tools") or {}
+        if isinstance(tools, dict):
+            tool_allowlist = tools.get("required") or []
+        elif isinstance(tools, list):
+            tool_allowlist = tools
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("deps: failed to load memory-compactor SOUL.md from %s", soul_path)
+
+    return MemoryCompactionAgent(
+        llm_client=_get_llm_client(),
+        tool_registry=get_tool_registry(),
+        soul=soul,
+        tool_allowlist=tool_allowlist,
+        keep_last=get_settings().compaction_keep_last,
+    )
+
+
+@lru_cache
 def get_agent_loop() -> AgentLoop:
     llm_client = _get_llm_client()
     return AgentLoop(
@@ -153,6 +183,7 @@ def get_agent_loop() -> AgentLoop:
         reasoner=get_reasoner(),
         actor=get_actor(),
         observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
+        compaction_agent=get_compaction_agent(),
     )
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.domain.models.agent import Agent
@@ -51,13 +52,12 @@ class Reasoner:
         self, session: Session, agent: Agent, task: Task
     ) -> ReasoningContext:
         """构建本轮 ReasoningContext。"""
-        messages, summary_text, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
+        messages, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
         soul, role, skill_instructions = self._extract_agent_identity(agent, task, session.id)
 
         return ReasoningContext(
             goal=session.goal,
             recent_messages=messages,
-            summary_text=summary_text,
             blackboard_snippets=bb_snippets,
             soul=soul,
             role=role,
@@ -66,7 +66,24 @@ class Reasoner:
             observer_resources=self._build_observer_resources(agent, task),
             current_task=task,
             token_estimate=token_estimate,
+            project_background=self._load_background(agent, task),
         )
+
+    def _load_background(self, agent: Agent, task: Task) -> str:
+        from app.config.settings import get_settings
+        wd = (
+            (task.settings.get("working_dir") if task.settings else None)
+            or (agent.settings or {}).get("working_dir")
+            or get_settings().bash_exec_cwd
+        )
+        if not wd:
+            return ""
+        bg_path = Path(wd) / "BACKGROUND.md"
+        try:
+            return bg_path.read_text(encoding="utf-8") if bg_path.is_file() else ""
+        except Exception:
+            logger.debug("Reasoner: failed to read BACKGROUND.md from %s", bg_path)
+            return ""
 
     def _extract_agent_identity(
         self, agent: Agent, task: Task, session_id: str = ""
@@ -89,8 +106,6 @@ class Reasoner:
     def _fetch_base(self, session: Session, agent: Agent, task: Task) -> tuple:
         """获取 memory、blackboard、token 估算等共享数据，返回 tuple。"""
         messages = self._memory_svc.get_window(agent.id)
-        summary = self._memory_svc.get_summary(agent.id)
-        summary_text = summary.summary_text if summary else ""
 
         # bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
         # bb_snippets = [entry.content for entry in bb_entries]
@@ -109,13 +124,12 @@ class Reasoner:
 
         text_sample = (
             session.goal
-            + summary_text
             + " ".join(_item_text(m.get("content", "")) for m in messages)
             + " ".join(_item_text(s) for s in bb_snippets)
         )
         token_estimate = estimate_tokens(text_sample)
 
-        return messages, summary_text, bb_snippets, token_estimate
+        return messages, bb_snippets, token_estimate
 
     # ── 私有辅助 ──────────────────────────────────────────────────────────────
 

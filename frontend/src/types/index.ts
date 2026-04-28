@@ -38,6 +38,7 @@ export interface CreateSessionRequest {
   root_max_turns?: number
   llm_name?: string | null
   llm_model?: string | null
+  working_dir?: string | null
   initial_task?: InitialTaskConfig | null
 }
 

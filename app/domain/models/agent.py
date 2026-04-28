@@ -65,8 +65,8 @@ class Agent:
     # Spawn 字段
     has_spawn_permission: bool = False          # 是否允许 spawn sub-agent
     spawn_depth: int = 0                        # 嵌套深度（root=0）
-    parent_task_id: str | None = None          # 本 agent 正在执行的 Task（sub-agent 填充）
 
+    settings: dict[str, Any] = field(default_factory=dict)  # 运行时配置，如 working_dir
     created_at: str = ""
     updated_at: str = ""
 
@@ -91,7 +91,7 @@ class Agent:
             "llm_model": self.llm_model,
             "has_spawn_permission": self.has_spawn_permission,
             "spawn_depth": self.spawn_depth,
-            "parent_task_id": self.parent_task_id,
+            "settings": self.settings,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -118,7 +118,7 @@ class Agent:
             llm_model=d.get("llm_model", ""),
             has_spawn_permission=d.get("has_spawn_permission", False),
             spawn_depth=d.get("spawn_depth", 0),
-            parent_task_id=d.get("parent_task_id"),
+            settings=d.get("settings", {}),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

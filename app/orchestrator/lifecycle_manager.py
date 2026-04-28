@@ -153,9 +153,11 @@ class LifecycleManager:
     ) -> str | None:
         """Return a fully assembled agent_id ready to execute the next task.
 
-        Recycles the finished sub-agent if applicable, then either reuses the
-        executor (use_subagent=False) or spawns a new child agent
-        (use_subagent=True). Falls back to inline execution if spawn is denied.
+        Settle the finished agent, then determine the executor:
+        - WAITING base: if next task is the agent's own suspended task → resume directly;
+          otherwise → force-spawn a child (the WAITING agent is the tree parent).
+        - Normal base: reuse inline (use_subagent=False) or spawn child (use_subagent=True).
+        Falls back to inline execution if spawn is denied.
         Returns None if the agent tree is in an unexpected state.
         """
         lock = self._locks.get(session_id)
@@ -173,6 +175,20 @@ class LifecycleManager:
             if base_executor is None:
                 return None
 
+            base_meta = state.agent_registry.get(base_executor)
+            if base_meta is None:
+                return None
+
+            # WAITING agent: has a suspended task waiting for its children to finish.
+            if base_meta.status == "WAITING":
+                if base_meta.task_id == task_id:
+                    # The suspended task is being resumed — agent runs it directly.
+                    base_meta.status = "RUNNING"
+                    return base_executor
+                else:
+                    # Child task dispatched to this waiting agent — must spawn a child.
+                    use_subagent = True
+
             if not use_subagent:
                 return base_executor
 
@@ -185,12 +201,14 @@ class LifecycleManager:
                 )
                 return base_executor
 
+            spawn_depth = base_meta.spawn_depth + 1
+
             try:
                 sub_agent_id = self._instantiate_sub_agent(
                     session_id=session_id,
                     task_id=task_id,
                     parent_agent_id=base_executor,
-                    spawn_depth=1,
+                    spawn_depth=spawn_depth,
                     inherit_memory=inherit_memory,
                     template_name=template_name,
                 )
@@ -202,7 +220,7 @@ class LifecycleManager:
                 agent_id=sub_agent_id,
                 parent_id=base_executor,
                 task_id=None,
-                spawn_depth=1,
+                spawn_depth=spawn_depth,
                 status="RUNNING",
             )
             state.concurrent_agents += 1
@@ -212,11 +230,11 @@ class LifecycleManager:
                 {"session_id": session_id, "agent_id": sub_agent_id},
             )
 
-        logger.info("LM: prepared sub-agent %s (parent=%s)", sub_agent_id, base_executor)
+        logger.info("LM: prepared sub-agent %s (depth=%d, parent=%s)", sub_agent_id, spawn_depth, base_executor)
         return sub_agent_id
 
     def release(self, session_id: str, finished_agent_id: str) -> None:
-        """Session has no more tasks. Settle the finished agent and recycle the executor."""
+        """Session has no more tasks. Recycle all remaining agents in the tree."""
         lock = self._locks.get(session_id)
         if lock is None:
             return
@@ -224,9 +242,8 @@ class LifecycleManager:
             state = self._states.get(session_id)
             if state is None:
                 return
-            executor_id = self._settle_executor(state, session_id, finished_agent_id)
-            if executor_id:
-                self._recycle(state, session_id, executor_id)
+            for agent_id in list(state.agent_registry.keys()):
+                self._recycle(state, session_id, agent_id)
 
     def run_agent(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Start a daemon thread to run agent_loop for (agent, task)."""
@@ -270,17 +287,24 @@ class LifecycleManager:
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _settle_executor(self, state: LMState, session_id: str, finished_agent_id: str) -> str | None:
-        """Recycle finished sub-agent if applicable and return the executor agent_id.
+        """Determine the base executor for the next task.
+
+        - Root agent (depth=0): never recycled mid-session, always returned as-is.
+        - WAITING sub-agent: has a suspended task awaiting children; keep alive, return as-is.
+        - FINISHED sub-agent: recycle it and return its direct parent (not always root).
 
         Must be called under self._locks[session_id].
         """
         meta = state.agent_registry.get(finished_agent_id)
         if meta is None:
             return None
-        if meta.spawn_depth > 0:
-            self._recycle(state, session_id, finished_agent_id)
-            return state.root_agent_id
-        return finished_agent_id
+        if meta.spawn_depth == 0:
+            return finished_agent_id
+        if meta.status == "WAITING":
+            return finished_agent_id
+        parent_id = meta.parent_id or state.root_agent_id
+        self._recycle(state, session_id, finished_agent_id)
+        return parent_id
 
     def _recycle(self, state: LMState, session_id: str, agent_id: str) -> None:
         """Remove agent from registry and publish RECYCLED. Must be called under lock."""
@@ -305,6 +329,7 @@ class LifecycleManager:
             return
         try:
             self._agent_loop.run(session_id, agent_id, task_id)
+            self._sync_meta_status(session_id, agent_id)
             if self._is_tracked(session_id, agent_id):
                 self._bus.publish(
                     TASK_EXECUTION_FINISHED,
@@ -317,6 +342,19 @@ class LifecycleManager:
                     TASK_EXECUTION_FAILED,
                     {"session_id": session_id, "agent_id": agent_id, "task_id": task_id, "error": str(e)},
                 )
+
+    def _sync_meta_status(self, session_id: str, agent_id: str) -> None:
+        """Sync AgentMeta.status from agent_store after a loop run completes."""
+        lock = self._locks.get(session_id)
+        if not lock:
+            return
+        with lock:
+            state = self._states.get(session_id)
+            if not state or agent_id not in state.agent_registry:
+                return
+            agent_data = self._agent_store.get(agent_id)
+            if agent_data:
+                state.agent_registry[agent_id].status = agent_data.get("status", "FINISHED")
 
     def _is_tracked(self, session_id: str, agent_id: str) -> bool:
         state = self._states.get(session_id)
@@ -381,6 +419,7 @@ class LifecycleManager:
 
         now = now_iso()
         agent_id = new_agent_id()
+        parent_settings = parent_data.get("settings") or {}
         agent = Agent(
             id=agent_id,
             session_id=session_id,
@@ -396,9 +435,9 @@ class LifecycleManager:
             loop_guard=LoopGuard(actor_max_tool_rounds=50),
             inherit_memory=inherit_memory,
             llm_provider=parent_data.get("llm_provider", settings.default_llm_provider),
-            has_spawn_permission=False,
+            has_spawn_permission=(spawn_depth < self._max_spawn_depth),
             spawn_depth=spawn_depth,
-            parent_task_id=task_id,
+            settings={"working_dir": parent_settings.get("working_dir", "")},
             created_at=now,
             updated_at=now,
         )

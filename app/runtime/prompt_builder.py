@@ -97,8 +97,13 @@ class ActorPromptBuilder(BasePromptBuilder):
     """构建 actor 的 system prompt 和 messages。"""
 
     def build_system_prompt(self, ctx: "ReasoningContext") -> str:
-        """组装 system prompt：soul → 资源列表 → skill instructions。"""
-        parts = [p for p in [ctx.soul, self._build_resources_section(ctx), ctx.skill_instructions] if p]
+        """组装 system prompt：soul → 项目背景 → 资源列表 → skill instructions。"""
+        parts = [p for p in [
+            ctx.soul,
+            f"## Project Background\n\n{ctx.project_background}" if ctx.project_background else "",
+            self._build_resources_section(ctx),
+            ctx.skill_instructions,
+        ] if p]
         return "\n\n---\n\n".join(parts)
 
     def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
@@ -147,8 +152,6 @@ class ActorPromptBuilder(BasePromptBuilder):
             parts.append("Task Background:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
         if task.title and task.description:
             parts.append(f"Current goal: {task.title}\nDescription: {task.description}")
-        if ctx.summary_text:
-            parts.append(f"Previous progress:\n{ctx.summary_text}")
 
         user_prompt = ctx.current_task.user_prompt
         parts.append(f"Current message: {content_to_text(user_prompt)}")
@@ -228,7 +231,6 @@ class ObserverPromptBuilder(BasePromptBuilder):
         )
 
         content_parts = [
-            f"Previous progress summary: {ctx.summary_text or 'None'}",
             (
                 f"Current task: {task.title}\n"
                 f"Task description: {task.description or task.title}"
