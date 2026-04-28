@@ -30,5 +30,8 @@ public class AgentDefMetadata {
     @Builder.Default
     private java.util.List<String> mcpObserveServers = new java.util.ArrayList<>();
 
+    @Builder.Default
+    private java.util.List<String> subagents = new java.util.ArrayList<>();
+
     private Path agentDir;
 }

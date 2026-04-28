@@ -57,7 +57,6 @@ public class ChatClient {
             .messages(messages == null ? List.of() : new ArrayList<>(messages))
             .systemPrompt(systemPrompt)
             .tools(tools == null ? List.of() : new ArrayList<>(tools))
-            .maxTokens(defaultMaxTokens)
             .metadata(metadata == null ? Map.of() : metadata)
             .build();
         return adapter.stream(request);

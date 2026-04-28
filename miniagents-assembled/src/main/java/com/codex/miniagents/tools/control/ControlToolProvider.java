@@ -1,14 +1,12 @@
 package com.codex.miniagents.tools.control;
 
 import com.codex.miniagents.config.MiniAgentsProperties;
-import com.codex.miniagents.domain.model.agent.Agent;
 import com.codex.miniagents.domain.model.session.SessionStatus;
 import com.codex.miniagents.domain.model.task.Task;
 import com.codex.miniagents.domain.model.task.TaskStatus;
 import com.codex.miniagents.domain.service.SessionService;
 import com.codex.miniagents.domain.service.TaskService;
 import com.codex.miniagents.llm.model.LlmTool;
-import com.codex.miniagents.runtime.ControlSignal;
 import com.codex.miniagents.runtime.HitlStore;
 import com.codex.miniagents.common.SseBus;
 import com.codex.miniagents.runtime.model.PlannedTask;
@@ -76,10 +74,11 @@ public class ControlToolProvider implements ToolProvider {
     private void registerDefaults() {
         register(buildRequestHumanInputTool(), "actor", this::handleRequestHumanInput);
         register(buildUpdateTaskMetadataTool(), "actor", this::handleUpdateTaskMetadata);
-        register(buildSubmitPlanTool(), "observer", this::handleSubmitPlan);
+        register(buildSubmitPlanTool(), "actor", this::handleSubmitPlan);
         register(buildSubmitTaskAssessmentTool(), "observer", this::handleSubmitTaskAssessment);
         register(buildReplanTool(), "observer", this::handleReplan);
-        register(buildSubmitTaskTool(), "observer", this::handleSubmitTask);
+        register(buildSubmitTaskTool(), "actor", this::handleSubmitTask);
+        register(buildSubmitTaskReviewsTool(), "observer", this::handleSubmitTaskReviews);
     }
 
     private void register(ToolDefinition schema, String scope, ControlToolHandler handler) {
@@ -127,11 +126,7 @@ public class ControlToolProvider implements ToolProvider {
         );
         sessionService.transition(sessionId, SessionStatus.RUNNING);
 
-        return toolResultWithSignal(
-            answer,
-            ControlSignal.BLOCK_FOR_INPUT,
-            buildSignalData("prompt", prompt, "answer", answer)
-        );
+        return ToolResult.builder().content(answer).build();
     }
 
     private ToolResult handleSubmitPlan(Map<String, Object> args, CallContext ctx) {
@@ -159,7 +154,7 @@ public class ControlToolProvider implements ToolProvider {
                     inputs.put("inherit_memory", asBoolean(spec.get("inherit_memory"), true));
                     String template = stringValue(spec.get("subagent_template"));
                     if (!template.isBlank()) {
-                        inputs.put("template_name", template);
+                        inputs.put("subagent_template", template);
                     }
                 }
                 taskService.create(task.getSessionId(), creator, creator, userPrompt, title, description, inputs);
@@ -173,16 +168,7 @@ public class ControlToolProvider implements ToolProvider {
             ? "No further tasks needed — goal already achieved."
             : "Planned " + created + " tasks: " + String.join(", ", titles);
         task.setActorDone(true);
-        taskService.toBeObserved(task.getId());
-        return toolResultWithSignal(
-            summary,
-            ControlSignal.NONE,
-            buildSignalData(
-                "task_outcome", "success",
-                "task_result", summary,
-                "proceed_to_review", false
-            )
-        );
+        return ToolResult.builder().content(summary).build();
     }
 
     private ToolResult handleSubmitTaskAssessment(Map<String, Object> args, CallContext ctx) {
@@ -193,10 +179,6 @@ public class ControlToolProvider implements ToolProvider {
             taskOutcome = "failed";
         }
         String taskResult = stringValue(args.get("task_result"));
-        String nextStepHint = stringValue(args.get("next_step_hint")).trim();
-        if (!nextStepHint.isBlank()) {
-            taskResult = taskResult + "\n\n下一步建议：" + nextStepHint;
-        }
         task.setActorOutcome(taskOutcome);
         task.setActorResult(taskResult);
         task.setProceedToReview(true);
@@ -212,26 +194,16 @@ public class ControlToolProvider implements ToolProvider {
             task.setActorOutcome(taskOutcome);
             task.setActorResult(taskResult);
         }
-        applyReviews(args.get("task_reviews"), ctx);
-        return toolResultWithSignal(
-            "Assessment recorded: outcome=" + taskOutcome + ". " + taskResult,
-            ControlSignal.NONE,
-            buildSignalData(
-                "task_outcome", taskOutcome,
-                "task_result", taskResult,
-                "proceed_to_review", true
-            )
-        );
+        return ToolResult.builder()
+            .content("Assessment recorded: outcome=" + taskOutcome + ". " + taskResult)
+            .build();
     }
 
     private ToolResult handleReplan(Map<String, Object> args, CallContext ctx) {
         Task task = requireTask(ctx);
         String reason = stringValue(args.get("reason"));
         String summary = stringValue(args.get("summary"));
-        String userPrompt = stringValue(args.get("user_prompt"));
-        if (userPrompt.isBlank()) {
-            userPrompt = stringValue(task.getUserPrompt());
-        }
+        String userPrompt = stringValue(task.getUserPrompt());
         int canceled = taskService.cancelPending(task.getSessionId());
         String creator = task.getAssignedAgentId();
         Map<String, Object> inputs = new LinkedHashMap<>();
@@ -251,16 +223,9 @@ public class ControlToolProvider implements ToolProvider {
         task.setActorResult(reason);
         task.setProceedToReview(false);
         taskService.finish(task.getId(), reason);
-        return toolResultWithSignal(
-            "Cancelled " + canceled + " tasks. New plan task created.",
-            ControlSignal.NONE,
-            buildSignalData(
-                "task_outcome", "success",
-                "task_result", reason,
-                "summary", summary,
-                "proceed_to_review", false
-            )
-        );
+        return ToolResult.builder()
+            .content("Cancelled " + canceled + " tasks. New plan task created.")
+            .build();
     }
 
     private ToolResult handleUpdateTaskMetadata(Map<String, Object> args, CallContext ctx) {
@@ -268,7 +233,6 @@ public class ControlToolProvider implements ToolProvider {
         String targetTaskId = task.getSettings() == null ? "" : stringValue(task.getSettings().get("target_task_id"));
         String title = stringValue(args.get("title")).trim();
         String description = stringValue(args.get("description")).trim();
-        String sessionGoal = stringValue(args.get("session_goal")).trim();
         if (!targetTaskId.isBlank()) {
             try {
                 Task target = taskService.get(targetTaskId);
@@ -288,44 +252,17 @@ public class ControlToolProvider implements ToolProvider {
                 log.warn("ControlToolProvider: failed to update metadata for task {}", targetTaskId, e);
             }
         }
-        if (!sessionGoal.isBlank()) {
-            try {
-                com.codex.miniagents.domain.model.session.Session session = sessionService.get(task.getSessionId());
-                session.setGoal(sessionGoal);
-                sessionService.save(session);
-                try {
-                    SseBus.getInstance().push(task.getSessionId(), Map.of(
-                        "type", "session_goal_updated",
-                        "session_id", task.getSessionId(),
-                        "goal", sessionGoal
-                    ));
-                } catch (Exception ignored) {
-                }
-            } catch (Exception e) {
-                log.warn("ControlToolProvider: failed to update session goal for session {}", task.getSessionId(), e);
-            }
-        }
-        if (task.getStatus() == TaskStatus.ACTIVE || task.getStatus() == TaskStatus.PENDING) {
+        if (task != null) {
             task.setActorDone(true);
             task.setActorOutcome("success");
             task.setActorResult("metadata updated");
             task.setActorSummary("");
-            taskService.finish(task.getId(), "metadata updated");
         }
-        return toolResultWithSignal(
-            "ok",
-            ControlSignal.TASK_COMPLETE,
-            buildSignalData(
-                "task_outcome", "success",
-                "task_result", "metadata updated",
-                "summary", ""
-            )
-        );
+        return ToolResult.builder().content("ok").build();
     }
 
     private ToolResult handleSubmitTask(Map<String, Object> args, CallContext ctx) {
-        Task task = ctx == null ? null : ctx.getTask();
-        String creator = task == null ? "" : stringValue(task.getAssignedAgentId());
+        Task task = requireTask(ctx);
         Map<String, Object> inputs = new LinkedHashMap<>();
         String skillName = stringValue(args.get("skill_name"));
         if (!skillName.isBlank()) {
@@ -334,23 +271,35 @@ public class ControlToolProvider implements ToolProvider {
         if (asBoolean(args.get("use_subagent"), false)) {
             inputs.put("use_subagent", true);
             inputs.put("inherit_memory", asBoolean(args.get("inherit_memory"), true));
+            String subagentTemplate = stringValue(args.get("subagent_template"));
+            if (!subagentTemplate.isBlank()) {
+                inputs.put("subagent_template", subagentTemplate);
+            }
         }
         Task created = taskService.create(
-            task == null ? "" : task.getSessionId(),
-            creator,
-            creator,
+            task.getSessionId(),
+            task.getAssignedAgentId(),
+            task.getAssignedAgentId(),
             stringValue(args.get("user_prompt")),
             stringValue(args.get("title")),
             stringValue(args.get("description")),
             inputs,
-            task == null ? null : task.getId()
+            task.getId()
         );
-        if (task != null && task.getStatus() != TaskStatus.SUSPENDED) {
+        if (task.getStatus() != TaskStatus.SUSPENDED) {
             taskService.transition(task.getId(), TaskStatus.SUSPENDED);
+            task.setStatus(TaskStatus.SUSPENDED);
             task.setActorDone(true);
         }
         return ToolResult.builder()
             .content("Task created: id=" + created.getId() + ", title='" + stringValue(created.getTitle()) + "'")
+            .build();
+    }
+
+    private ToolResult handleSubmitTaskReviews(Map<String, Object> args, CallContext ctx) {
+        List<String> applied = applyReviews(args.get("reviews"), ctx);
+        return ToolResult.builder()
+            .content("Reviews applied: " + (applied.isEmpty() ? "none" : String.join(", ", applied)))
             .build();
     }
 
@@ -391,7 +340,7 @@ public class ControlToolProvider implements ToolProvider {
                 }
                 Task matched = reviewable.get(title);
                 if (matched == null) {
-                    log.warn("submit_task_assessment.task_reviews: no reviewable task with title '{}', skipping", title);
+                    log.warn("submit_task_reviews: no reviewable task with title '{}', skipping", title);
                     continue;
                 }
                 try {
@@ -407,7 +356,7 @@ public class ControlToolProvider implements ToolProvider {
                     }
                     applied.add(title + " -> " + reviewStatus);
                 } catch (Exception e) {
-                    log.warn("submit_task_assessment.task_reviews: failed to apply review for {}: {}", matched.getId(), e.getMessage());
+                    log.warn("submit_task_reviews: failed to apply review for {}: {}", matched.getId(), e.getMessage());
                 }
             }
         }
@@ -419,7 +368,7 @@ public class ControlToolProvider implements ToolProvider {
     }
 
     private ToolDefinition buildUpdateTaskMetadataTool() {
-        return definitionFromMethod("updateTaskMetadataTool", String.class, String.class, String.class);
+        return definitionFromMethod("updateTaskMetadataTool", String.class, String.class);
     }
 
     private ToolDefinition buildSubmitPlanTool() {
@@ -427,7 +376,7 @@ public class ControlToolProvider implements ToolProvider {
     }
 
     private ToolDefinition buildSubmitTaskAssessmentTool() {
-        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class, List.class, String.class);
+        return definitionFromMethod("submitTaskAssessmentTool", String.class, String.class);
     }
 
     private ToolDefinition buildReplanTool() {
@@ -436,7 +385,11 @@ public class ControlToolProvider implements ToolProvider {
 
     private ToolDefinition buildSubmitTaskTool() {
         return definitionFromMethod("submitTaskTool", String.class, String.class, String.class, boolean.class,
-            boolean.class, String.class);
+            String.class, boolean.class, String.class);
+    }
+
+    private ToolDefinition buildSubmitTaskReviewsTool() {
+        return definitionFromMethod("submitTaskReviewsTool", List.class);
     }
 
     private ToolDefinition definitionFromMethod(String methodName, Class<?>... parameterTypes) {
@@ -466,23 +419,19 @@ public class ControlToolProvider implements ToolProvider {
     }
 
     @ToolSpec(name = "update_task_metadata",
-        description = "Update the title and description of a target task, and optionally update the overall session goal.")
+        description = "Update the title and description of a target task.")
     public ToolResult updateTaskMetadataTool(
         @ToolParam("The task title to save") String title,
-        @ToolParam("The task description to save") String description,
-        @JsonProperty("session_goal")
-        @ToolParam(value = "Overall session goal (<=60 chars). Fill only on first setup or when user direction fundamentally changes; otherwise leave empty", required = false)
-        String sessionGoal) {
+        @ToolParam("The task description to save") String description) {
         try {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("title", stringValue(title));
             payload.put("description", stringValue(description));
-            payload.put("session_goal", stringValue(sessionGoal));
             return ToolResult.builder().content(OBJECT_MAPPER.writeValueAsString(payload)).build();
         } catch (Exception e) {
             return ToolResult.builder()
                 .content("{\"title\":\"" + stringValue(title) + "\",\"description\":\"" + stringValue(description)
-                    + "\",\"session_goal\":\"" + stringValue(sessionGoal) + "\"}")
+                    + "\"}")
                 .build();
         }
     }
@@ -503,14 +452,8 @@ public class ControlToolProvider implements ToolProvider {
         @JsonProperty("task_outcome") @ToolParam("'success', 'failed', 'active', or 'needs_user_input'")
         String taskOutcome,
         @JsonProperty("task_result")
-        @ToolParam("Complete progress/result description. This field is written directly into memory for the next actor turn.")
-        String taskResult,
-        @JsonProperty("task_reviews")
-        @ToolParam(value = "Optional reviews for FINISHED/PENDING tasks. Each entry: task_title, current_status, review_status ('confirmed' | 'reopen' | 'skip'), reasoning.", required = false)
-        List<Map<String, Object>> taskReviews,
-        @JsonProperty("next_step_hint")
-        @ToolParam(value = "Optional risk, caveat, or next-step hint to append to task_result for the next actor.", required = false)
-        String nextStepHint) {
+        @ToolParam("What was accomplished, progress made, or why the task could not be completed")
+        String taskResult) {
         return ToolResult.builder().content("").build();
     }
 
@@ -537,22 +480,29 @@ public class ControlToolProvider implements ToolProvider {
     public ToolResult submitTaskTool(
         @ToolParam("Short imperative title for the task (<=20 chars)") String title,
         @ToolParam("WHAT to achieve - not HOW, no tool names or arguments (<=80 chars)") String description,
+        @JsonProperty("skill_name")
         @ToolParam(value = "Skill to assign to the task, or empty string if none", required = false) String skillName,
+        @JsonProperty("use_subagent")
         @ToolParam(value = "True if the task should run in an independent sub-agent", required = false)
         boolean useSubagent,
+        @JsonProperty("subagent_template")
+        @ToolParam(value = "Template name for the sub-agent (e.g. 'planner'); empty uses system default", required = false)
+        String subagentTemplate,
+        @JsonProperty("inherit_memory")
         @ToolParam(value = "True (default) for sub-agents that need session history", required = false)
         boolean inheritMemory,
+        @JsonProperty("user_prompt")
         @ToolParam(value = "The user prompt that triggered this task, or empty", required = false) String userPrompt) {
         return ToolResult.builder().content("").build();
     }
 
-    private ToolResult toolResultWithSignal(String content, ControlSignal signal, Map<String, Object> signalData) {
-        Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("control_signal", signal.name());
-        metadata.put("signal_data", signalData);
+    @ToolSpec(name = "submit_task_reviews",
+        description = "Submit your review of all FINISHED and PENDING tasks in the session.")
+    public ToolResult submitTaskReviewsTool(
+        @ToolParam(value = "Review entries for FINISHED and PENDING tasks in the session. Each entry: task_title, current_status ('FINISHED' or 'PENDING'), review_status ('confirmed' | 'reopen' | 'skip'), reasoning.", required = false)
+        List<Map<String, Object>> reviews) {
         return ToolResult.builder()
-            .content(content)
-            .metadata(metadata)
+            .content("")
             .build();
     }
 
@@ -618,16 +568,6 @@ public class ControlToolProvider implements ToolProvider {
 
     private String stringValue(Object value) {
         return value == null ? "" : String.valueOf(value);
-    }
-
-    private Map<String, Object> buildSignalData(Object... kvs) {
-        Map<String, Object> data = new LinkedHashMap<>();
-        for (int i = 0; i + 1 < kvs.length; i += 2) {
-            String key = String.valueOf(kvs[i]);
-            Object value = kvs[i + 1];
-            data.put(key, value);
-        }
-        return data;
     }
 
     private Task requireTask(CallContext ctx) {

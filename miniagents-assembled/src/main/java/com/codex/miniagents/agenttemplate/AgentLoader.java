@@ -66,6 +66,7 @@ public class AgentLoader {
         ToolSpec observeToolSpec = parseToolSpec(roleParsed.frontmatter().get("tools"));
         List<String> mcpActServers = parseStringList(soulParsed.frontmatter().get("mcp_servers"));
         List<String> mcpObserveServers = parseStringList(roleParsed.frontmatter().get("mcp_servers"));
+        List<String> subagents = parseStringList(soulParsed.frontmatter().get("subagents"));
 
         return AgentDefMetadata.builder()
             .name(requireString(soulParsed.frontmatter().get("name"), agentDir))
@@ -75,6 +76,7 @@ public class AgentLoader {
             .observeToolSpec(observeToolSpec)
             .mcpActServers(mcpActServers)
             .mcpObserveServers(mcpObserveServers)
+            .subagents(subagents)
             .agentDir(agentDir)
             .build();
     }

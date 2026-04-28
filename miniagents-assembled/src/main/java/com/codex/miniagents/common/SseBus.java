@@ -27,7 +27,7 @@ public class SseBus {
     public BlockingQueue<Map<String, Object>> createSubscription(String sessionId) {
         BlockingQueue<Map<String, Object>> queue = new LinkedBlockingQueue<>(500);
         queues.computeIfAbsent(sessionId, k -> new CopyOnWriteArrayList<>()).add(queue);
-        log.debug("SseBus.createSubscription: session={} subscribers={}", sessionId, queues.get(sessionId).size());
+        // log.debug("SseBus.createSubscription: session={} subscribers={}", sessionId, queues.get(sessionId).size());
         return queue;
     }
 
@@ -35,7 +35,7 @@ public class SseBus {
         List<BlockingQueue<Map<String, Object>>> list = queues.get(sessionId);
         if (list != null) {
             list.remove(queue);
-            log.debug("SseBus.removeSubscription: session={} remainingSubscribers={}", sessionId, list.size());
+            // log.debug("SseBus.removeSubscription: session={} remainingSubscribers={}", sessionId, list.size());
         }
     }
 
@@ -43,12 +43,12 @@ public class SseBus {
         try {
             EventStore.getInstance().append(sessionId, event);
         } catch (Exception e) {
-            log.debug("SSE event persist failed for session {}", sessionId, e);
+            // log.debug("SSE event persist failed for session {}", sessionId, e);
         }
 
         List<BlockingQueue<Map<String, Object>>> list = queues.get(sessionId);
         if (list == null || list.isEmpty()) {
-            log.debug("SseBus.push: session={} no subscribers, event persisted only", sessionId);
+            // log.debug("SseBus.push: session={} no subscribers, event persisted only", sessionId);
             return;
         }
 
@@ -56,9 +56,9 @@ public class SseBus {
             try {
                 queue.offer(event);
             } catch (Exception e) {
-                log.debug("SSE push failed for session {}", sessionId, e);
+                // log.debug("SSE push failed for session {}", sessionId, e);
             }
         }
-        log.debug("SseBus.push: session={} delivered event type={}", sessionId, event.get("type"));
+        // log.debug("SseBus.push: session={} delivered event type={}", sessionId, event.get("type"));
     }
 }

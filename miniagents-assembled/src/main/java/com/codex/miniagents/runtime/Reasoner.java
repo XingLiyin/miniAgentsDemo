@@ -1,5 +1,7 @@
 package com.codex.miniagents.runtime;
 
+import com.codex.miniagents.agenttemplate.AgentTemplateRegistry;
+import com.codex.miniagents.agenttemplate.definition.AgentDefMetadata;
 import com.codex.miniagents.domain.model.agent.Agent;
 import com.codex.miniagents.domain.model.blackboard.BlackboardEntry;
 import com.codex.miniagents.domain.model.session.Session;
@@ -13,7 +15,6 @@ import com.codex.miniagents.llm.model.LlmTool;
 import com.codex.miniagents.skills.SkillRegistry;
 import com.codex.miniagents.skills.SkillStoreClient;
 import com.codex.miniagents.tools.ToolStoreClient;
-import com.codex.miniagents.tools.control.ControlToolProvider;
 import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.registry.ToolRegistry;
 import com.codex.miniagents.runtime.model.ContextResource;
@@ -23,6 +24,7 @@ import com.codex.miniagents.utils.TokenUtils;
 
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,11 +44,11 @@ public class Reasoner {
 
     private final SkillRegistry skillRegistry;
     private final SkillStoreClient skillStoreClient;
-    private final ControlToolProvider controlToolProvider;
+    private final AgentTemplateRegistry agentTemplateRegistry;
 
     public Reasoner(MemoryService memoryService, BlackboardService blackboardService, TaskService taskService, ToolRegistry toolRegistry,
         ToolStoreClient toolStoreClient, SkillRegistry skillRegistry, SkillStoreClient skillStoreClient,
-        ControlToolProvider controlToolProvider) {
+        AgentTemplateRegistry agentTemplateRegistry) {
         this.memoryService = memoryService;
         this.blackboardService = blackboardService;
         this.taskService = taskService;
@@ -54,7 +56,7 @@ public class Reasoner {
         this.toolStoreClient = toolStoreClient;
         this.skillRegistry = skillRegistry;
         this.skillStoreClient = skillStoreClient;
-        this.controlToolProvider = controlToolProvider;
+        this.agentTemplateRegistry = agentTemplateRegistry;
     }
 
     public ReasoningContext reason(Session session, Agent agent, Task task) {
@@ -77,10 +79,8 @@ public class Reasoner {
         String summaryText = summary == null ? "" : summary.getSummaryText();
         String sessionGoal = defaultString(session.getGoal());
         CallContext callContext = buildCallContext(session, agent, task);
-        List<LlmTool> relevantTools = retrieveActTools(sessionGoal, agent);
-        List<SkillMeta> relevantSkills = retrieveSkills(sessionGoal, agent, callContext);
         String skillInstructions = extractSkillInstructions(task, callContext);
-        List<ContextResource> actorResources = buildActorResources(agent, relevantTools, relevantSkills);
+        List<ContextResource> actorResources = buildActorResources(sessionGoal, agent, task, callContext);
         List<ContextResource> observerResources = buildObserverResources(agent);
         String sample = sessionGoal
             + summaryText
@@ -151,9 +151,10 @@ public class Reasoner {
         return definition == null ? "" : defaultString(definition.getInstructions());
     }
 
-    private List<ContextResource> buildActorResources(Agent agent, List<LlmTool> tools, List<SkillMeta> skills) {
+    private List<ContextResource> buildActorResources(String goal, Agent agent, Task task, CallContext ctx) {
         List<ContextResource> resources = new ArrayList<>();
-        Set<String> allowed = resolveActToolNames(agent).isEmpty() ? Set.of() : Set.copyOf(resolveActToolNames(agent));
+        List<SkillMeta> skills = retrieveSkills(goal, agent, ctx);
+        List<LlmTool> tools = retrieveActTools(goal, agent);
         for (SkillMeta skill : skills) {
             resources.add(ContextResource.builder()
                 .name(skill.getName())
@@ -169,38 +170,84 @@ public class Reasoner {
                 .llmTool(tool)
                 .build());
         }
-        for (LlmTool tool : controlToolProvider.getLlmSchemas("actor")) {
-            if (!allowed.isEmpty() && !allowed.contains(tool.getName())) {
+        resources.addAll(buildAgentResources(agent));
+        return resources;
+    }
+
+    private List<ContextResource> buildAgentResources(Agent agent) {
+        if (agent == null || !agent.isHasSpawnPermission() || agentTemplateRegistry == null) {
+            return List.of();
+        }
+        AgentDefMetadata ownMetadata = resolveOwnMetadata(agent);
+        Set<String> allowlist = ownMetadata == null || ownMetadata.getSubagents() == null || ownMetadata.getSubagents().isEmpty()
+            ? null
+            : Set.copyOf(ownMetadata.getSubagents());
+        String ownName = ownMetadata == null ? null : ownMetadata.getName();
+
+        List<ContextResource> resources = new ArrayList<>();
+        for (AgentDefMetadata metadata : agentTemplateRegistry.listAll()) {
+            if (metadata == null || isBlank(metadata.getName())) {
+                continue;
+            }
+            if (metadata.getName().equals(ownName)) {
+                continue;
+            }
+            if (allowlist != null && !allowlist.contains(metadata.getName())) {
                 continue;
             }
             resources.add(ContextResource.builder()
-                .name(tool.getName())
-                .description(defaultString(tool.getDescription()))
-                .kind("tool")
-                .llmTool(tool)
+                .name(metadata.getName())
+                .description(defaultString(metadata.getDescription()))
+                .kind("agent")
                 .build());
         }
         return resources;
     }
 
     private List<ContextResource> buildObserverResources(Agent agent) {
-        List<LlmTool> candidates = new ArrayList<>(controlToolProvider.getLlmSchemas("observer"));
         Set<String> allowed = resolveObserveToolNames(agent).isEmpty() ? Set.of() : Set.copyOf(resolveObserveToolNames(agent));
         if (allowed.isEmpty()) {
             return List.of();
         }
+        List<LlmTool> candidates = toolRegistry.toLlmTools(new ArrayList<>(allowed));
         List<ContextResource> filtered = new ArrayList<>();
         for (LlmTool tool : candidates) {
-            if (allowed.contains(tool.getName())) {
-                filtered.add(ContextResource.builder()
-                    .name(tool.getName())
-                    .description(defaultString(tool.getDescription()))
-                    .kind("tool")
-                    .llmTool(tool)
-                    .build());
-            }
+            filtered.add(ContextResource.builder()
+                .name(tool.getName())
+                .description(defaultString(tool.getDescription()))
+                .kind("tool")
+                .llmTool(tool)
+                .build());
         }
         return filtered;
+    }
+
+    private AgentDefMetadata resolveOwnMetadata(Agent agent) {
+        if (agent == null || agentTemplateRegistry == null) {
+            return null;
+        }
+        if (!isBlank(agent.getTemplateId())) {
+            AgentDefMetadata byName = agentTemplateRegistry.getMetadata(agent.getTemplateId());
+            if (byName != null) {
+                return byName;
+            }
+        }
+        if (!isBlank(agent.getSoulPath())) {
+            try {
+                Path soulPath = Path.of(agent.getSoulPath()).toAbsolutePath().normalize();
+                for (AgentDefMetadata metadata : agentTemplateRegistry.listAll()) {
+                    if (metadata == null || metadata.getAgentDir() == null) {
+                        continue;
+                    }
+                    if (metadata.getAgentDir().toAbsolutePath().normalize().equals(soulPath)) {
+                        return metadata;
+                    }
+                }
+            } catch (Exception ignored) {
+                // best effort
+            }
+        }
+        return null;
     }
 
     private List<String> resolveActToolNames(Agent agent) {

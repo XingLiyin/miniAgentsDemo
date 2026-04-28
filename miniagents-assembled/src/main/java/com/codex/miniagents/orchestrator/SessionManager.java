@@ -226,6 +226,9 @@ public class SessionManager {
         blackboardService.deleteSession(sessionId);
 
         // Keep Python parity: only root agent file is explicitly deleted.
+        for (String aid : agentIds) {
+            agentRepository.delete(aid);
+        }
         if (session.getRootAgentId() != null) {
             agentRepository.delete(session.getRootAgentId());
         }

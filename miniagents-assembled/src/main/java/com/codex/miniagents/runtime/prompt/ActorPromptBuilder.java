@@ -122,6 +122,9 @@ public class ActorPromptBuilder extends BasePromptBuilder {
             : context.getActorResources().stream()
                 .filter(r -> "tool".equals(r.getKind()) && r.getLlmTool() != null)
                 .toList();
+        List<ContextResource> agents = context.getActorResources() == null
+            ? List.of()
+            : context.getActorResources().stream().filter(r -> "agent".equals(r.getKind())).toList();
         List<String> parts = new ArrayList<>();
         if (!skills.isEmpty()) {
             List<String> lines = new ArrayList<>();
@@ -136,6 +139,15 @@ public class ActorPromptBuilder extends BasePromptBuilder {
             lines.add("## Available Tools (use them via tool calls)");
             for (ContextResource resource : tools) {
                 lines.add("- " + resource.getLlmTool().toPromptText());
+            }
+            parts.add(String.join("\n", lines));
+        }
+        if (!agents.isEmpty()) {
+            List<String> lines = new ArrayList<>();
+            lines.add("## Available Sub-Agents");
+            lines.add("Delegate via: submit_task(use_subagent=True, subagent_template='<name>')");
+            for (ContextResource resource : agents) {
+                lines.add("- " + defaultString(resource.getName()) + ": " + defaultString(resource.getDescription()));
             }
             parts.add(String.join("\n", lines));
         }

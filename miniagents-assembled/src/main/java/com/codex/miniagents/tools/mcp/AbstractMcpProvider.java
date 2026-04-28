@@ -7,9 +7,12 @@ import com.codex.miniagents.tools.model.CallContext;
 import com.codex.miniagents.tools.model.ToolDefinition;
 import com.codex.miniagents.tools.model.ToolHandler;
 import com.codex.miniagents.tools.model.ToolResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import lombok.Getter;
 
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -17,6 +20,8 @@ import java.util.Map;
 
 @Getter
 public abstract class AbstractMcpProvider implements McpProvider {
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     protected final String name;
 
     protected final McpClientAdapter mcpClientAdapter;
@@ -137,17 +142,71 @@ public abstract class AbstractMcpProvider implements McpProvider {
         if (content instanceof String str) {
             return str;
         }
+        String parsedToolResult = parseCallToolResult(content);
+        if (parsedToolResult != null) {
+            return parsedToolResult;
+        }
         if (content instanceof List<?> list) {
             List<String> parts = new ArrayList<>();
             for (Object item : list) {
                 if (item == null) {
                     continue;
                 }
-                parts.add(String.valueOf(item));
+                String text = extractText(item);
+                parts.add(text == null ? String.valueOf(item) : text);
             }
             return String.join("\n", parts);
         }
         return String.valueOf(content);
+    }
+
+    private String parseCallToolResult(Object result) {
+        Object content = invokeAccessor(result, "content");
+        if (content instanceof List<?> list) {
+            List<String> texts = new ArrayList<>();
+            for (Object item : list) {
+                String text = extractText(item);
+                if (text != null && !text.isBlank()) {
+                    texts.add(text);
+                }
+            }
+            if (!texts.isEmpty()) {
+                return String.join("\n", texts);
+            }
+        }
+
+        Object structuredContent = invokeAccessor(result, "structuredContent");
+        if (structuredContent != null) {
+            try {
+                return OBJECT_MAPPER.writeValueAsString(structuredContent);
+            } catch (JsonProcessingException e) {
+                return String.valueOf(structuredContent);
+            }
+        }
+        return null;
+    }
+
+    private String extractText(Object item) {
+        if (item == null) {
+            return null;
+        }
+        if (item instanceof String str) {
+            return str;
+        }
+        Object text = invokeAccessor(item, "text");
+        return text == null ? null : String.valueOf(text);
+    }
+
+    private Object invokeAccessor(Object target, String methodName) {
+        if (target == null) {
+            return null;
+        }
+        try {
+            Method method = target.getClass().getMethod(methodName);
+            return method.invoke(target);
+        } catch (ReflectiveOperationException ignored) {
+            return null;
+        }
     }
 
     protected Map<String, Object> buildMcpMetadata(CallContext context, Map<String, Object> baseMetadata) {
