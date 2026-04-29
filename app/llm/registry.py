@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Optional
 
 from app.llm.base import BaseChatClient
@@ -17,6 +17,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class ModelConfig:
+    name: str
+    context_limit: int
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "context_limit": self.context_limit}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "ModelConfig":
+        return cls(name=d["name"], context_limit=d["context_limit"])
+
+
+@dataclass
 class LLMProvider:
     """LLM Provider 配置：一个 API 端点 + 多个可用模型。"""
 
@@ -24,9 +37,32 @@ class LLMProvider:
     style: str
     api_key: str
     base_url: str
-    models: list[str] = field(default_factory=list)
+    models: list[ModelConfig] = field(default_factory=list)
     default_model: str = ""
     timeout_sec: int = 60
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "style": self.style,
+            "api_key": self.api_key,
+            "base_url": self.base_url,
+            "models": [m.to_dict() for m in self.models],
+            "default_model": self.default_model,
+            "timeout_sec": self.timeout_sec,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LLMProvider":
+        return cls(
+            name=d["name"],
+            style=d["style"],
+            api_key=d["api_key"],
+            base_url=d["base_url"],
+            models=[ModelConfig.from_dict(m) for m in d.get("models", [])],
+            default_model=d.get("default_model", ""),
+            timeout_sec=d.get("timeout_sec", 60),
+        )
 
 
 class LLMRegistry:
@@ -50,12 +86,12 @@ class LLMRegistry:
         if provider.style not in SUPPORTED_LLM_STYLES:
             raise ValueError(f"不支持的 LLM 风格: {provider.style}")
         if not provider.default_model and provider.models:
-            provider.default_model = provider.models[0]
+            provider.default_model = provider.models[0].name
 
         self._connect(provider)
         self._providers[provider.name] = provider
         if persist:
-            self._get_store().save(asdict(provider))
+            self._get_store().save(provider.to_dict())
 
     def delete(self, name: str) -> None:
         if name not in self._providers:
@@ -65,41 +101,47 @@ class LLMRegistry:
 
     # ── 模型管理 ──────────────────────────────────────────────────────────────
 
-    def add_model(self, name: str, model: str) -> LLMProvider:
+    def add_model(self, name: str, model: str, context_limit: int | None = None) -> LLMProvider:
+        from app.config.settings import get_settings
         provider = self._get(name)
-        if model not in provider.models:
-            provider.models.append(model)
+        if not self._find_model(provider, model):
+            provider.models.append(ModelConfig(
+                name=model,
+                context_limit=context_limit if context_limit is not None else get_settings().default_context_limit,
+            ))
         if not provider.default_model:
             provider.default_model = model
-        self._get_store().save(asdict(provider))
+        self._get_store().save(provider.to_dict())
         return provider
 
     def remove_model(self, name: str, model: str) -> LLMProvider:
         provider = self._get(name)
-        if model in provider.models:
-            provider.models.remove(model)
+        provider.models = [m for m in provider.models if m.name != model]
         if provider.default_model == model:
-            provider.default_model = provider.models[0] if provider.models else ""
-        self._get_store().save(asdict(provider))
+            provider.default_model = provider.models[0].name if provider.models else ""
+        self._get_store().save(provider.to_dict())
         return provider
 
     def set_default_model(self, name: str, model: str) -> LLMProvider:
         provider = self._get(name)
-        if model not in provider.models:
+        if not self._find_model(provider, model):
             raise ValueError(f"模型 '{model}' 不在 provider '{name}' 的列表中")
         provider.default_model = model
-        self._get_store().save(asdict(provider))
+        self._get_store().save(provider.to_dict())
         return provider
 
     # ── 查询 ──────────────────────────────────────────────────────────────────
 
     def get_client(self, name: str, model: str | None = None) -> BaseChatClient:
+        from app.config.settings import get_settings
         provider = self._get(name)
         resolved_model = model or provider.default_model
         if not resolved_model:
             raise ValueError(f"Provider '{name}' 无可用模型")
+        model_cfg = self._find_model(provider, resolved_model)
+        context_limit = model_cfg.context_limit if model_cfg else get_settings().default_context_limit
         adapter = self._provider_registry.get(name)
-        return BaseChatClient(adapter=adapter, model=resolved_model)
+        return BaseChatClient(adapter=adapter, model=resolved_model, context_limit=context_limit)
 
     def get_provider(self, name: str) -> LLMProvider:
         return self._get(name)
@@ -119,15 +161,7 @@ class LLMRegistry:
             if not name or name in self._providers:
                 continue
             try:
-                provider = LLMProvider(
-                    name=name,
-                    style=data["style"],
-                    api_key=data["api_key"],
-                    base_url=data["base_url"],
-                    models=data.get("models", []),
-                    default_model=data.get("default_model", ""),
-                    timeout_sec=data.get("timeout_sec", 60),
-                )
+                provider = LLMProvider.from_dict(data)
                 self.register(provider, persist=False)
                 count += 1
                 logger.info("LLMRegistry: loaded provider '%s' (%s)", name, provider.style)
@@ -141,6 +175,9 @@ class LLMRegistry:
         if name not in self._providers:
             raise KeyError(f"未注册 LLM: {name}")
         return self._providers[name]
+
+    def _find_model(self, provider: LLMProvider, model_name: str) -> ModelConfig | None:
+        return next((m for m in provider.models if m.name == model_name), None)
 
     def _connect(self, provider: LLMProvider) -> None:
         if provider.style == "openai":

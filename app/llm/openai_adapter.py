@@ -138,7 +138,8 @@ class OpenAIAdapter(BaseAdapter):
                     finish_reason=finish_reason,
                     usage=_parse_usage(usage_data) if usage_data else None,
                 )
-                return
+                # don't return: let the loop continue so the trailing usage-only
+                # chunk (choices=[]) can be captured when stream_options is used
 
     # ── 内部工具 ──────────────────────────────────────────────────────────
 
@@ -155,6 +156,8 @@ class OpenAIAdapter(BaseAdapter):
             'messages': _serialize_messages_openai(messages),
             'stream': stream,
         }
+        if stream:
+            payload['stream_options'] = {'include_usage': True}
         if req.tools:
             payload['tools'] = _map_openai_tools(req.tools)
         if req.temperature is not None:

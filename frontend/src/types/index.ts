@@ -14,6 +14,7 @@ export const TERMINAL_STATUSES: SessionStatus[] = ['SUCCEEDED', 'FAILED', 'CANCE
 export interface Session {
   id: string
   user_prompt: string
+  goal: string
   status: SessionStatus
   template_id: string | null
   root_agent_id: string | null
@@ -41,6 +42,8 @@ export interface CreateSessionRequest {
   working_dir?: string | null
   initial_task?: InitialTaskConfig | null
 }
+
+export type SessionConfig = Omit<CreateSessionRequest, 'user_prompt'>
 
 // ─── Task ────────────────────────────────────────────────────────────────────
 
@@ -103,14 +106,23 @@ export interface AgentTemplate {
 
 export type LLMStyle = 'openai' | 'anthropic'
 
+export interface ModelConfig {
+  name: string
+  context_limit: number
+}
+
+export interface ModelConfigInput {
+  name: string
+  context_limit?: number | null
+}
+
 export interface LLMProvider {
   name: string
   style: LLMStyle
   base_url: string
-  models: string[]
+  models: ModelConfig[]
   default_model: string
   timeout_sec: number
-  max_tokens: number
 }
 
 export interface RegisterLLMRequest {
@@ -118,10 +130,9 @@ export interface RegisterLLMRequest {
   style: LLMStyle
   api_key: string
   base_url?: string
-  models?: string[]
+  models?: ModelConfigInput[]
   default_model?: string
   timeout_sec?: number
-  max_tokens?: number
 }
 
 // ─── Memory ──────────────────────────────────────────────────────────────────

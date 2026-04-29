@@ -1,11 +1,9 @@
 import { useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { sessionsApi } from '@/api/sessions'
+import { useQuery } from '@tanstack/react-query'
 import { templatesApi } from '@/api/templates'
 import { llmsApi } from '@/api/llms'
-import type { CreateSessionRequest, InitialTaskConfig } from '@/types'
+import type { SessionConfig, InitialTaskConfig } from '@/types'
 import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog } from '@/components/ui/dialog'
@@ -13,11 +11,10 @@ import { Dialog } from '@/components/ui/dialog'
 interface Props {
   open: boolean
   onClose: () => void
-  onCreated: (sessionId: string) => void
+  onConfigured: (config: SessionConfig) => void
 }
 
-const DEFAULT_FORM: CreateSessionRequest = {
-  user_prompt: '',
+const DEFAULT_CONFIG: SessionConfig = {
   template_id: null,
   token_budget: 200000,
   root_max_turns: 20,
@@ -27,10 +24,8 @@ const DEFAULT_FORM: CreateSessionRequest = {
   initial_task: null,
 }
 
-export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
-  const queryClient = useQueryClient()
-  const [form, setForm] = useState<CreateSessionRequest>(DEFAULT_FORM)
-  const [goalError, setGoalError] = useState('')
+export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
+  const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG)
   const [useSubagent, setUseSubagent] = useState(false)
   const [subagentTemplate, setSubagentTemplate] = useState('')
 
@@ -44,48 +39,25 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
     queryFn: llmsApi.list,
   })
 
-  const mutation = useMutation({
-    mutationFn: sessionsApi.create,
-    onSuccess: (session) => {
-      queryClient.invalidateQueries({ queryKey: ['sessions'] })
-      onCreated(session.id)
-      onClose()
-      setForm(DEFAULT_FORM)
-      setGoalError('')
-      setUseSubagent(false)
-      setSubagentTemplate('')
-    },
-  })
-
-  function handleSubmit() {
-    if (!form.user_prompt.trim()) {
-      setGoalError('请描述 Agent 需要完成的任务')
-      return
-    }
-    setGoalError('')
+  function handleConfirm() {
     const initialTask: InitialTaskConfig | null = useSubagent
       ? { use_subagent: true, subagent_template: subagentTemplate || null }
       : null
-    mutation.mutate({ ...form, initial_task: initialTask })
+    onConfigured({ ...config, initial_task: initialTask })
+    onClose()
+    setConfig(DEFAULT_CONFIG)
+    setUseSubagent(false)
+    setSubagentTemplate('')
   }
 
   return (
     <Dialog open={open} onClose={onClose} title="新建 Session" size="md">
       <div className="flex flex-col gap-4">
-        <Textarea
-          label="目标 (Goal) *"
-          placeholder="请描述你希望 Agent 完成的任务，例如：分析这个代码库并生成文档..."
-          value={form.user_prompt}
-          onChange={(e) => setForm((f) => ({ ...f, user_prompt: e.target.value }))}
-          rows={4}
-          error={goalError}
-        />
-
         <Select
           label="Agent 模板"
-          value={form.template_id ?? ''}
+          value={config.template_id ?? ''}
           onChange={(e) =>
-            setForm((f) => ({ ...f, template_id: e.target.value || null }))
+            setConfig((c) => ({ ...c, template_id: e.target.value || null }))
           }
         >
           <option value="">使用默认模板</option>
@@ -98,9 +70,9 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
 
         <Select
           label="Provider"
-          value={form.llm_name ?? ''}
+          value={config.llm_name ?? ''}
           onChange={(e) =>
-            setForm((f) => ({ ...f, llm_name: e.target.value || null, llm_model: null }))
+            setConfig((c) => ({ ...c, llm_name: e.target.value || null, llm_model: null }))
           }
         >
           <option value="">使用默认 Provider</option>
@@ -109,20 +81,20 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
           ))}
         </Select>
 
-        {form.llm_name && (() => {
-          const provider = llms?.find(l => l.name === form.llm_name)
+        {config.llm_name && (() => {
+          const provider = llms?.find(l => l.name === config.llm_name)
           if (!provider?.models.length) return null
           return (
             <Select
               label="模型"
-              value={form.llm_model ?? ''}
+              value={config.llm_model ?? ''}
               onChange={(e) =>
-                setForm((f) => ({ ...f, llm_model: e.target.value || null }))
+                setConfig((c) => ({ ...c, llm_model: e.target.value || null }))
               }
             >
               <option value="">默认（{provider.default_model}）</option>
               {provider.models.map(m => (
-                <option key={m} value={m}>{m}</option>
+                <option key={m.name} value={m.name}>{m.name}</option>
               ))}
             </Select>
           )
@@ -131,9 +103,9 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
         <Input
           label="工作目录"
           placeholder="留空则使用服务器默认目录"
-          value={form.working_dir ?? ''}
+          value={config.working_dir ?? ''}
           onChange={(e) =>
-            setForm((f) => ({ ...f, working_dir: e.target.value || null }))
+            setConfig((c) => ({ ...c, working_dir: e.target.value || null }))
           }
         />
 
@@ -141,22 +113,21 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
           <Input
             label="Token 预算"
             type="number"
-            value={form.token_budget}
+            value={config.token_budget}
             onChange={(e) =>
-              setForm((f) => ({ ...f, token_budget: Number(e.target.value) }))
+              setConfig((c) => ({ ...c, token_budget: Number(e.target.value) }))
             }
           />
           <Input
             label="最大轮次"
             type="number"
-            value={form.root_max_turns}
+            value={config.root_max_turns}
             onChange={(e) =>
-              setForm((f) => ({ ...f, root_max_turns: Number(e.target.value) }))
+              setConfig((c) => ({ ...c, root_max_turns: Number(e.target.value) }))
             }
           />
         </div>
 
-        {/* 首个 Task 执行方式 */}
         <div className="rounded-lg border border-gray-200 p-3 flex flex-col gap-3">
           <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">首个任务</p>
           <label className="flex items-center gap-2 cursor-pointer select-none">
@@ -187,17 +158,9 @@ export function CreateSessionDialog({ open, onClose, onCreated }: Props) {
           )}
         </div>
 
-        {mutation.error instanceof Error && (
-          <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-md">
-            {mutation.error.message}
-          </p>
-        )}
-
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleSubmit} loading={mutation.isPending}>
-            启动 Session
-          </Button>
+          <Button onClick={handleConfirm}>确认配置</Button>
         </div>
       </div>
     </Dialog>

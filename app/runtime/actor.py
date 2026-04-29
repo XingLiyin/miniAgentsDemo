@@ -50,7 +50,7 @@ class Actor:
     def act(self, task: Task, ctx: ReasoningContext, agent: Agent) -> ActorResult:
         """执行单个 task，plan 和 act 共用同一循环。"""
         if task.status == "PENDING":
-            self._task_svc.transition(task.id, "ACTIVE")
+            self._task_svc.transition(task.id, "ACTIVE", task.session_id)
 
         system_prompt = self._prompt_builder.build_system_prompt(ctx)
         messages = self._prompt_builder.build_messages(task, ctx)
@@ -113,13 +113,13 @@ class Actor:
             context_limit_hit = (
                 _usage is not None
                 and _usage.prompt_tokens is not None
-                and agent.loop_guard.context_limit > 0
-                and _usage.prompt_tokens >= agent.loop_guard.context_limit
+                and llm_client.context_limit > 0
+                and _usage.prompt_tokens >= llm_client.context_limit
             )
             if context_limit_hit:
                 logger.warning(
                     "Actor context limit reached: prompt_tokens=%s >= context_limit=%s, stopping loop",
-                    _usage.prompt_tokens, agent.loop_guard.context_limit,
+                    _usage.prompt_tokens, llm_client.context_limit,
                 )
 
             if not tool_calls_from_stream or done or context_limit_hit:

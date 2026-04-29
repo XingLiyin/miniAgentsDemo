@@ -70,3 +70,10 @@ def now_iso() -> str:
 def estimate_tokens(text: str) -> int:
     """粗略估算 token 数（约 4 字符/token）。"""
     return max(1, len(text) // 4)
+
+
+def extract_text(content: str | list) -> str:
+    """从 str 或 list[ContentPart dict] 中提取纯文本，用于 str-only 字段。"""
+    if isinstance(content, str):
+        return content
+    return "\n".join(p.get("text", "") for p in content if isinstance(p, dict) and p.get("type") == "text")

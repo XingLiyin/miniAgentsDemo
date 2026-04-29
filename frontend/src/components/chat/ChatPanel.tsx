@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, Clock, MessageCircleQuestion, Eye, Code2, Paperclip, X } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
-import type { ChatItem, ChatMessage, ChatToolCall, ChatTaskEvent, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatObserverToolCall, ChatImageData } from '@/hooks/useSessionSSE'
+import type { ChatItem, ChatMessage, ChatToolCall, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatObserverToolCall, ChatImageData } from '@/hooks/useSessionSSE'
 import { formatTime } from '@/lib/status'
 import { SessionStatusBadge } from '@/components/session/StatusBadge'
 import { Spinner } from '@/components/ui/spinner'
+import { TaskTimeline } from '@/components/task/TaskTimeline'
 
 // ── Individual item renderers ─────────────────────────────────────────────────
 
@@ -146,34 +147,6 @@ function ToolCallCard({ item }: { item: ChatToolCall }) {
         {item.created_at && (
           <p className="text-xs text-gray-400 mt-1">{formatTime(item.created_at)}</p>
         )}
-      </div>
-    </div>
-  )
-}
-
-function TaskEventBadge({ item }: { item: ChatTaskEvent }) {
-  const { task } = item
-  const isCreated = task.status === 'PENDING'
-  const isActive = task.status === 'ACTIVE'
-  const isFinished = task.status === 'FINISHED'
-  const isFailed = task.status === 'FAILED'
-
-
-  return (
-    <div className="flex justify-center">
-      <div className={clsx(
-        'flex items-center gap-1.5 text-xs px-3 py-1 rounded-full',
-        isCreated ? 'bg-blue-50 text-blue-600' :
-        isActive ? 'bg-blue-50 text-blue-600' :
-        isFinished ? 'bg-green-50 text-green-700' :
-        isFailed ? 'bg-red-50 text-red-600' :
-        'bg-gray-100 text-gray-500'
-      )}>
-        {isActive && <Loader2 size={10} className="animate-spin" />}
-        {isFinished && <CheckCircle2 size={10} />}
-        {isFailed && <XCircle size={10} />}
-        {(isCreated && !isActive) && <Clock size={10} />}
-        <span className="font-medium truncate max-w-xs">{task.title}</span>
       </div>
     </div>
   )
@@ -347,7 +320,7 @@ function ChatItemView({ item }: { item: ChatItem }) {
   switch (item.kind) {
     case 'message': return <MessageBubble item={item} />
     case 'tool_call': return <ToolCallCard item={item} />
-    case 'task_event': return <TaskEventBadge item={item} />
+    case 'task_event': return null
     case 'waiting_input': return null // handled by input area
     case 'llm_prompt': return <LLMPromptCard item={item} />
     case 'observer_message': return <ObserverBubble item={item} />
@@ -647,6 +620,7 @@ interface ChatPanelProps {
 export function ChatPanel({ sessionId }: ChatPanelProps) {
   const {
     session,
+    tasks,
     items,
     waitingInput,
     streamingText,
@@ -656,6 +630,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     observerStreamingReasoning,
     connected,
   } = useSessionSSE(sessionId)
+  const [showTasks, setShowTasks] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const userScrolledUp = useRef(false)
@@ -681,13 +656,14 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
   const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
   const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(session.status)
+  const activeTaskCount = tasks.filter(t => t.status === 'ACTIVE').length
 
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between gap-3 flex-shrink-0">
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">{session?.user_prompt || '加载中…'}</p>
+          <p className="text-sm font-medium text-gray-900 truncate">{session?.goal || '加载中…'}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {session && <SessionStatusBadge status={session.status} />}
             {session && session.token_used > 0 && (
@@ -703,13 +679,36 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             )}
           </div>
         </div>
-        {isRunning && (
-          <div className="flex items-center gap-1.5 text-xs text-blue-600 flex-shrink-0">
-            <Loader2 size={12} className="animate-spin" />
-            <span>运行中</span>
-          </div>
-        )}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {isRunning && (
+            <div className="flex items-center gap-1.5 text-xs text-blue-600">
+              <Loader2 size={12} className="animate-spin" />
+              <span>运行中</span>
+            </div>
+          )}
+          {tasks.length > 0 && (
+            <button
+              onClick={() => setShowTasks(v => !v)}
+              className={clsx(
+                'relative flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs transition-colors',
+                showTasks
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-gray-500 hover:bg-gray-100 hover:text-gray-700'
+              )}
+              title="查看任务列表"
+            >
+              <ListChecks size={14} />
+              <span>{tasks.length}</span>
+              {activeTaskCount > 0 && (
+                <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              )}
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* Body: message list + task panel overlay */}
+      <div className="relative flex-1 overflow-hidden flex flex-col">
 
       {/* Message list */}
       <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
@@ -769,6 +768,30 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         <div ref={bottomRef} />
       </div>
+
+      {/* Task panel overlay */}
+      {showTasks && (
+        <div className="absolute inset-y-0 right-0 w-80 bg-white border-l border-gray-200 shadow-lg flex flex-col z-10">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
+            <div className="flex items-center gap-2">
+              <ListChecks size={14} className="text-gray-500" />
+              <span className="text-sm font-medium text-gray-900">Tasks</span>
+              <span className="text-xs text-gray-400">({tasks.length})</span>
+            </div>
+            <button
+              onClick={() => setShowTasks(false)}
+              className="p-1 rounded text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+            >
+              <X size={14} />
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-3">
+            <TaskTimeline tasks={tasks} isLoading={false} />
+          </div>
+        </div>
+      )}
+
+      </div>{/* end body wrapper */}
 
       {/* Input area */}
       {waitingInput ? (

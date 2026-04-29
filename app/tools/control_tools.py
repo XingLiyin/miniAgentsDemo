@@ -263,7 +263,7 @@ class ControlToolProvider:
         # Suspend parent task and wait for sub-tasks to complete,
         # then LLM evaluates results and finishes (same pattern as submit_task)
         if task is not None and task_ids:
-            self._task_svc.transition(task.id, "SUSPENDED")
+            self._task_svc.transition(task.id, "SUSPENDED", task.session_id)
             task.status = "SUSPENDED"
         task.actor_done = True
         return ToolResult(content=result_text)
@@ -288,7 +288,7 @@ class ControlToolProvider:
             task.actor_outcome     = "success"
             task.actor_result      = reason
             task.proceed_to_review = False
-            self._task_svc.finish(task.id, result=reason)
+            self._task_svc.finish(task.id, result=reason, session_id=task.session_id)
             task.status = "FINISHED"
         return ToolResult(content=f"Cancelled {cancelled} tasks. New plan task created.")
 
@@ -308,14 +308,14 @@ class ControlToolProvider:
             outputs = {"progress_text": task.progress_text} if getattr(task, "progress_text", None) else None
 
             if task_outcome == "success":
-                self._task_svc.finish(task.id, result=task_result, outputs=outputs)
+                self._task_svc.finish(task.id, result=task_result, outputs=outputs, session_id=task.session_id)
                 task.status = "FINISHED"
             elif task_outcome == "failed":
-                self._task_svc.fail(task.id, error=task_result)
+                self._task_svc.fail(task.id, error=task_result, session_id=task.session_id)
                 task.status = "FAILED"
             elif task_outcome == "active":
                 # Task made progress but is not done; re-queue for another actor turn
-                self._task_svc.transition(task.id, "PENDING")
+                self._task_svc.transition(task.id, "PENDING", task.session_id)
                 task.status = "PENDING"
             else:  # needs_user_input
                 task_outcome, task_result = self._confirm_with_user(task, task_result, outputs)
@@ -358,12 +358,12 @@ class ControlToolProvider:
         self._session_svc.transition(session_id, "RUNNING")
 
         if answer.startswith("用户已确认任务完成"):
-            self._task_svc.finish(task.id, result=task_result, outputs=outputs)
+            self._task_svc.finish(task.id, result=task_result, outputs=outputs, session_id=task.session_id)
             return "success", task_result
         else:
             prefix = "用户表示任务未完成，请重试。用户补充说明："
             feedback = answer[len(prefix):] if answer.startswith(prefix) else answer
-            self._task_svc.fail(task.id, error=feedback or "用户确认任务未完成")
+            self._task_svc.fail(task.id, error=feedback or "用户确认任务未完成", session_id=task.session_id)
             return "failed", feedback or "用户确认任务未完成"
 
     def _handle_update_task_metadata(self, args: dict, ctx: CallContext | None) -> ToolResult:
@@ -376,7 +376,7 @@ class ControlToolProvider:
         session_id = ""
         if target_task_id:
             try:
-                target = self._task_svc.get(target_task_id)
+                target = self._task_svc.get(target_task_id, ctx.session_id if ctx else None)
                 session_id = target.session_id
                 if title:
                     target.title = title
@@ -438,7 +438,7 @@ class ControlToolProvider:
             parent_task_id=task.id if task else None,
         )
         if task is not None:
-            self._task_svc.transition(task.id, "SUSPENDED")
+            self._task_svc.transition(task.id, "SUSPENDED", task.session_id)
             task.status = "SUSPENDED"
             task.actor_done = True
         return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
@@ -476,10 +476,10 @@ class ControlToolProvider:
 
             try:
                 if review_status == "reopen":
-                    self._task_svc.reopen(matched.id)
+                    self._task_svc.reopen(matched.id, matched.session_id)
                     _log.info("Task %s reopened by observer: %s", matched.id, reasoning)
                 elif review_status == "skip":
-                    self._task_svc.finish(matched.id, result=reasoning or "Completed indirectly per observer.")
+                    self._task_svc.finish(matched.id, result=reasoning or "Completed indirectly per observer.", session_id=matched.session_id)
                     _log.info("Task %s skipped by observer: %s", matched.id, reasoning)
             except Exception as e:
                 _log.warning("task_reviews: failed to apply review for %s: %s", matched.id, e)

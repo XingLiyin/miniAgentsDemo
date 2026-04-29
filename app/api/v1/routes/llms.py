@@ -7,11 +7,12 @@ from fastapi import APIRouter, HTTPException
 from app.api.v1.schemas.llm import (
     AddModelRequest,
     LLMProviderResponse,
+    ModelConfigResponse,
     RegisterLLMRequest,
     SetDefaultModelRequest,
 )
 from app.config.settings import get_settings
-from app.llm.registry import LLMProvider, SUPPORTED_LLM_STYLES, get_llm_registry
+from app.llm.registry import LLMProvider, ModelConfig, SUPPORTED_LLM_STYLES, get_llm_registry
 
 router = APIRouter()
 
@@ -21,9 +22,9 @@ def _to_response(p: LLMProvider) -> LLMProviderResponse:
         name=p.name,
         style=p.style,
         base_url=p.base_url,
-        models=p.models,
+        models=[ModelConfigResponse(name=m.name, context_limit=m.context_limit) for m in p.models],
         default_model=p.default_model,
-        timeout_sec=p.timeout_sec
+        timeout_sec=p.timeout_sec,
     )
 
 
@@ -43,7 +44,13 @@ def register_provider(req: RegisterLLMRequest) -> LLMProviderResponse:
         style=req.style,
         api_key=req.api_key,
         base_url=req.base_url,
-        models=req.models,
+        models=[
+            ModelConfig(
+                name=m.name,
+                context_limit=m.context_limit if m.context_limit is not None else settings.default_context_limit,
+            )
+            for m in req.models
+        ],
         default_model=req.default_model,
         timeout_sec=req.timeout_sec or settings.default_llm_timeout_sec,
     )
@@ -82,7 +89,7 @@ def add_model(name: str, req: AddModelRequest) -> LLMProviderResponse:
     registry = get_llm_registry()
     if not registry.is_registered(name):
         raise HTTPException(404, {"code": "LLM_NOT_FOUND", "message": f"Provider '{name}' not found"})
-    provider = registry.add_model(name, req.model)
+    provider = registry.add_model(name, req.model, context_limit=req.context_limit)
     return _to_response(provider)
 
 

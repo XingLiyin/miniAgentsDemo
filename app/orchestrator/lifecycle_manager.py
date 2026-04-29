@@ -352,7 +352,7 @@ class LifecycleManager:
             state = self._states.get(session_id)
             if not state or agent_id not in state.agent_registry:
                 return
-            agent_data = self._agent_store.get(agent_id)
+            agent_data = self._agent_store.get(session_id, agent_id)
             if agent_data:
                 state.agent_registry[agent_id].status = agent_data.get("status", "FINISHED")
 
@@ -389,7 +389,7 @@ class LifecycleManager:
         from app.config.settings import get_settings
 
         settings = get_settings()
-        parent_data = self._agent_store.get(parent_agent_id) or {}
+        parent_data = self._agent_store.get(session_id, parent_agent_id) or {}
 
         if template_name and self._template_svc is not None:
             tpl = self._template_svc.get_by_name(template_name)
@@ -484,8 +484,8 @@ class LifecycleManager:
             dst_agent_id,
         )
 
-    def _persist_agent_status(self, agent_id: str, status: str) -> None:
-        data = self._agent_store.get(agent_id)
+    def _persist_agent_status(self, session_id: str, agent_id: str, status: str) -> None:
+        data = self._agent_store.get(session_id, agent_id)
         if data is None:
             return
         data["status"] = status

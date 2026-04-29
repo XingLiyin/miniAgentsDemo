@@ -118,6 +118,7 @@ class AnthropicAdapter(BaseAdapter):
         # 当前处于哪个 content block
         current_block_type: str = ''
         current_block_index: int = -1
+        input_tokens: Optional[int] = None
 
         for raw_line in self._transport.stream_post(url, headers, payload, self._timeout_sec):
             try:
@@ -127,7 +128,11 @@ class AnthropicAdapter(BaseAdapter):
 
             event_type = event.get('type', '')
 
-            if event_type == 'content_block_start':
+            if event_type == 'message_start':
+                usage_data = (event.get('message') or {}).get('usage') or {}
+                input_tokens = usage_data.get('input_tokens')
+
+            elif event_type == 'content_block_start':
                 block = event.get('content_block') or {}
                 current_block_index = event.get('index', 0)
                 current_block_type = block.get('type', '')
@@ -169,9 +174,13 @@ class AnthropicAdapter(BaseAdapter):
                 # 包含 stop_reason 和最终 usage
                 stop_reason = event.get('delta', {}).get('stop_reason') or event.get('stop_reason')
                 usage_data = event.get('usage') or {}
+                output_tokens = usage_data.get('output_tokens')
+                total = (input_tokens or 0) + (output_tokens or 0) or None
                 usage = LLMUsage(
-                    completion_tokens=usage_data.get('output_tokens'),
-                ) if usage_data else None
+                    prompt_tokens=input_tokens,
+                    completion_tokens=output_tokens,
+                    total_tokens=total,
+                ) if (input_tokens or output_tokens) else None
                 yield StreamChunk(is_done=True, finish_reason=stop_reason, usage=usage)
                 return
 

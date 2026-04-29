@@ -10,28 +10,27 @@ from app.storage.file.base import write_json_atomic, read_json, list_json_ids
 
 
 class AgentStore:
-    """将 Agent 序列化为 data/agents/{id}.json。"""
+    """将 Agent 序列化为 data/agents/{session_id}/{agent_id}.json。"""
 
-    def _path(self, agent_id: str) -> Path:
-        return get_settings().data_dir / "agents" / f"{agent_id}.json"
+    def _path(self, session_id: str, agent_id: str) -> Path:
+        return get_settings().data_dir / "agents" / session_id / f"{agent_id}.json"
 
     def save(self, data: dict[str, Any]) -> None:
-        write_json_atomic(self._path(data["id"]), data)
+        write_json_atomic(self._path(data["session_id"], data["id"]), data)
 
-    def get(self, agent_id: str) -> dict[str, Any] | None:
-        return read_json(self._path(agent_id))
-
-    def list_ids(self) -> list[str]:
-        return list_json_ids(get_settings().data_dir / "agents")
+    def get(self, session_id: str, agent_id: str) -> dict[str, Any] | None:
+        return read_json(self._path(session_id, agent_id))
 
     def list_by_session(self, session_id: str) -> list[str]:
-        """返回属于该 session 的所有 agent_id 列表。"""
-        result = []
-        for aid in self.list_ids():
-            data = self.get(aid)
-            if data and data.get("session_id") == session_id:
-                result.append(aid)
-        return result
+        """O(1)：直接列出 session 子目录下的所有 agent ID。"""
+        return list_json_ids(get_settings().data_dir / "agents" / session_id)
 
-    def delete(self, agent_id: str) -> None:
-        self._path(agent_id).unlink(missing_ok=True)
+    def delete(self, session_id: str, agent_id: str) -> None:
+        self._path(session_id, agent_id).unlink(missing_ok=True)
+
+    def delete_session(self, session_id: str) -> None:
+        """删除 session 下所有 agent 文件（单次 rmtree）。"""
+        import shutil
+        d = get_settings().data_dir / "agents" / session_id
+        if d.exists():
+            shutil.rmtree(d)

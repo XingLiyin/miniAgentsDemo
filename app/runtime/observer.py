@@ -176,17 +176,17 @@ class Observer:
 
         if token_pct > 0.9:
             summary = "Token budget nearly exhausted; stopping."
-            self._task_svc.finish(task.id, result="Token budget nearly exhausted; treating as complete.")
+            self._task_svc.finish(task.id, result="Token budget nearly exhausted; treating as complete.", session_id=task.session_id)
             return ObserverVerdict(summary=summary)
 
         if result.success:
             detail = result.output or ""
             summary = f"Completed this turn's task.\n{detail}" if detail else "Completed this turn's task."
-            self._task_svc.finish(task.id, result=detail)
+            self._task_svc.finish(task.id, result=detail, session_id=task.session_id)
         else:
             detail = result.output or result.error or ""
             summary = f"Task failed this turn.\n{detail}" if detail else "Task failed this turn."
-            self._task_svc.fail(task.id, error=detail)
+            self._task_svc.fail(task.id, error=detail, session_id=task.session_id)
         return ObserverVerdict(summary=summary)
 
 

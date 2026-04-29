@@ -58,7 +58,6 @@ class TaskService:
         )
         self._store.save(task.to_dict())
         self._bus.publish(TASK_CREATED, {"task_id": task.id, "session_id": session_id})
-        # Push SSE event
         try:
             from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {"type": "task_created", "task": task.to_dict()})
@@ -66,8 +65,9 @@ class TaskService:
             pass
         return task
 
-    def get(self, task_id: str) -> Task:
-        data = self._store.get(task_id)
+    def get(self, task_id: str, session_id: str | None = None) -> Task:
+        """获取 Task。提供 session_id 时走 O(1) 直接路径，否则回退扫描。"""
+        data = self._store.get(task_id, session_id)
         if data is None:
             raise AppError("TASK_NOT_FOUND", f"Task {task_id} not found")
         return Task.from_dict(data)
@@ -76,9 +76,9 @@ class TaskService:
         task.updated_at = now_iso()
         self._store.save(task.to_dict())
 
-    def transition(self, task_id: str, to_status: str) -> Task:
+    def transition(self, task_id: str, to_status: str, session_id: str | None = None) -> Task:
         """校验并执行状态转换，持久化后发布事件。"""
-        task = self.get(task_id)
+        task = self.get(task_id, session_id)
         self._sm.validate_task(task.status, to_status)
         task.status = to_status
         self.save(task)
@@ -89,7 +89,6 @@ class TaskService:
         }
         if to_status in event_map:
             self._bus.publish(event_map[to_status], {"task_id": task_id, "session_id": task.session_id})
-        # Push SSE event
         try:
             from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(task.session_id, {"type": "task_updated", "task": task.to_dict()})
@@ -97,52 +96,52 @@ class TaskService:
             pass
         return task
 
-    def finish(self, task_id: str, result: str | None = None, outputs: dict | None = None) -> Task:
+    def finish(self, task_id: str, result: str | None = None, outputs: dict | None = None, session_id: str | None = None) -> Task:
         """完成 Task，写入 result/outputs 后转为 FINISHED。"""
-        task = self.get(task_id)
+        task = self.get(task_id, session_id)
         if result is not None:
             task.result = result
         if outputs is not None:
             task.outputs = outputs
         self.save(task)
-        return self.transition(task_id, "FINISHED")
+        return self.transition(task_id, "FINISHED", task.session_id)
 
-    def fail(self, task_id: str, error: str) -> Task:
-        task = self.get(task_id)
+    def fail(self, task_id: str, error: str, session_id: str | None = None) -> Task:
+        task = self.get(task_id, session_id)
         task.error = error
         self.save(task)
-        return self.transition(task_id, "FAILED")
+        return self.transition(task_id, "FAILED", task.session_id)
 
-    def to_be_observed(self, task_id: str) -> Task:
+    def to_be_observed(self, task_id: str, session_id: str | None = None) -> Task:
         """Actor 完成后转入待观察状态。"""
-        return self.transition(task_id, "TO_BE_OBSERVED")
+        return self.transition(task_id, "TO_BE_OBSERVED", session_id)
 
-    def reopen(self, task_id: str) -> Task:
+    def reopen(self, task_id: str, session_id: str | None = None) -> Task:
         """将 FINISHED 任务重置为 PENDING（Observer 复核不通过时使用）。"""
-        task = self.get(task_id)
+        task = self.get(task_id, session_id)
         task.result = None
         task.outputs = {}
         self.save(task)
-        return self.transition(task_id, "PENDING")
+        return self.transition(task_id, "PENDING", task.session_id)
 
-    def retry(self, task_id: str) -> Task:
+    def retry(self, task_id: str, session_id: str | None = None) -> Task:
         """将 FAILED 任务打回 PENDING，并递增重试计数。"""
-        task = self.get(task_id)
+        task = self.get(task_id, session_id)
         task.error = None
         task.retry_count += 1
         self.save(task)
-        return self.transition(task_id, "PENDING")
+        return self.transition(task_id, "PENDING", task.session_id)
 
-    def resume(self, task_id: str) -> Task:
+    def resume(self, task_id: str, session_id: str | None = None) -> Task:
         """将 SUSPENDED 任务打回 PENDING（子任务完成后父任务重新入队）。"""
-        return self.transition(task_id, "PENDING")
+        return self.transition(task_id, "PENDING", session_id)
 
     def list_by_session(self, session_id: str) -> list[Task]:
-        """列出 session 下所有 Task（扫描全量，Phase 1 可接受）。"""
+        """O(1) 目录列表 + 批量读取，不再全量扫描。"""
         tasks = []
-        for tid in self._store.list_ids():
-            data = self._store.get(tid)
-            if data and data.get("session_id") == session_id:
+        for tid in self._store.list_by_session(session_id):
+            data = self._store.get(tid, session_id)
+            if data:
                 tasks.append(Task.from_dict(data))
         return tasks
 
@@ -162,7 +161,7 @@ class TaskService:
         cancelled = 0
         for task in self.list_by_session(session_id):
             if task.status == "PENDING":
-                self.transition(task.id, "CANCELED")
+                self.transition(task.id, "CANCELED", session_id)
                 cancelled += 1
         return cancelled
 

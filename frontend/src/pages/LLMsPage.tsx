@@ -2,13 +2,17 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2, AlertTriangle, KeyRound, Cpu, Star, X } from 'lucide-react'
 import { llmsApi } from '@/api/llms'
-import type { LLMProvider, RegisterLLMRequest, LLMStyle } from '@/types'
+import type { LLMProvider, ModelConfig, RegisterLLMRequest, LLMStyle } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Dialog } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
+
+function formatCtx(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
+}
 
 // ── 注册 Provider 弹窗 ────────────────────────────────────────────────────────
 
@@ -23,7 +27,8 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
     default_model: '',
     timeout_sec: 60,
   })
-  const [modelInput, setModelInput] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [modelCtxLimit, setModelCtxLimit] = useState('')
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({})
 
   const mutation = useMutation({
@@ -32,29 +37,28 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
       queryClient.invalidateQueries({ queryKey: ['llms'] })
       onClose()
       setForm({ name: '', style: 'openai', api_key: '', base_url: '', models: [], default_model: '', timeout_sec: 60 })
-      setModelInput('')
+      setModelName('')
+      setModelCtxLimit('')
       setErrors({})
     },
   })
 
   function addModel() {
-    const m = modelInput.trim()
-    if (!m || form.models?.includes(m)) return
-    const models = [...(form.models ?? []), m]
-    setForm(f => ({
-      ...f,
-      models,
-      default_model: f.default_model || m,
-    }))
-    setModelInput('')
+    const name = modelName.trim()
+    if (!name || form.models?.some(m => m.name === name)) return
+    const ctx = modelCtxLimit.trim() ? Number(modelCtxLimit.trim()) : undefined
+    const models = [...(form.models ?? []), { name, context_limit: ctx ?? null }]
+    setForm(f => ({ ...f, models, default_model: f.default_model || name }))
+    setModelName('')
+    setModelCtxLimit('')
   }
 
-  function removeModel(m: string) {
-    const models = (form.models ?? []).filter(x => x !== m)
+  function removeModel(name: string) {
+    const models = (form.models ?? []).filter(m => m.name !== name)
     setForm(f => ({
       ...f,
       models,
-      default_model: f.default_model === m ? (models[0] ?? '') : f.default_model,
+      default_model: f.default_model === name ? (models[0]?.name ?? '') : f.default_model,
     }))
   }
 
@@ -105,14 +109,23 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
           value={form.base_url ?? ''}
           onChange={(e) => setForm(f => ({ ...f, base_url: e.target.value }))}
         />
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">模型 *</label>
           <div className="flex gap-2">
             <input
               className="flex-1 border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder={form.style === 'openai' ? 'gpt-4o' : 'claude-sonnet-4-6'}
-              value={modelInput}
-              onChange={(e) => setModelInput(e.target.value)}
+              value={modelName}
+              onChange={(e) => setModelName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addModel())}
+            />
+            <input
+              className="w-28 border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Context（默认）"
+              type="number"
+              value={modelCtxLimit}
+              onChange={(e) => setModelCtxLimit(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addModel())}
             />
             <Button size="sm" variant="secondary" onClick={addModel}>添加</Button>
@@ -122,19 +135,22 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
             <div className="flex flex-wrap gap-1.5 mt-2">
               {form.models.map(m => (
                 <span
-                  key={m}
+                  key={m.name}
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border cursor-pointer
-                    ${m === form.default_model
+                    ${m.name === form.default_model
                       ? 'bg-blue-50 border-blue-300 text-blue-700'
                       : 'bg-gray-50 border-gray-200 text-gray-600 hover:border-blue-300'}`}
-                  onClick={() => setForm(f => ({ ...f, default_model: m }))}
+                  onClick={() => setForm(f => ({ ...f, default_model: m.name }))}
                   title="点击设为默认"
                 >
-                  {m === form.default_model && <Star size={10} className="text-blue-500" />}
-                  {m}
+                  {m.name === form.default_model && <Star size={10} className="text-blue-500" />}
+                  {m.name}
+                  {m.context_limit != null && (
+                    <span className="text-gray-400 ml-0.5">· {formatCtx(m.context_limit)}</span>
+                  )}
                   <button
                     className="ml-0.5 hover:text-red-500"
-                    onClick={(e) => { e.stopPropagation(); removeModel(m) }}
+                    onClick={(e) => { e.stopPropagation(); removeModel(m.name) }}
                   >
                     <X size={10} />
                   </button>
@@ -144,6 +160,7 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
           )}
           <p className="text-xs text-gray-400 mt-1">点击模型标签设为默认（蓝色 ★）</p>
         </div>
+
         <Input
           label="超时（秒）"
           type="number"
@@ -167,7 +184,8 @@ function RegisterProviderDialog({ open, onClose }: { open: boolean; onClose: () 
 function LLMCard({ provider }: { provider: LLMProvider }) {
   const queryClient = useQueryClient()
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [modelInput, setModelInput] = useState('')
+  const [modelName, setModelName] = useState('')
+  const [modelCtxLimit, setModelCtxLimit] = useState('')
   const [showAddModel, setShowAddModel] = useState(false)
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['llms'] })
@@ -178,8 +196,9 @@ function LLMCard({ provider }: { provider: LLMProvider }) {
   })
 
   const addModelMutation = useMutation({
-    mutationFn: (model: string) => llmsApi.addModel(provider.name, model),
-    onSuccess: () => { invalidate(); setModelInput(''); setShowAddModel(false) },
+    mutationFn: ({ model, context_limit }: { model: string; context_limit?: number | null }) =>
+      llmsApi.addModel(provider.name, model, context_limit),
+    onSuccess: () => { invalidate(); setModelName(''); setModelCtxLimit(''); setShowAddModel(false) },
   })
 
   const removeModelMutation = useMutation({
@@ -193,8 +212,10 @@ function LLMCard({ provider }: { provider: LLMProvider }) {
   })
 
   function handleAddModel() {
-    const m = modelInput.trim()
-    if (m) addModelMutation.mutate(m)
+    const name = modelName.trim()
+    if (!name) return
+    const ctx = modelCtxLimit.trim() ? Number(modelCtxLimit.trim()) : undefined
+    addModelMutation.mutate({ model: name, context_limit: ctx })
   }
 
   return (
@@ -218,25 +239,26 @@ function LLMCard({ provider }: { provider: LLMProvider }) {
 
           {/* 模型列表 */}
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {provider.models.map(m => (
+            {provider.models.map((m: ModelConfig) => (
               <span
-                key={m}
+                key={m.name}
                 className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border group
-                  ${m === provider.default_model
+                  ${m.name === provider.default_model
                     ? 'bg-blue-50 border-blue-300 text-blue-700'
                     : 'bg-gray-50 border-gray-200 text-gray-600'}`}
               >
-                {m === provider.default_model && <Star size={10} className="text-blue-500" />}
+                {m.name === provider.default_model && <Star size={10} className="text-blue-500" />}
                 <button
                   className="hover:underline"
-                  onClick={() => m !== provider.default_model && setDefaultMutation.mutate(m)}
-                  title={m === provider.default_model ? '当前默认' : '设为默认'}
+                  onClick={() => m.name !== provider.default_model && setDefaultMutation.mutate(m.name)}
+                  title={m.name === provider.default_model ? '当前默认' : '设为默认'}
                 >
-                  {m}
+                  {m.name}
                 </button>
+                <span className="text-gray-400">· {formatCtx(m.context_limit)}</span>
                 <button
                   className="ml-0.5 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={() => removeModelMutation.mutate(m)}
+                  onClick={() => removeModelMutation.mutate(m.name)}
                   title="移除模型"
                 >
                   <X size={10} />
@@ -248,18 +270,29 @@ function LLMCard({ provider }: { provider: LLMProvider }) {
               <span className="inline-flex items-center gap-1">
                 <input
                   autoFocus
-                  className="border border-blue-300 rounded-full px-2 py-0.5 text-xs w-36 focus:outline-none"
-                  placeholder="输入模型名后回车"
-                  value={modelInput}
-                  onChange={(e) => setModelInput(e.target.value)}
+                  className="border border-blue-300 rounded-full px-2 py-0.5 text-xs w-32 focus:outline-none"
+                  placeholder="模型名"
+                  value={modelName}
+                  onChange={(e) => setModelName(e.target.value)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') handleAddModel()
-                    if (e.key === 'Escape') { setShowAddModel(false); setModelInput('') }
+                    if (e.key === 'Escape') { setShowAddModel(false); setModelName(''); setModelCtxLimit('') }
+                  }}
+                />
+                <input
+                  className="border border-blue-300 rounded-full px-2 py-0.5 text-xs w-24 focus:outline-none"
+                  placeholder="Context"
+                  type="number"
+                  value={modelCtxLimit}
+                  onChange={(e) => setModelCtxLimit(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleAddModel()
+                    if (e.key === 'Escape') { setShowAddModel(false); setModelName(''); setModelCtxLimit('') }
                   }}
                 />
                 <button
                   className="text-gray-400 hover:text-gray-600"
-                  onClick={() => { setShowAddModel(false); setModelInput('') }}
+                  onClick={() => { setShowAddModel(false); setModelName(''); setModelCtxLimit('') }}
                 >
                   <X size={12} />
                 </button>

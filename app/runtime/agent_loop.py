@@ -67,7 +67,7 @@ class AgentLoop:
         Transitions session to SUCCEEDED when observer reports done=True.
         Raises AppError on budget/turn exceeded or task failure — caller handles session FAILED.
         """
-        agent = self._load_agent(agent_id)
+        agent = self._load_agent(session_id, agent_id)
         agent.status = "RUNNING"
         self._agent_store.save(agent.to_dict())
 
@@ -81,7 +81,7 @@ class AgentLoop:
                     f"({session.token_used}/{session.token_budget})",
                 )
 
-            task = self._task_svc.get(task_id)
+            task = self._task_svc.get(task_id, session_id)
 
             ctx = self._reasoner.reason(session, agent, task)
             result = self._actor.act(task, ctx, agent)
@@ -90,7 +90,7 @@ class AgentLoop:
                 agent.loop_guard.context_tokens = result.context_tokens
                 self._agent_store.save(agent.to_dict())
 
-            task = self._task_svc.get(task_id)
+            task = self._task_svc.get(task_id, session_id)
 
             if task.status == "SUSPENDED":
                 if task.user_prompt:
@@ -112,21 +112,21 @@ class AgentLoop:
                 return
 
             if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
-                self._task_svc.to_be_observed(task_id)
+                self._task_svc.to_be_observed(task_id, session_id)
                 task.status = "TO_BE_OBSERVED"
 
             task_list = self._task_svc.list_by_agent(session_id, agent_id)
             verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
 
             if verdict.context_tokens:
-                agent = self._load_agent(agent_id)
+                agent = self._load_agent(session_id, agent_id)
                 agent.loop_guard.context_tokens = max(
                     agent.loop_guard.context_tokens, verdict.context_tokens
                 )
                 self._agent_store.save(agent.to_dict())
 
             # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
-            task = self._task_svc.get(task_id)
+            task = self._task_svc.get(task_id, session_id)
 
             # ── memory 写入在状态判断之前，确保 active 路径也写入 ─────────────
             if task.user_prompt:
@@ -171,11 +171,18 @@ class AgentLoop:
                 for tool_call in result_turn.tool_calls:
                     self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
 
-            agent = self._load_agent(agent_id)
+            agent = self._load_agent(session_id, agent_id)
+            _llm_client = self._llm_client
+            if agent.llm_provider:
+                try:
+                    from app.llm.registry import get_llm_registry
+                    _llm_client = get_llm_registry().get_client(agent.llm_provider, agent.llm_model or None)
+                except Exception:
+                    pass
             if self._memory_svc.should_summarize(
                 agent_id,
                 context_tokens=agent.loop_guard.context_tokens,
-                context_limit=agent.loop_guard.context_limit,
+                context_limit=_llm_client.context_limit,
             ):
                 self._do_summarize(session_id, agent_id, verdict.summary)
 
@@ -187,17 +194,17 @@ class AgentLoop:
             raise
 
         finally:
-            agent = self._load_agent(agent_id)
+            agent = self._load_agent(session_id, agent_id)
             if agent.status == "RUNNING":
                 try:
-                    task = self._task_svc.get(task_id)
+                    task = self._task_svc.get(task_id, session_id)
                     agent.status = "WAITING" if task.status == "SUSPENDED" else "FINISHED"
                 except Exception:
                     agent.status = "FINISHED"
                 self._agent_store.save(agent.to_dict())
 
-    def _load_agent(self, agent_id: str) -> Agent:
-        data = self._agent_store.get(agent_id)
+    def _load_agent(self, session_id: str, agent_id: str) -> Agent:
+        data = self._agent_store.get(session_id, agent_id)
         if data is None:
             raise AppError("AGENT_NOT_FOUND", f"Agent {agent_id} not found")
         return Agent.from_dict(data)
@@ -214,7 +221,7 @@ class AgentLoop:
         if self._compaction_agent is not None:
             try:
                 session = self._session_svc.get(session_id)
-                agent_data = self._agent_store.get(agent_id) or {}
+                agent_data = self._agent_store.get(session_id, agent_id) or {}
                 working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
 
                 kept, compacted_summary = self._compaction_agent.compact(
@@ -243,7 +250,7 @@ class AgentLoop:
             created_at=now_iso(),
         ))
 
-        agent = self._load_agent(agent_id)
+        agent = self._load_agent(session_id, agent_id)
         agent.loop_guard.context_tokens = 0
         self._agent_store.save(agent.to_dict())
 

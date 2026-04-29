@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { clsx } from 'clsx'
-import { CheckCircle2, XCircle, Circle, Loader2, MinusCircle } from 'lucide-react'
+import { CheckCircle2, XCircle, Circle, Loader2, MinusCircle, ChevronDown, ChevronRight } from 'lucide-react'
 import type { Task } from '@/types'
 import { TaskStatusBadge } from '@/components/session/StatusBadge'
 import { Spinner } from '@/components/ui/spinner'
@@ -13,6 +14,27 @@ function TaskIcon({ status }: { status: Task['status'] }) {
     case 'CANCELED': return <MinusCircle size={16} className="text-gray-400 flex-shrink-0" />
     default: return <Circle size={16} className="text-gray-300 flex-shrink-0" />
   }
+}
+
+function Collapsible({ label, children, defaultOpen = false, labelClass }: {
+  label: string
+  children: React.ReactNode
+  defaultOpen?: boolean
+  labelClass?: string
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={clsx('flex items-center gap-1 text-xs transition-colors', labelClass ?? 'text-gray-400 hover:text-gray-600')}
+      >
+        {open ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+        <span>{label}</span>
+      </button>
+      {open && <div className="mt-1">{children}</div>}
+    </div>
+  )
 }
 
 function TaskCard({ task }: { task: Task }) {
@@ -38,34 +60,25 @@ function TaskCard({ task }: { task: Task }) {
           </div>
 
           {task.description && (
-            <p className="text-xs text-gray-500 mt-1">{task.description}</p>
+            <Collapsible label="描述">
+              <p className="text-xs text-gray-500 leading-relaxed">{task.description}</p>
+            </Collapsible>
           )}
 
-          {/* Task settings */}
-          {Object.keys(task.settings).length > 0 && (
-            <div className="mt-2 bg-gray-900 rounded-md px-3 py-2">
-              <pre className="text-xs text-green-300 overflow-x-auto whitespace-pre-wrap break-words">
-                {JSON.stringify(task.settings, null, 2)}
-              </pre>
-            </div>
-          )}
-
-          {/* Result */}
           {task.result && (
-            <div className="mt-2 bg-gray-50 border border-gray-100 rounded-md px-3 py-2">
-              <pre className="text-xs text-gray-700 overflow-x-auto whitespace-pre-wrap break-words max-h-40">
+            <Collapsible label="结果" defaultOpen={!isActive} labelClass="text-green-600 hover:text-green-700">
+              <pre className="text-xs text-gray-700 bg-gray-50 border border-gray-100 rounded-md px-3 py-2 overflow-x-auto whitespace-pre-wrap break-words max-h-48">
                 {task.result}
               </pre>
-            </div>
+            </Collapsible>
           )}
 
-          {/* Error */}
           {task.error && (
-            <div className="mt-2 bg-red-50 border border-red-100 rounded-md px-3 py-2">
-              <pre className="text-xs text-red-700 overflow-x-auto whitespace-pre-wrap">
+            <Collapsible label="错误" defaultOpen labelClass="text-red-500 hover:text-red-600">
+              <pre className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-md px-3 py-2 overflow-x-auto whitespace-pre-wrap">
                 {task.error}
               </pre>
-            </div>
+            </Collapsible>
           )}
 
           {isActive && (

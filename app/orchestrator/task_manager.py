@@ -17,6 +17,7 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
+from app.common.utils import extract_text
 from app.domain.events.event_types import TASK_CREATED, TASK_EXECUTION_FAILED, TASK_EXECUTION_FINISHED
 from app.domain.models.task import Task
 from app.domain.services.session_service import SessionService
@@ -87,17 +88,59 @@ class TaskManager:
 
         self._dispatch_next(session_id, agent_id, next_task)
 
+    def spawn_metadata_filler(
+        self,
+        session_id: str,
+        creator_agent_id: str,
+        user_prompt: str | list,
+        target_task_id: str,
+    ) -> None:
+        """创建 metadata_filler daemon task 并旁路启动，用于异步补全 task 标题/描述和 session goal。"""
+        if self._task_svc is None:
+            return
+        try:
+            _session = self._session_svc.get(session_id)
+            _existing_goal = _session.goal if _session.goal != _session.user_prompt else ""
+        except Exception:
+            _existing_goal = ""
+
+        if _existing_goal:
+            description = (
+                f"根据用户指令（{extract_text(user_prompt)}）和完整对话上下文，生成任务标题和描述。"
+                f"当前 session goal 为「{_existing_goal}」，如无重大方向调整请保持不变。"
+            )
+        else:
+            description = (
+                f"根据用户指令（{extract_text(user_prompt)}）和完整对话上下文，"
+                f"生成任务标题和描述，并判断 session goal。"
+            )
+
+        meta_task = self._task_svc.create(
+            session_id=session_id,
+            creator_agent_id=creator_agent_id,
+            user_prompt=user_prompt,
+            title="Update task meta data details",
+            description=description,
+            inputs={
+                "subagent_template": "metadata_filler",
+                "target_task_id": target_task_id,
+                "_daemon": True,
+                "inherit_memory": True,
+            },
+        )
+        self.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
+
     def spawn_daemon_task(self, session_id: str, parent_agent_id: str, task_id: str) -> None:
         """Pre-activate a daemon task (keeps it out of the queue) and spawn its agent."""
         if self._lm is None:
             logger.error("TM: LifecycleManager not set, cannot spawn daemon task %s", task_id)
             return
         try:
-            self._task_svc.transition(task_id, "ACTIVE")
+            self._task_svc.transition(task_id, "ACTIVE", session_id)
         except Exception:
             logger.warning("TM: could not pre-activate daemon task %s", task_id)
         try:
-            task = self._task_svc.get(task_id)
+            task = self._task_svc.get(task_id, session_id)
         except Exception:
             logger.exception("TM: cannot load daemon task %s", task_id)
             return
@@ -166,13 +209,13 @@ class TaskManager:
         with self._get_lock(session_id):
             if failed_task_id:
                 try:
-                    self._task_svc.fail(failed_task_id, error=payload.get("error", ""))
+                    self._task_svc.fail(failed_task_id, error=payload.get("error", ""), session_id=session_id)
                 except Exception:
                     logger.exception("TM: failed to mark task %s as FAILED", failed_task_id)
                 self._cascade_fail(session_id, failed_task_id)
 
             try:
-                failed_task = self._task_svc.get(failed_task_id) if failed_task_id else None
+                failed_task = self._task_svc.get(failed_task_id, session_id) if failed_task_id else None
             except Exception:
                 failed_task = None
 
@@ -185,7 +228,7 @@ class TaskManager:
                     session_id,
                 )
                 try:
-                    self._task_svc.retry(failed_task_id)
+                    self._task_svc.retry(failed_task_id, session_id)
                     self._task_queue.push(session_id, failed_task_id)
                 except Exception:
                     logger.exception("TM: failed to retry task %s", failed_task_id)
@@ -223,16 +266,16 @@ class TaskManager:
     def next_task(self, session_id: str) -> Task | None:
         return self._task_queue.pop(session_id)
 
-    def activate(self, task_id: str) -> Task:
-        return self._task_svc.transition(task_id, "ACTIVE")
+    def activate(self, task_id: str, session_id: str | None = None) -> Task:
+        return self._task_svc.transition(task_id, "ACTIVE", session_id)
 
-    def complete(self, task_id: str, result: str | None = None, outputs: dict | None = None) -> Task:
-        task = self._task_svc.finish(task_id, result=result, outputs=outputs)
+    def complete(self, task_id: str, result: str | None = None, outputs: dict | None = None, session_id: str | None = None) -> Task:
+        task = self._task_svc.finish(task_id, result=result, outputs=outputs, session_id=session_id)
         self._reset_failure_counter(task.session_id)
         return task
 
-    def fail_task(self, task_id: str, error: str) -> Task:
-        task = self._task_svc.fail(task_id, error)
+    def fail_task(self, task_id: str, error: str, session_id: str | None = None) -> Task:
+        task = self._task_svc.fail(task_id, error, session_id=session_id)
         self.record_failure(task.session_id)
         return task
 
@@ -250,7 +293,7 @@ class TaskManager:
             return
 
         try:
-            self._task_svc.transition(next_task.id, "ACTIVE")
+            self._task_svc.transition(next_task.id, "ACTIVE", next_task.session_id)
         except Exception:
             logger.exception("TM: failed to activate task %s", next_task.id)
 
@@ -278,10 +321,10 @@ class TaskManager:
         if not finished_task_id:
             return
         try:
-            finished_task = self._task_svc.get(finished_task_id)
+            finished_task = self._task_svc.get(finished_task_id, session_id)
             if not finished_task.parent_task_id:
                 return
-            parent = self._task_svc.get(finished_task.parent_task_id)
+            parent = self._task_svc.get(finished_task.parent_task_id, session_id)
             if parent.status != "SUSPENDED":
                 return
             children = self._task_svc.list_children(finished_task.parent_task_id, session_id)
@@ -289,11 +332,11 @@ class TaskManager:
             if not children or not all(t.status in _terminal for t in children):
                 return
             if any(t.status == "FAILED" for t in children):
-                self._task_svc.fail(parent.id, error="cascade: child task failed")
+                self._task_svc.fail(parent.id, error="cascade: child task failed", session_id=session_id)
                 self._task_queue.remove(session_id, parent.id)
                 self._cascade_fail(session_id, parent.id)
             else:
-                self._task_svc.resume(parent.id)
+                self._task_svc.resume(parent.id, session_id)
                 self._task_queue.push(session_id, parent.id)
         except Exception:
             logger.exception("TM: failed to conclude parent for task %s", finished_task_id)
@@ -309,7 +352,7 @@ class TaskManager:
             if task.status != "PENDING" or failed_task_id not in task.dag_deps:
                 continue
             try:
-                self._task_svc.fail(task.id, error=f"cascade: dependency {failed_task_id} failed")
+                self._task_svc.fail(task.id, error=f"cascade: dependency {failed_task_id} failed", session_id=task.session_id)
                 self._task_queue.remove(session_id, task.id)
                 self._cascade_fail(session_id, task.id)
             except Exception:

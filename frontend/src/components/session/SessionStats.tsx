@@ -41,7 +41,7 @@ export function SessionStats({ session }: Props) {
             )}
           </div>
           <p className="text-sm text-gray-800 mt-1.5 leading-snug line-clamp-3">
-            {session.user_prompt}
+            {session.goal}
           </p>
         </div>
         {!isTerminalSession(session.status) && (

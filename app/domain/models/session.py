@@ -69,7 +69,7 @@ class Session:
         return cls(
             id=d["id"],
             user_prompt=_coerce_str(d["user_prompt"]),
-            goal=d["goal"],
+            goal=d.get("goal") or _coerce_str(d.get("user_prompt", "")),
             status=d["status"],
             template_id=d.get("template_id"),
             root_agent_id=d.get("root_agent_id"),

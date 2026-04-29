@@ -4,18 +4,29 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+class ModelConfigRequest(BaseModel):
+    name: str
+    context_limit: Optional[int] = None  # None → 使用 settings.default_context_limit
+
+
+class ModelConfigResponse(BaseModel):
+    name: str
+    context_limit: int
+
+
 class RegisterLLMRequest(BaseModel):
     name: str
     style: str
     api_key: str
     base_url: str = ""
-    models: list[str] = []
+    models: list[ModelConfigRequest] = []
     default_model: str = ""
     timeout_sec: Optional[int] = None
 
 
 class AddModelRequest(BaseModel):
     model: str
+    context_limit: Optional[int] = None  # None → 使用 settings.default_context_limit
 
 
 class SetDefaultModelRequest(BaseModel):
@@ -26,6 +37,6 @@ class LLMProviderResponse(BaseModel):
     name: str
     style: str
     base_url: str
-    models: list[str]
+    models: list[ModelConfigResponse]
     default_model: str
     timeout_sec: int

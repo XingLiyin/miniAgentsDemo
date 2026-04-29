@@ -12,14 +12,12 @@ class LoopGuard:
     actor_max_tool_rounds: int = 50      # 单个 atomic task 内最多工具调用轮次
     observer_max_tool_rounds: int = 5    # observer ReAct 循环最多轮次
     context_tokens: int = 0             # 最近一次 LLM 调用的 prompt_tokens（当前窗口大小）
-    context_limit: int = 180_000        # 触发 compaction 的 prompt_tokens 阈值
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "actor_max_tool_rounds": self.actor_max_tool_rounds,
             "observer_max_tool_rounds": self.observer_max_tool_rounds,
             "context_tokens": self.context_tokens,
-            "context_limit": self.context_limit,
         }
 
     @classmethod
@@ -28,7 +26,6 @@ class LoopGuard:
             actor_max_tool_rounds=d.get("actor_max_tool_rounds", 50),
             observer_max_tool_rounds=d.get("observer_max_tool_rounds", 5),
             context_tokens=d.get("context_tokens", 0),
-            context_limit=d.get("context_limit", 180_000),
         )
 
 

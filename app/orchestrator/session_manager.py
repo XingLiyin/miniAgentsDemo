@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 
 from app.api.v1.schemas.session import InitialTaskConfig
 from app.common.errors import AppError
-from app.common.utils import new_agent_id, now_iso
+from app.common.utils import extract_text, new_agent_id, now_iso
 from app.config.settings import get_settings
 from app.domain.events.event_bus import EventBus
 from app.domain.models.agent import Agent, LoopGuard
@@ -32,12 +32,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
-def _extract_text(content: str | list) -> str:
-    """从 str 或 list[ContentPart dict] 中提取纯文本，用于 str-only 字段。"""
-    if isinstance(content, str):
-        return content
-    return '\n'.join(p.get('text', '') for p in content if isinstance(p, dict) and p.get('type') == 'text')
 
 
 def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent) -> None:  # type: ignore[name-defined]
@@ -211,39 +205,9 @@ class SessionManager:
             description=description,
             inputs=inputs,
         )
-        if (not title or not description) and self._lifecycle_manager is not None:
-            try:
-                _session = self._session_svc.get(session_id)
-                _existing_goal = _session.goal if _session.goal != _session.user_prompt else ""
-            except Exception:
-                _existing_goal = ""
-
-            if _existing_goal:
-                _meta_desc = (
-                    f"根据用户指令（{_extract_text(user_prompt)}）和完整对话上下文，生成任务标题和描述。"
-                    f"当前 session goal 为「{_existing_goal}」，如无重大方向调整请保持不变。"
-                )
-            else:
-                _meta_desc = (
-                    f"根据用户指令（{_extract_text(user_prompt)}）和完整对话上下文，"
-                    f"生成任务标题和描述，并判断 session goal。"
-                )
-
-            meta_task = self._task_svc.create(
-                session_id=session_id,
-                creator_agent_id=creator_agent_id,
-                user_prompt=user_prompt,
-                title="Update task meta data details",
-                description=_meta_desc,
-                inputs={
-                    "subagent_template": "metadata_filler",
-                    "target_task_id": task.id,
-                    "_daemon": True,
-                    "inherit_memory": True,
-                },
-            )
+        if not title or not description:
             if self._task_manager is not None:
-                self._task_manager.spawn_daemon_task(session_id, creator_agent_id, meta_task.id)
+                self._task_manager.spawn_metadata_filler(session_id, creator_agent_id, user_prompt, task.id)
 
     def continue_session(self, session_id: str, user_message: str | list, *, initial_task: InitialTaskConfig | None = None) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
@@ -251,7 +215,7 @@ class SessionManager:
         from app.storage.file.memory_store import MemoryStore
 
         # 提取纯文本用于 session/task 的 str 字段显示
-        text_prompt = _extract_text(user_message)
+        text_prompt = extract_text(user_message)
 
         session = self._session_svc.get(session_id)
 
@@ -280,7 +244,7 @@ class SessionManager:
         # Session ended — reuse the existing root agent, reset its state
         if not session.root_agent_id:
             raise AppError("AGENT_NOT_FOUND", f"Session {session_id} has no root agent")
-        agent_data = self._agent_store.get(session.root_agent_id)
+        agent_data = self._agent_store.get(session_id, session.root_agent_id)
         if agent_data is None:
             raise AppError("AGENT_NOT_FOUND", f"Root agent {session.root_agent_id} not found")
         agent = Agent.from_dict(agent_data)
@@ -355,31 +319,31 @@ class SessionManager:
         """级联删除 Session 及其所有关联数据。运行中的会话直接强制删除。"""
         session = self._session_svc.get(session_id)
 
-        # 删除该 session 下的所有 Task 文件
-        if self._task_svc is not None and self._task_store is not None:
-            tasks = self._task_svc.list_by_session(session_id)
-            for task in tasks:
-                self._task_store.delete(task.id)
+        # 先拿到 agent_ids（删 memory 时需要），此时目录还未被删除
+        agent_ids = self._agent_store.list_by_session(session_id)
 
         # 删除工具调用日志（单个 JSONL 文件）
         if self._tool_call_store is not None:
             self._tool_call_store.delete(session_id)
 
-        # 删除该 session 下所有 agent 的记忆（memory 以 agent_id 为 key）
-        if self._memory_svc is not None:
-            for aid in self._agent_store.list_by_session(session_id):
-                self._memory_svc.delete_agent(aid)
-            # root agent 可能已在上方遍历到，but delete_agent 是幂等的
-            if session.root_agent_id:
-                self._memory_svc.delete_agent(session.root_agent_id)
-
         # 删除 blackboard 目录
         if self._blackboard_store is not None:
             self._blackboard_store.delete_session(session_id)
 
-        # 删除 agent 文件
-        if session.root_agent_id:
-            self._agent_store.delete(session.root_agent_id)
+        # 删除该 session 下所有 agent 的记忆（memory 以 agent_id 为 key）
+        if self._memory_svc is not None:
+            all_agent_ids = set(agent_ids)
+            if session.root_agent_id:
+                all_agent_ids.add(session.root_agent_id)
+            for aid in all_agent_ids:
+                self._memory_svc.delete_agent(aid)
+
+        # 一次 rmtree 删除所有 agent 文件
+        self._agent_store.delete_session(session_id)
+
+        # 一次 rmtree 删除所有 task 文件
+        if self._task_store is not None:
+            self._task_store.delete_session(session_id)
 
         # 删除事件日志（SSE 历史回放）
         try:

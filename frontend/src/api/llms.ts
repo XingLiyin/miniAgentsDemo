@@ -6,8 +6,8 @@ export const llmsApi = {
   get: (name: string) => http.get<LLMProvider>(`/llms/${name}`),
   register: (data: RegisterLLMRequest) => http.post<LLMProvider>('/llms', data),
   delete: (name: string) => http.delete(`/llms/${name}`),
-  addModel: (name: string, model: string) =>
-    http.post<LLMProvider>(`/llms/${name}/models`, { model }),
+  addModel: (name: string, model: string, context_limit?: number | null) =>
+    http.post<LLMProvider>(`/llms/${name}/models`, { model, context_limit }),
   removeModel: (name: string, model: string) =>
     http.delete<LLMProvider>(`/llms/${name}/models`, { model }),
   setDefaultModel: (name: string, model: string) =>
