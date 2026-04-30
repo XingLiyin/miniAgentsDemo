@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING
 from app.common.utils import extract_text
 from app.domain.events.event_types import TASK_CREATED, TASK_EXECUTION_FAILED, TASK_EXECUTION_FINISHED
 from app.domain.models.task import Task
+from app.domain.services.agent_template_service import AgentTemplateService
+from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.orchestrator.task_queue import TaskQueue
@@ -42,12 +44,16 @@ class TaskManager:
         lifecycle_manager: "LifecycleManager | None" = None,
         event_bus: "EventBus | None" = None,
         max_task_retries: int = 3,
+        memory_svc: MemoryService | None = None,
+        template_svc: AgentTemplateService | None = None,
     ) -> None:
         self._task_svc = task_svc
         self._session_svc = session_svc
         self._task_queue = task_queue
         self._lm = lifecycle_manager
         self._max_task_retries = max_task_retries
+        self._memory_svc = memory_svc
+        self._template_svc = template_svc
         self._session_locks: dict[str, threading.Lock] = {}
 
         if event_bus is not None:
@@ -107,7 +113,7 @@ class TaskManager:
         if _existing_goal:
             description = (
                 f"根据用户指令（{extract_text(user_prompt)}）和完整对话上下文，生成任务标题和描述。"
-                f"当前 session goal 为「{_existing_goal}」，如无重大方向调整请保持不变。"
+                f"当前 session goal 为「{_existing_goal}」。"
             )
         else:
             description = (
@@ -144,11 +150,12 @@ class TaskManager:
         except Exception:
             logger.exception("TM: cannot load daemon task %s", task_id)
             return
+        template_name = str(task.settings.get("subagent_template", ""))
         self._lm.spawn_daemon_agent(
             session_id=session_id,
             parent_agent_id=parent_agent_id,
             task_id=task_id,
-            template_name=str(task.settings.get("subagent_template", "")),
+            template_id=self._resolve_template_id(session_id, template_name),
             inherit_memory=bool(task.settings.get("inherit_memory", False)),
         )
 
@@ -180,7 +187,21 @@ class TaskManager:
                 self._lm_recycle_finished(session_id, agent_id)
                 return
 
+            # active outcome: observer set task to PENDING but did not re-queue it;
+            # push it back so the session doesn't terminate prematurely.
+            if finished_task_id:
+                try:
+                    _ft = self._task_svc.get(finished_task_id, session_id)
+                    if _ft.status == "PENDING":
+                        self._task_queue.push(session_id, finished_task_id)
+                        logger.debug(
+                            "TM: re-queued active task %s for session %s", finished_task_id, session_id
+                        )
+                except Exception:
+                    logger.exception("TM: failed to check active task %s", finished_task_id)
+
             self._task_queue.notify_completed(session_id, finished_task_id)
+            self._write_child_result_to_parent_memory(session_id, finished_task_id)
             self._try_resume_parent(session_id, finished_task_id)
 
             next_task = self._task_queue.pop(session_id)
@@ -209,7 +230,11 @@ class TaskManager:
         with self._get_lock(session_id):
             if failed_task_id:
                 try:
-                    self._task_svc.fail(failed_task_id, error=payload.get("error", ""), session_id=session_id)
+                    current_task = self._task_svc.get(failed_task_id, session_id)
+                    if current_task.status != "FAILED":
+                        self._task_svc.fail(failed_task_id, error=payload.get("error", ""), session_id=session_id)
+                    else:
+                        logger.debug("TM: task %s already FAILED (set by observer), skipping transition", failed_task_id)
                 except Exception:
                     logger.exception("TM: failed to mark task %s as FAILED", failed_task_id)
                 self._cascade_fail(session_id, failed_task_id)
@@ -297,20 +322,59 @@ class TaskManager:
         except Exception:
             logger.exception("TM: failed to activate task %s", next_task.id)
 
+        template_name = str(next_task.settings.get("subagent_template", ""))
         agent_id = self._lm.prepare_executor(
             session_id=session_id,
             finished_agent_id=finished_agent_id,
             task_id=next_task.id,
             use_subagent=bool(next_task.settings.get("use_subagent")),
-            template_name=str(next_task.settings.get("subagent_template", "")),
+            template_id=self._resolve_template_id(session_id, template_name),
             inherit_memory=bool(next_task.settings.get("inherit_memory", True)),
         )
         if agent_id:
             self._lm.run_agent(session_id, agent_id, next_task.id)
 
+    def _resolve_template_id(self, session_id: str, template_name: str) -> str:
+        """将模板名解析为 UUID：优先 workspace 模板，再 global 模板。空名返回空串。"""
+        if not template_name or self._template_svc is None:
+            return ""
+        try:
+            working_dir = self._session_svc.get(session_id).working_dir
+            tpl = self._template_svc.get_by_name_for_workspace(template_name, working_dir)
+            return tpl.id if tpl else ""
+        except Exception:
+            logger.warning("TM: failed to resolve template name '%s' for session %s", template_name, session_id)
+            return ""
+
     def _lm_recycle_finished(self, session_id: str, finished_agent_id: str) -> None:
         if self._lm is not None:
             self._lm.release(session_id, finished_agent_id)
+
+    def _write_child_result_to_parent_memory(self, session_id: str, finished_task_id: str) -> None:
+        """将已完成子任务的结果实时写入父 agent 的 memory，供父 agent 恢复后直接感知。"""
+        if not finished_task_id or self._memory_svc is None:
+            return
+        try:
+            finished_task = self._task_svc.get(finished_task_id, session_id)
+            if not finished_task.parent_task_id:
+                return
+            parent = self._task_svc.get(finished_task.parent_task_id, session_id)
+            if parent.status != "SUSPENDED":
+                return
+            outcome = "completed" if finished_task.status == "FINISHED" else "failed"
+            result_text = finished_task.result or finished_task.error or ""
+            content = f"Sub-task「{finished_task.title}」{outcome}."
+            if result_text:
+                content += f"\nResult: {result_text}"
+            self._memory_svc.append_message(
+                agent_id=parent.assigned_agent_id,
+                role="user",
+                content=content,
+                session_id=session_id,
+                task_id=finished_task.parent_task_id,
+            )
+        except Exception:
+            logger.exception("TM: failed to write child result to parent memory for task %s", finished_task_id)
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
         """Conclude a SUSPENDED parent once all its children are terminal.

@@ -56,7 +56,7 @@ class ToolGateway:
 
         # ① 授权（agent 存在时）
         if agent is not None:
-            self._policy.authorize(agent, tool_name)
+            self._policy.authorize(agent, tool_name, arguments, ctx)
 
         # ② 写 RUNNING 审计
         call_id    = new_tool_call_id()

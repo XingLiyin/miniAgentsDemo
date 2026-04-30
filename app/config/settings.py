@@ -42,7 +42,7 @@ class Settings(BaseSettings):
     # Lifecycle Manager 并发限制
     max_concurrent_agents: int = 5
     max_concurrent_tasks: int = 10
-    max_spawn_depth: int = 1
+    max_spawn_depth: int = 2
     max_task_retries: int = 3
 
     # Tool 约束

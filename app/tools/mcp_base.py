@@ -20,11 +20,24 @@ import threading
 from abc import ABC, abstractmethod
 from typing import Any
 
+from agent_framework import FunctionTool
+
 from app.common.errors import AppError
+from app.llm.types import InputSchema
 from app.tools.definition import CallContext, ToolDefinition, ToolResult
-from app.tools.tool_decorator import _extract_input_schema
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_input_schema(ft: FunctionTool) -> InputSchema:
+    """从 FunctionTool 提取 miniAgents InputSchema。"""
+    spec = ft.to_json_schema_spec().get("function", {})
+    params = spec.get("parameters", {})
+    return InputSchema(
+        type=params.get("type", "object"),
+        properties=params.get("properties", {}),
+        require=params.get("required", []),
+    )
 
 
 class _MCPProviderBase(ABC):

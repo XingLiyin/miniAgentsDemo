@@ -148,7 +148,7 @@ class LifecycleManager:
         finished_agent_id: str,
         task_id: str,
         use_subagent: bool,
-        template_name: str,
+        template_id: str,
         inherit_memory: bool,
     ) -> str | None:
         """Return a fully assembled agent_id ready to execute the next task.
@@ -210,7 +210,7 @@ class LifecycleManager:
                     parent_agent_id=base_executor,
                     spawn_depth=spawn_depth,
                     inherit_memory=inherit_memory,
-                    template_name=template_name,
+                    template_id=template_id,
                 )
             except Exception:
                 logger.exception("LM: prepare_executor: failed to instantiate sub-agent")
@@ -264,7 +264,7 @@ class LifecycleManager:
         session_id: str,
         parent_agent_id: str,
         task_id: str,
-        template_name: str,
+        template_id: str,
         inherit_memory: bool,
     ) -> None:
         """Spawn a daemon sub-agent. Not registered in registry — completion is ignored."""
@@ -275,7 +275,7 @@ class LifecycleManager:
                 parent_agent_id=parent_agent_id,
                 spawn_depth=1,
                 inherit_memory=inherit_memory,
-                template_name=template_name,
+                template_id=template_id,
             )
         except Exception:
             logger.exception("LM: spawn_daemon_agent: failed to create agent for task %s", task_id)
@@ -384,37 +384,36 @@ class LifecycleManager:
         parent_agent_id: str,
         spawn_depth: int,
         inherit_memory: bool = True,
-        template_name: str = "",
+        template_id: str = "",
     ) -> str:
         from app.config.settings import get_settings
 
         settings = get_settings()
         parent_data = self._agent_store.get(session_id, parent_agent_id) or {}
 
-        if template_name and self._template_svc is not None:
-            tpl = self._template_svc.get_by_name(template_name)
-            if tpl is not None:
+        if template_id and self._template_svc is not None:
+            try:
+                tpl = self._template_svc.get(template_id)
                 act_tool_list = tpl.act_tool_list
                 observe_tool_list = tpl.observe_tool_list
-                template_id = tpl.id
-                agent_name = f"sub-agent-{template_name}"
-                content = self._template_registry.load_content(template_name) if self._template_registry else None
+                agent_name = f"sub-agent-{tpl.name}"
+                content = self._template_registry.load_content_by_id(template_id) if self._template_registry else None
                 soul_md = content.soul_md if content else ""
                 role_md = content.role_md if content else ""
-            else:
-                logger.warning("LM: template '%s' not found, falling back to parent config", template_name)
+            except Exception:
+                logger.warning("LM: template id '%s' not found, falling back to parent config", template_id)
                 soul_md = parent_data.get("soul_md", "")
                 role_md = parent_data.get("role_md", "")
                 act_tool_list = parent_data.get("act_tool_list", [])
                 observe_tool_list = parent_data.get("observe_tool_list", [])
-                template_id = parent_data.get("template_id")
-                agent_name = f"sub-agent-{template_name}"
+                template_id = parent_data.get("template_id") or ""
+                agent_name = f"sub-agent-d{spawn_depth}"
         else:
             soul_md = parent_data.get("soul_md", "")
             role_md = parent_data.get("role_md", "")
             act_tool_list = parent_data.get("act_tool_list", [])
             observe_tool_list = parent_data.get("observe_tool_list", [])
-            template_id = parent_data.get("template_id")
+            template_id = parent_data.get("template_id") or ""
             agent_name = f"sub-agent-d{spawn_depth}"
 
         now = now_iso()

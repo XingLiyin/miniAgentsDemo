@@ -16,5 +16,7 @@ class AgentTemplateResponse(BaseModel):
     mcp_observe_servers: list[str]
     source_dir: str
     has_spawn_permission: bool
+    scope: str = "global"
+    workspace_dir: str = ""
     created_at: str
     updated_at: str

@@ -22,6 +22,7 @@ from app.runtime.agent_loop import AgentLoop
 from app.tools.control_tools import register_control_tools
 from app.runtime.observer import Observer
 from app.runtime.policy_engine import PolicyEngine
+from app.runtime.policy_rule import BashExecGuardRule, WhitelistRule
 from app.runtime.reasoner import Reasoner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
@@ -83,6 +84,8 @@ def get_task_manager() -> TaskManager:
         lifecycle_manager=get_lifecycle_manager(),
         event_bus=get_event_bus(),
         max_task_retries=settings.max_task_retries,
+        memory_svc=get_memory_service(),
+        template_svc=get_agent_template_service(),
     )
 
 
@@ -95,7 +98,10 @@ def get_tool_gateway() -> ToolGateway:
         session_svc=get_session_service(),
     )
     return ToolGateway(
-        policy=PolicyEngine(tool_registry=registry),
+        policy=PolicyEngine([
+            WhitelistRule(registry),
+            BashExecGuardRule(get_session_service()),
+        ]),
         tool_registry=registry,
         tool_call_store=ToolCallStore(),
     )

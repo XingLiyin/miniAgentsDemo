@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard,
-  Bot,
   Cpu,
   Server,
   Activity,
@@ -11,7 +10,6 @@ import {
 
 const navItems = [
   { to: '/sessions', icon: LayoutDashboard, label: 'Sessions' },
-  { to: '/templates', icon: Bot, label: 'Templates' },
   { to: '/llms', icon: Cpu, label: 'LLM Providers' },
   { to: '/mcp', icon: Server, label: 'MCP Servers' },
   { to: '/skills', icon: BookOpen, label: 'Skill Sources' },

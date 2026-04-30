@@ -94,11 +94,15 @@ class Observer:
         system_prompt = self._prompt_builder.build_system_prompt(ctx)
         messages      = self._prompt_builder.build_messages(session, result, ctx, task, task_list)
         tools         = [r.llm_tool for r in ctx.observer_resources if r.kind == "tool" and r.llm_tool is not None]
-        toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task)
+        _wd = (
+            (task.settings.get("working_dir") if task.settings else None)
+            or agent.settings.get("working_dir")
+            or ""
+        )
+        toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task, working_dir=_wd)
         max_rounds    = agent.loop_guard.observer_max_tool_rounds if agent else 5
 
         last_llm_text       = ""
-        reviews_submitted   = False
         max_context_tokens  = 0
         
         for _round in range(max_rounds):

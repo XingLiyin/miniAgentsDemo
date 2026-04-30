@@ -164,7 +164,7 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
 
             # 若 session 正在等待用户输入，重放 waiting_input 事件（断线重连恢复输入框）
             if session.status == "WAITING_INPUT":
-                from app.runtime.hitl_store import get_hitl_store
+                from app.storage.file.hitl_store import get_hitl_store
                 pending = get_hitl_store().get_pending(session_id)
                 if pending:
                     replay = {

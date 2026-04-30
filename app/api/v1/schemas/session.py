@@ -56,6 +56,9 @@ class SessionResponse(BaseModel):
     token_used: int
     root_max_turns: int
     failure_counter: int
+    llm_name: Optional[str] = None
+    llm_model: Optional[str] = None
+    working_dir: str = ""
     created_at: str
     updated_at: str
 

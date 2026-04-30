@@ -16,10 +16,12 @@ import logging
 import sys
 from typing import TYPE_CHECKING, Annotated
 
+from agent_framework import FunctionTool
+
 from app.config.settings import get_settings
+from app.llm.types import InputSchema
 from app.runtime.types import PlannedTask
 from app.tools.definition import CallContext, ToolDefinition, ToolResult
-from app.tools.tool_decorator import _extract_input_schema
 
 if TYPE_CHECKING:
     from app.domain.services.session_service import SessionService
@@ -30,6 +32,17 @@ if TYPE_CHECKING:
 # ── @control_tool 装饰器 ──────────────────────────────────────────────────────
 
 _CONTROL_SCHEMAS: list[ToolDefinition] = []
+
+
+def _extract_input_schema(ft: FunctionTool) -> InputSchema:
+    """从 FunctionTool 提取 miniAgents InputSchema。"""
+    spec = ft.to_json_schema_spec().get("function", {})
+    params = spec.get("parameters", {})
+    return InputSchema(
+        type=params.get("type", "object"),
+        properties=params.get("properties", {}),
+        require=params.get("required", []),
+    )
 
 
 def control_tool(fn):
@@ -203,7 +216,7 @@ class ControlToolProvider:
     # ── handler 方法 ──────────────────────────────────────────────────────────
 
     def _handle_request_human_input(self, args: dict, ctx: CallContext | None) -> ToolResult:
-        from app.runtime.hitl_store import get_hitl_store
+        from app.storage.file.hitl_store import get_hitl_store
         from app.common.sse_bus import get_sse_bus
         from app.common.utils import now_iso
 
@@ -237,9 +250,8 @@ class ControlToolProvider:
                 inputs["skill_name"] = skill_name
             if bool(spec.get("use_subagent", False)):
                 inputs["use_subagent"] = True
-                subagent_template = spec.get("subagent_template") or None
-                if subagent_template:
-                    inputs["subagent_template"] = subagent_template
+                default_subagent_template = get_settings().default_agent_template_name
+                inputs["subagent_template"] = spec.get("subagent_template") or default_subagent_template
                 inputs["inherit_memory"] = bool(spec.get("inherit_memory", True))
             t = self._task_svc.create(
                 session_id=task.session_id if task else "",
@@ -332,7 +344,7 @@ class ControlToolProvider:
 
     def _confirm_with_user(self, task, task_result: str, outputs) -> tuple[str, str]:
         """需要用户确认任务完成状态时阻塞等待，返回 (outcome, result)。"""
-        from app.runtime.hitl_store import get_hitl_store
+        from app.storage.file.hitl_store import get_hitl_store
         from app.common.sse_bus import get_sse_bus
         from app.common.utils import now_iso
 

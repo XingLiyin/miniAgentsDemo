@@ -1,5 +1,5 @@
 ---
-name: default-test
+name: default
 version: 1.3.0
 description: 默认通用执行代理。
 tools:
@@ -8,6 +8,7 @@ tools:
     - read
     - read_image
     - write
+    - edit
     - glob
     - load_skill_reference
     - exec_skill_script

@@ -31,6 +31,8 @@ MessageContent = Union[str, List[ContentPart]]
 
 def content_to_text(content: 'MessageContent') -> str:
     """从 MessageContent 提取纯文本（支持 str、ContentPart 实例列表、dict 列表）。"""
+    if content is None:
+        return ''
     if isinstance(content, str):
         return content
     parts = []

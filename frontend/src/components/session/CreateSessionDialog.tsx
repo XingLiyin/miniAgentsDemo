@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { templatesApi } from '@/api/templates'
 import { llmsApi } from '@/api/llms'
@@ -28,10 +28,37 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
   const [config, setConfig] = useState<SessionConfig>(DEFAULT_CONFIG)
   const [useSubagent, setUseSubagent] = useState(false)
   const [subagentTemplate, setSubagentTemplate] = useState('')
+  // 工作目录输入框的即时值，防抖后同步到 config
+  const [workingDirInput, setWorkingDirInput] = useState('')
+  const [debouncedWorkspaceDir, setDebouncedWorkspaceDir] = useState('')
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  const { data: templates } = useQuery({
-    queryKey: ['templates'],
-    queryFn: templatesApi.list,
+  // 工作目录 debounce：停止输入 600ms 后更新 debouncedWorkspaceDir 并同步到 config
+  useEffect(() => {
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    debounceTimer.current = setTimeout(() => {
+      setDebouncedWorkspaceDir(workingDirInput)
+      setConfig((c) => ({ ...c, working_dir: workingDirInput || null, template_id: null }))
+    }, 600)
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    }
+  }, [workingDirInput])
+
+  // 对话框关闭时重置状态
+  useEffect(() => {
+    if (!open) {
+      setConfig(DEFAULT_CONFIG)
+      setWorkingDirInput('')
+      setDebouncedWorkspaceDir('')
+      setUseSubagent(false)
+      setSubagentTemplate('')
+    }
+  }, [open])
+
+  const { data: templates, isFetching: templatesFetching } = useQuery({
+    queryKey: ['templates', debouncedWorkspaceDir],
+    queryFn: () => templatesApi.list(debouncedWorkspaceDir || undefined),
   })
 
   const { data: llms } = useQuery({
@@ -43,27 +70,35 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
     const initialTask: InitialTaskConfig | null = useSubagent
       ? { use_subagent: true, subagent_template: subagentTemplate || null }
       : null
-    onConfigured({ ...config, initial_task: initialTask })
+    onConfigured({ ...config, working_dir: workingDirInput || null, initial_task: initialTask })
     onClose()
-    setConfig(DEFAULT_CONFIG)
-    setUseSubagent(false)
-    setSubagentTemplate('')
   }
 
   return (
     <Dialog open={open} onClose={onClose} title="新建 Session" size="md">
       <div className="flex flex-col gap-4">
+
+        {/* 工作目录：第一步 */}
+        <Input
+          label="工作目录"
+          placeholder="留空则使用服务器默认目录"
+          value={workingDirInput}
+          onChange={(e) => setWorkingDirInput(e.target.value)}
+        />
+
+        {/* Agent 模板：依赖工作目录 */}
         <Select
-          label="Agent 模板"
+          label={templatesFetching ? 'Agent 模板（加载中…）' : 'Agent 模板'}
           value={config.template_id ?? ''}
           onChange={(e) =>
             setConfig((c) => ({ ...c, template_id: e.target.value || null }))
           }
+          disabled={templatesFetching}
         >
           <option value="">使用默认模板</option>
           {templates?.map((t) => (
             <option key={t.id} value={t.id}>
-              {t.name} — {t.description || t.version}
+              {t.name}{t.description ? ` — ${t.description}` : ''}
             </option>
           ))}
         </Select>
@@ -99,15 +134,6 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
             </Select>
           )
         })()}
-
-        <Input
-          label="工作目录"
-          placeholder="留空则使用服务器默认目录"
-          value={config.working_dir ?? ''}
-          onChange={(e) =>
-            setConfig((c) => ({ ...c, working_dir: e.target.value || null }))
-          }
-        />
 
         <div className="grid grid-cols-2 gap-3">
           <Input
@@ -147,11 +173,12 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
               label="规划器模板"
               value={subagentTemplate}
               onChange={(e) => setSubagentTemplate(e.target.value)}
+              disabled={templatesFetching}
             >
               <option value="">使用系统默认规划器</option>
               {templates?.map((t) => (
                 <option key={t.id} value={t.name}>
-                  {t.name} — {t.description || t.version}
+                  {t.name}{t.description ? ` — ${t.description}` : ''}
                 </option>
               ))}
             </Select>

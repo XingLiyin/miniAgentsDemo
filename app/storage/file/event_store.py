@@ -29,6 +29,7 @@ _PERSIST_TYPES: frozenset[str] = frozenset({
     "llm_prompt",
     "observer_reasoning_done",
     "observer_text_done",
+    "observer_tool_call",
 })
 
 _DATA_DIR = Path("data/event_logs")

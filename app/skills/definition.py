@@ -23,8 +23,8 @@ class SkillMetadata:
     skill_dir: Path
 
     # 来源字段（注册时由调用方注入，不来自 SKILL.md frontmatter）
-    source: str = "local"                  # "local" | "remote"
-    remote_source_name: str | None = None  # 对应 SkillRegistry._mcp_conns 的 key
+    source: str = "local"                  # "local" | "workspace" | "remote"
+    remote_source_name: str | None = None  # 对应 SkillRegistry._mcp_conns 的 key（source="remote" 时有效）
     extra: dict = field(default_factory=dict)
 
 

@@ -477,6 +477,88 @@ function TextInput({
   )
 }
 
+function BashExecConfirmArea({
+  sessionId,
+  waitingInput,
+}: {
+  sessionId: string
+  waitingInput: ChatWaitingInput
+}) {
+  const [rejecting, setRejecting] = useState(false)
+  const [reason, setReason] = useState('')
+  const queryClient = useQueryClient()
+
+  const mutation = useMutation({
+    mutationFn: (answer: string) => sessionsApi.answerInput(sessionId, answer),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+      setReason('')
+      setRejecting(false)
+    },
+  })
+
+  return (
+    <div className="border-t border-orange-200 bg-orange-50 p-3">
+      <div className="flex items-start gap-2 mb-2">
+        <div className="w-5 h-5 rounded bg-orange-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+          <Wrench size={11} className="text-orange-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-orange-800">Agent 请求执行命令</p>
+          <pre className="mt-1.5 bg-gray-900 text-green-300 text-xs rounded-lg px-3 py-2 overflow-x-auto whitespace-pre-wrap break-all">
+            {waitingInput.command || ''}
+          </pre>
+        </div>
+      </div>
+      {mutation.isError && <p className="text-xs text-red-500 mb-2">提交失败，请重试</p>}
+      {!rejecting ? (
+        <div className="flex gap-2">
+          <button
+            onClick={() => mutation.mutate('approved')}
+            disabled={mutation.isPending}
+            className="flex-1 rounded-lg bg-green-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-green-600 disabled:opacity-50 transition-colors"
+          >
+            {mutation.isPending ? <Spinner size="sm" /> : '允许执行'}
+          </button>
+          <button
+            onClick={() => setRejecting(true)}
+            disabled={mutation.isPending}
+            className="flex-1 rounded-lg bg-red-50 border border-red-200 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-50 transition-colors"
+          >
+            拒绝
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          <textarea
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                mutation.mutate(reason.trim() || 'rejected')
+              }
+            }}
+            placeholder="（可选）说明拒绝原因… (Enter 提交)"
+            rows={1}
+            className="resize-none rounded-lg border border-red-200 bg-white px-3 py-2 text-sm outline-none focus:border-red-400 focus:ring-1 focus:ring-red-300 leading-5"
+          />
+          <div className="flex gap-2">
+            <button onClick={() => setRejecting(false)} className="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">返回</button>
+            <button
+              onClick={() => mutation.mutate(reason.trim() || 'rejected')}
+              disabled={mutation.isPending}
+              className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
+            >
+              {mutation.isPending ? <Spinner size="sm" /> : <><Send size={12} />确认拒绝</>}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function WaitingInputArea({
   sessionId,
   waitingInput,
@@ -489,6 +571,10 @@ function WaitingInputArea({
   const [feedback, setFeedback] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const queryClient = useQueryClient()
+
+  if (waitingInput.input_type === 'bash_exec_confirm') {
+    return <BashExecConfirmArea sessionId={sessionId} waitingInput={waitingInput} />
+  }
 
   const isTaskConfirm = waitingInput.input_type === 'task_completion_confirm'
 
@@ -669,6 +755,11 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             {session && session.token_used > 0 && (
               <span className="text-xs text-gray-400">
                 {(session.token_used / 1000).toFixed(1)}k / {(session.token_budget / 1000).toFixed(0)}k tokens
+              </span>
+            )}
+            {session?.llm_name && (
+              <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
+                {session.llm_name}{session.llm_model ? ` / ${session.llm_model}` : ''}
               </span>
             )}
             {!connected && (

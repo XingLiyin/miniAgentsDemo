@@ -53,6 +53,7 @@ export interface ChatWaitingInput {
   prompt: string
   input_type: string
   task_title: string
+  command?: string   // bash_exec_confirm only
   created_at: string
 }
 
@@ -405,13 +406,14 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         return
       }
 
-      if (type === 'waiting_input') {
+      if (type === 'waiting_input' || type === 'bash_exec_confirm') {
         const item: ChatWaitingInput = {
           id: uid(),
           kind: 'waiting_input',
           prompt: (data.prompt as string) || '',
-          input_type: (data.input_type as string) || 'user_input',
+          input_type: type === 'bash_exec_confirm' ? 'bash_exec_confirm' : ((data.input_type as string) || 'user_input'),
           task_title: (data.task_title as string) || '',
+          command: type === 'bash_exec_confirm' ? (data.command as string) || '' : undefined,
           created_at: now(),
         }
         setState(s => ({ ...s, waitingInput: item }))

@@ -30,3 +30,12 @@ class AgentTemplateStore:
 
     def list_ids(self) -> list[str]:
         return list_json_ids(get_settings().data_dir / "agent_templates")
+
+    def list_all_dicts(self) -> list[dict[str, Any]]:
+        """返回所有模板的 dict，避免多次调用 list_ids + get。"""
+        result = []
+        for tid in self.list_ids():
+            d = self.get(tid)
+            if d:
+                result.append(d)
+        return result

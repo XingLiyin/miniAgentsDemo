@@ -93,27 +93,38 @@ class SessionManager:
         由调用方决定是否/如何启动 AgentLoop（sync or async）。
         """
         settings = get_settings()
+        resolved_llm_name = llm_provider or settings.default_llm_provider
+        wd = working_dir or ""
+
         session = self._session_svc.create(
             user_prompt=user_prompt,
             template_id=template_id,
             token_budget=token_budget or settings.default_token_budget,
             root_max_turns=root_max_turns or settings.default_root_max_turns,
+            llm_name=resolved_llm_name,
+            llm_model=llm_model or "",
+            working_dir=wd,
         )
 
-        # 构建 root Agent
+        # workspace 模板同步：session 创建时将 .agents/ 持久化到 store
+        if wd and self._template_registry:
+            self._template_registry.sync_workspace(wd)
+
+        # 查找模板：UUID 精确匹配 > 按名称（workspace > global） > 默认模板
         tpl = None
         if template_id:
             try:
-                tpl = self._template_svc.get(template_id)
+                tpl = self._template_svc.get(template_id)  # UUID 精确查找
             except AppError:
-                logger.warning("Template %s not found, falling back to default", template_id)
-        if tpl is None:
-            tpl = self._template_svc.get_by_name(settings.default_agent_template_name)
+                pass
             if tpl is None:
-                logger.warning(
-                    "Default template '%s' not found, using settings fallback",
-                    settings.default_agent_template_name,
-                )
+                tpl = self._template_svc.get_by_name_for_workspace(template_id, wd)
+        if tpl is None:
+            tpl = self._template_svc.get_by_name_for_workspace(
+                settings.default_agent_template_name, wd
+            )
+        if tpl is None:
+            logger.warning("No template found, creating agent with empty config")
 
         now = now_iso()
         agent = Agent(
@@ -126,16 +137,16 @@ class SessionManager:
             observe_tool_list=tpl.observe_tool_list if tpl else [],
             soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(),
-            llm_provider=llm_provider or settings.default_llm_provider,
+            llm_provider=resolved_llm_name,
             llm_model=llm_model or "",
             has_spawn_permission=True,
             spawn_depth=0,
-            settings={"working_dir": working_dir or get_settings().bash_exec_cwd},
+            settings={"working_dir": wd or settings.bash_exec_cwd},
             created_at=now,
             updated_at=now,
         )
         if tpl is not None:
-            content = self._template_registry.load_content(tpl.name) if self._template_registry else None
+            content = self._template_registry.load_content(tpl.name, workspace_dir=wd) if self._template_registry else None
             _apply_template_to_agent(tpl, content, agent)
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
@@ -225,6 +236,10 @@ class SessionManager:
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
 
+        # 续聊时重新同步 workspace 模板，感知用户对 .agents/ 的变更
+        if session.working_dir and self._template_registry:
+            self._template_registry.sync_workspace(session.working_dir)
+
         # Push SSE user message event（多模态内容透传给前端）
         try:
             from app.common.sse_bus import get_sse_bus
@@ -274,7 +289,7 @@ class SessionManager:
 
     def answer_input(self, session_id: str, content: str) -> Session:
         """Submit user answer for a WAITING_INPUT session and unblock the agent thread."""
-        from app.runtime.hitl_store import get_hitl_store
+        from app.storage.file.hitl_store import get_hitl_store
 
         session = self._session_svc.get(session_id)
         if session.status != "WAITING_INPUT":

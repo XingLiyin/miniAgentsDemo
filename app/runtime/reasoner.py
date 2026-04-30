@@ -94,8 +94,14 @@ class Reasoner:
         skill_instructions = ""
         skill_name = task.settings.get("skill_name") if task.settings else None
         if skill_name and self._skill_registry:
+            from app.config.settings import get_settings
             from app.tools.definition import CallContext
-            ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task)
+            _wd = (
+                (task.settings.get("working_dir") if task.settings else None)
+                or agent.settings.get("working_dir")
+                or get_settings().bash_exec_cwd
+            )
+            ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
             skill_def = self._skill_registry.load_definition(skill_name, ctx)
             if skill_def is not None:
                 skill_instructions = skill_def.instructions or ""
@@ -151,8 +157,14 @@ class Reasoner:
 
     def _build_actor_resources(self, goal: str, agent: Agent, task: Task, session_id: str = "") -> list[ContextResource]:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
+        from app.config.settings import get_settings
         from app.tools.definition import CallContext
-        ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task)
+        _wd = (
+            (task.settings.get("working_dir") if task.settings else None)
+            or agent.settings.get("working_dir")
+            or get_settings().bash_exec_cwd
+        )
+        ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
         allowed = self._resolve_act_tool_names(agent)
         skill_resources = [
             ContextResource(name=name, description=desc, kind="skill")
@@ -173,11 +185,12 @@ class Reasoner:
         """
         if not agent.has_spawn_permission or not self._agent_template_registry:
             return []
+        workspace_dir = (agent.settings or {}).get("working_dir", "")
         own_meta = self._agent_template_registry.get_metadata_by_id(agent.template_id or "")
         allowlist: set[str] | None = set(own_meta.subagents) if own_meta and own_meta.subagents else None
         return [
             ContextResource(name=m.name, description=m.description, kind="agent")
-            for m in self._agent_template_registry.list_all()
+            for m in self._agent_template_registry.list_all(workspace_dir=workspace_dir)
             if m.name != (agent.template_id or "")
             and (allowlist is None or m.name in allowlist)
         ]

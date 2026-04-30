@@ -22,6 +22,10 @@ class AgentTemplate:
     source_dir: str = ""
     has_spawn_permission: bool = False
 
+    # "global" = built-in from resources/agents/; "workspace" = user-defined from {workspace_dir}/.agents/
+    scope: str = "global"
+    workspace_dir: str = ""  # non-empty only when scope == "workspace"
+
     created_at: str = ""
     updated_at: str = ""
 
@@ -37,6 +41,8 @@ class AgentTemplate:
             "mcp_observe_servers": self.mcp_observe_servers,
             "source_dir": self.source_dir,
             "has_spawn_permission": self.has_spawn_permission,
+            "scope": self.scope,
+            "workspace_dir": self.workspace_dir,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -54,6 +60,8 @@ class AgentTemplate:
             mcp_observe_servers=d.get("mcp_observe_servers", []),
             source_dir=d.get("source_dir", ""),
             has_spawn_permission=d.get("has_spawn_permission", False),
+            scope=d.get("scope", "global"),
+            workspace_dir=d.get("workspace_dir", ""),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

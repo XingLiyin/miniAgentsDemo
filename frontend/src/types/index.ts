@@ -22,6 +22,8 @@ export interface Session {
   token_used: number
   root_max_turns: number
   failure_counter: number
+  llm_name: string | null
+  llm_model: string | null
   created_at: string
   updated_at: string
 }

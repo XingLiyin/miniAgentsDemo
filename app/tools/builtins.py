@@ -32,7 +32,6 @@ from app.config.settings import get_settings
 from app.llm.types import InputSchema
 from app.tools.definition import CallContext, ToolDefinition, ToolResult
 from app.tools.provider import BuiltinToolProvider
-from app.tools.tool_decorator import tool_result
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +52,37 @@ def _resolve_path(path: str, ctx: CallContext | None) -> Path:
 
 
 # ── bash_exec ─────────────────────────────────────────────────────────────
+
+def _build_venv_env(cwd: str | None) -> dict[str, str] | None:
+    """Return a copy of os.environ with .venv activated, creating it first if absent."""
+    if not cwd:
+        return None
+    venv_dir = Path(cwd) / ".venv"
+    if sys.platform == "win32":
+        python_exe = venv_dir / "Scripts" / "python.exe"
+        scripts_dir = str(venv_dir / "Scripts")
+    else:
+        python_exe = venv_dir / "bin" / "python"
+        scripts_dir = str(venv_dir / "bin")
+
+    if not python_exe.exists():
+        logger.info("bash_exec: creating venv at '%s'", venv_dir)
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        if result.returncode != 0:
+            raise AppError(
+                "VENV_CREATE_FAILED",
+                f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
+            )
+
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
+    env.pop("PYTHONHOME", None)
+    return env
+
 
 _BASH_BLACKLIST = [
     r"\brm\s+-rf\b",
@@ -78,11 +108,12 @@ def _make_bash_exec() -> ToolDefinition:
         settings = get_settings()
         timeout_sec = settings.bash_exec_timeout_ms / 1000
         cwd = _resolve_cwd(ctx)
+        env = _build_venv_env(cwd)
 
         try:
             proc = subprocess.run(
                 command, shell=True, capture_output=True, text=True,
-                timeout=timeout_sec, cwd=cwd,
+                timeout=timeout_sec, cwd=cwd, env=env,
             )
             output = proc.stdout + proc.stderr
             limit = settings.bash_exec_output_limit_bytes
@@ -110,93 +141,6 @@ def _make_bash_exec() -> ToolDefinition:
     )
 
 
-# ── http_request ──────────────────────────────────────────────────────────
-
-_SSRF_BLOCKED = re.compile(
-    r"^(localhost|127\.\d+\.\d+\.\d+|10\.\d+\.\d+\.\d+|"
-    r"192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$",
-    re.IGNORECASE,
-)
-
-
-@tool_result
-def http_request(
-    url: Annotated[str, "Target URL (must be a public address)"],
-    method: Annotated[str, "HTTP method: GET, POST, PUT, DELETE, PATCH"] = "GET",
-    headers: Annotated[dict | None, "Optional HTTP headers as key-value pairs"] = None,
-    body: Annotated[str | None, "Optional request body (string)"] = None,
-) -> ToolResult:
-    """Make an HTTP request to an external URL. Private/localhost addresses are blocked."""
-    try:
-        host = url.split("/")[2].split(":")[0]
-    except IndexError:
-        raise AppError("INVALID_ARGUMENT", "http_request: invalid URL format")
-
-    if _SSRF_BLOCKED.match(host):
-        raise AppError("SSRF_BLOCKED", f"Access to host '{host}' is not allowed")
-
-    settings = get_settings()
-    timeout_sec = settings.http_request_timeout_ms / 1000
-
-    try:
-        with httpx.Client(timeout=timeout_sec) as client:
-            resp = client.request(
-                method=method.upper(),
-                url=url,
-                headers=headers or {},
-                content=body.encode() if body else None,
-            )
-        content = resp.text
-        limit = settings.http_response_limit_bytes
-        if len(content.encode("utf-8")) > limit:
-            content = content.encode("utf-8")[:limit].decode("utf-8", errors="replace")
-            content += f"\n[response truncated at {limit} bytes]"
-        is_error = resp.status_code >= 400
-        return ToolResult(
-            content=content,
-            is_error=is_error,
-            error_code=f"HTTP_{resp.status_code}" if is_error else None,
-            metadata={"status_code": resp.status_code},
-        )
-    except httpx.TimeoutException:
-        raise AppError("TOOL_TIMEOUT", f"http_request timed out after {timeout_sec}s")
-    except httpx.RequestError as e:
-        raise AppError("HTTP_REQUEST_ERROR", str(e))
-
-
-# ── search_tools ──────────────────────────────────────────────────────────
-
-@tool_result
-def search_tools(
-    query: Annotated[str, "Natural language description of what you want to accomplish"],
-    top_k: Annotated[int, "Maximum number of tools to return (default 5)"] = 5,
-) -> ToolResult:
-    """Search registered tools by semantic relevance using the external tool store.
-    Returns a JSON list of matching tools with name, description, and relevance score.
-    Requires MINIAGENTS_TOOL_STORE_BASE_URL to be configured."""
-    from app.tools.tool_store_client import get_tool_store_client
-
-    client = get_tool_store_client()
-    if not client.enabled:
-        return ToolResult(
-            content="Tool store is not configured. Set MINIAGENTS_TOOL_STORE_BASE_URL to enable semantic search.",
-            is_error=True,
-            error_code="TOOL_STORE_NOT_CONFIGURED",
-        )
-
-    results = client.search(query, top_k=top_k)
-    if not results:
-        return ToolResult(content="[]")
-
-    import json
-    output = json.dumps(
-        [{"name": r.name, "description": r.description, "score": round(r.score, 4)} for r in results],
-        ensure_ascii=False,
-        indent=2,
-    )
-    return ToolResult(content=output)
-
-
 
 
 # ── read ──────────────────────────────────────────────────────────────────
@@ -205,6 +149,8 @@ def _make_read() -> ToolDefinition:
     def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
         path: str = arguments.get("path", "")
         encoding: str = arguments.get("encoding", "utf-8")
+        start_line: int | None = arguments.get("start_line")
+        end_line: int | None = arguments.get("end_line")
 
         settings = get_settings()
         limit = settings.http_response_limit_bytes
@@ -224,15 +170,35 @@ def _make_read() -> ToolDefinition:
         except UnicodeDecodeError as e:
             raise AppError("DECODE_ERROR", f"Failed to decode file with encoding '{encoding}': {e}")
 
+        if start_line is not None or end_line is not None:
+            lines = content.splitlines(keepends=True)
+            total = len(lines)
+            s = max(1, start_line or 1)
+            e = min(total, end_line or total)
+            if s > total:
+                raise AppError("INVALID_ARGUMENT", f"start_line {s} exceeds file length {total}")
+            selected = lines[s - 1:e]
+            content = "".join(f"{s + i}: {line}" for i, line in enumerate(selected))
+            return ToolResult(
+                content=content,
+                metadata={"path": str(file_path.resolve()), "start_line": s, "end_line": s + len(selected) - 1, "total_lines": total},
+            )
+
         return ToolResult(content=content, metadata={"path": str(file_path.resolve()), "size": size})
 
     return ToolDefinition(
         name="read",
-        description="Read a file from the filesystem and return its content as text.",
+        description=(
+            "Read a file from the filesystem and return its content as text. "
+            "Optionally specify start_line and/or end_line (1-based, inclusive) to read a slice; "
+            "the returned lines are prefixed with line numbers (e.g. '42: content')."
+        ),
         input_schema=InputSchema(
             properties={
                 "path": {"type": "string", "description": "Absolute or relative path to the file to read"},
                 "encoding": {"type": "string", "description": "File encoding (default: utf-8)"},
+                "start_line": {"type": "integer", "description": "First line to read, 1-based inclusive (default: 1)"},
+                "end_line": {"type": "integer", "description": "Last line to read, 1-based inclusive (default: last line)"},
             },
             require=["path"],
         ),
@@ -280,6 +246,76 @@ def _make_write() -> ToolDefinition:
                 "overwrite": {"type": "boolean", "description": "Allow overwriting an existing file (default: true)"},
             },
             require=["path", "content"],
+        ),
+        handler=handler,
+    )
+
+
+# ── edit ──────────────────────────────────────────────────────────────────
+
+def _make_edit() -> ToolDefinition:
+    def handler(arguments: dict[str, Any], ctx: CallContext | None = None) -> ToolResult:
+        path: str = arguments.get("path", "")
+        old_str: str = arguments.get("old_str", "")
+        new_str: str = arguments.get("new_str", "")
+        replace_all: bool = arguments.get("replace_all", False)
+        encoding: str = arguments.get("encoding", "utf-8")
+
+        if not path:
+            raise AppError("INVALID_ARGUMENT", "edit: path is required")
+        if not old_str:
+            raise AppError("INVALID_ARGUMENT", "edit: old_str is required")
+
+        file_path = _resolve_path(path, ctx)
+        if not file_path.exists():
+            raise AppError("FILE_NOT_FOUND", f"File not found: {path}")
+        if not file_path.is_file():
+            raise AppError("NOT_A_FILE", f"Path is not a file: {path}")
+
+        try:
+            content = file_path.read_text(encoding=encoding)
+        except UnicodeDecodeError as e:
+            raise AppError("DECODE_ERROR", f"Failed to decode file with encoding '{encoding}': {e}")
+
+        count = content.count(old_str)
+        if count == 0:
+            raise AppError("STRING_NOT_FOUND", "edit: old_str not found in file")
+        if count > 1 and not replace_all:
+            raise AppError(
+                "AMBIGUOUS_MATCH",
+                f"edit: old_str matches {count} locations; set replace_all=true to replace all, or provide more context to make it unique",
+            )
+
+        new_content = content.replace(old_str, new_str) if replace_all else content.replace(old_str, new_str, 1)
+
+        try:
+            file_path.write_text(new_content, encoding=encoding)
+        except OSError as e:
+            raise AppError("WRITE_ERROR", f"Failed to write file: {e}")
+
+        replaced = count if replace_all else 1
+        return ToolResult(
+            content=f"Replaced {replaced} occurrence(s) in {file_path.resolve()}",
+            metadata={"path": str(file_path.resolve()), "replaced": replaced},
+        )
+
+    return ToolDefinition(
+        name="edit",
+        description=(
+            "Replace an exact string in a file with new content. "
+            "old_str must match exactly (including whitespace/indentation). "
+            "Fails if old_str is not found, or if it matches multiple locations and replace_all is false. "
+            "Set new_str to an empty string to delete old_str."
+        ),
+        input_schema=InputSchema(
+            properties={
+                "path": {"type": "string", "description": "Absolute or relative path to the file to edit"},
+                "old_str": {"type": "string", "description": "Exact text to find and replace"},
+                "new_str": {"type": "string", "description": "Replacement text (empty string to delete old_str)"},
+                "replace_all": {"type": "boolean", "description": "Replace all occurrences instead of just the first (default: false)"},
+                "encoding": {"type": "string", "description": "File encoding (default: utf-8)"},
+            },
+            require=["path", "old_str", "new_str"],
         ),
         handler=handler,
     )
@@ -342,7 +378,7 @@ def _make_get_skill_files() -> ToolDefinition:
 
         from app.skills.registry import get_skill_registry
         registry = get_skill_registry()
-        metadata = registry.get_metadata(skill_name)
+        metadata = registry.get_metadata(skill_name, ctx)
 
         if metadata is None:
             # 远端：通过 _remote_index 路由到对应 MCP 连接
@@ -419,7 +455,7 @@ def _make_load_skill_reference() -> ToolDefinition:
 
         from app.skills.registry import get_skill_registry
         registry = get_skill_registry()
-        metadata = registry.get_metadata(skill_name)
+        metadata = registry.get_metadata(skill_name, ctx)
 
         if metadata is None:
             # 远端：通过 _remote_index 路由到对应 MCP 连接
@@ -536,7 +572,7 @@ def _make_exec_skill_script() -> ToolDefinition:
 
         from app.skills.registry import get_skill_registry
         registry = get_skill_registry()
-        metadata = registry.get_metadata(skill_name)
+        metadata = registry.get_metadata(skill_name, ctx)
 
         if metadata is None:
             # 远端：通过 _remote_index 路由到对应 MCP 连接
@@ -930,10 +966,9 @@ def get_builtin_provider() -> BuiltinToolProvider:
     """返回包含所有内置工具的 Provider 实例。"""
     return BuiltinToolProvider([
         _make_bash_exec(),
-        http_request,
-        search_tools,
         _make_read(),
         _make_write(),
+        _make_edit(),
         _make_glob(),
         _make_get_skill_files(),
         _make_load_skill_reference(),
