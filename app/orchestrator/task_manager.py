@@ -176,6 +176,7 @@ class TaskManager:
         self.record_success(session_id)
 
         next_task: Task | None = None
+        _session_done = False
 
         with self._get_lock(session_id):
             try:
@@ -211,11 +212,14 @@ class TaskManager:
                         self._session_svc.transition(session_id, "SUCCEEDED")
                     except Exception:
                         logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
+                    _session_done = True
                 else:
                     # _blocked has tasks waiting on deps; they will be promoted
                     # when further active tasks complete
                     logger.debug("TM: tasks blocked on deps for session %s", session_id)
 
+        if _session_done:
+            self.cleanup_session(session_id)
         self._dispatch_next(session_id, agent_id, next_task)
 
     def on_task_failed(self, event_type: str, payload: dict) -> None:
@@ -226,6 +230,7 @@ class TaskManager:
         self.record_failure(session_id)
 
         next_task: Task | None = None
+        _session_done = False
 
         with self._get_lock(session_id):
             if failed_task_id:
@@ -258,12 +263,16 @@ class TaskManager:
                 except Exception:
                     logger.exception("TM: failed to retry task %s", failed_task_id)
                     self._fail_session(session_id)
+                    _session_done = True
 
             self._task_queue.notify_completed(session_id, failed_task_id)
             next_task = self._task_queue.pop(session_id)
             if next_task is None and self._task_queue.is_empty(session_id):
                 self._fail_session(session_id)
+                _session_done = True
 
+        if _session_done:
+            self.cleanup_session(session_id)
         self._dispatch_next(session_id, agent_id, next_task)
 
     # ── failure_counter ───────────────────────────────────────────────────────
@@ -368,7 +377,7 @@ class TaskManager:
                 content += f"\nResult: {result_text}"
             self._memory_svc.append_message(
                 agent_id=parent.assigned_agent_id,
-                role="user",
+                role="assistant",
                 content=content,
                 session_id=session_id,
                 task_id=finished_task.parent_task_id,

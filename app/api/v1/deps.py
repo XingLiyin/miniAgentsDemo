@@ -133,6 +133,9 @@ def get_reasoner() -> Reasoner:
         skill_registry=get_skill_registry(),
         task_svc=get_task_service(),
         agent_template_registry=get_agent_template_registry(),
+        llm_client=_get_llm_client(),
+        compaction_agent=get_compaction_agent(),
+        agent_store=AgentStore(),
     )
 
 
@@ -189,7 +192,6 @@ def get_agent_loop() -> AgentLoop:
         reasoner=get_reasoner(),
         actor=get_actor(),
         observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
-        compaction_agent=get_compaction_agent(),
     )
 
 

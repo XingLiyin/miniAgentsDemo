@@ -244,6 +244,7 @@ class LifecycleManager:
                 return
             for agent_id in list(state.agent_registry.keys()):
                 self._recycle(state, session_id, agent_id)
+        self.cleanup_session(session_id)
 
     def run_agent(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Start a daemon thread to run agent_loop for (agent, task)."""

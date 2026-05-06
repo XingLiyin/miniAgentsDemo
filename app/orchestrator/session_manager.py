@@ -367,6 +367,12 @@ class SessionManager:
         except Exception:
             pass
 
+        # 释放 in-memory 状态（_states/_locks/_session_locks/_sessions）
+        if self._lifecycle_manager is not None:
+            self._lifecycle_manager.cleanup_session(session_id)
+        if self._task_manager is not None:
+            self._task_manager.cleanup_session(session_id)
+
         # 最后删除 session 文件
         self._session_svc.delete(session_id)
 

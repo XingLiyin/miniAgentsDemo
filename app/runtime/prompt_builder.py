@@ -125,13 +125,6 @@ class ActorPromptBuilder(BasePromptBuilder):
                     tool_call_id=m.get("tool_call_id"),
                     tool_calls=m.get("tool_calls"),
                 ))
-            resume_parts: list[str] = []
-            if ctx.blackboard_snippets:
-                resume_parts.append(
-                    "Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets)
-                )
-            resume_parts.append("Sub-tasks have completed. Please review the results and continue.")
-            messages.append(LLMMessage(role="user", content="\n\n".join(resume_parts)))
             return messages
 
         recent_messages = (
@@ -235,6 +228,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 f"Current task: {task.title}\n"
                 f"Task description: {task.description or task.title}"
             ),
+            f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
             f"User requirements: {session.user_prompt}",
             f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}",
         ]

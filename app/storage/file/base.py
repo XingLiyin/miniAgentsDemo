@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,12 @@ from typing import Any
 def write_json_atomic(path: Path, data: dict[str, Any]) -> None:
     """原子写入 JSON 文件（先写 .tmp，再 rename）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=None), encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=path.parent, suffix=".tmp",
+        delete=False, encoding="utf-8",
+    ) as f:
+        f.write(json.dumps(data, ensure_ascii=False, indent=None))
+        tmp = Path(f.name)
     # Windows: os.replace can fail with PermissionError if the destination file
     # is momentarily locked by another reader (SSE poll, antivirus, etc.).
     # Retry with exponential backoff before giving up.
@@ -40,11 +45,15 @@ def read_json(path: Path) -> dict[str, Any] | None:
 def write_jsonl_atomic(path: Path, records: list[dict[str, Any]]) -> None:
     """原子写入 .jsonl 文件（先写 .tmp，再 rename；与 write_json_atomic 同策略）。"""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
     content = "\n".join(json.dumps(r, ensure_ascii=False) for r in records)
     if content:
         content += "\n"
-    tmp.write_text(content, encoding="utf-8")
+    with tempfile.NamedTemporaryFile(
+        mode="w", dir=path.parent, suffix=".tmp",
+        delete=False, encoding="utf-8",
+    ) as f:
+        f.write(content)
+        tmp = Path(f.name)
     for attempt in range(5):
         try:
             os.replace(tmp, path)

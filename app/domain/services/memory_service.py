@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.common.utils import new_memory_id, now_iso, estimate_tokens
+from app.common.utils import new_memory_id, now_iso
 from app.config.settings import get_settings
 from app.domain.models.memory import MemoryItem, MemorySummary
 from app.storage.file.memory_store import MemoryStore
@@ -102,46 +102,3 @@ class MemoryService:
     def delete_agent(self, agent_id: str) -> None:
         """删除该 agent 的全部记忆文件。"""
         self._store.delete_agent(agent_id)
-
-    def build_prompt_context(
-        self,
-        agent_id: str,
-        system_prompt: str,
-        goal: str,
-        task_description: str,
-        blackboard_snippets: list[str] | None = None,
-        token_budget: int = 200_000,
-    ) -> PromptContext:
-        """拼装完整 Prompt 上下文，按优先级截断。"""
-        settings = get_settings()
-        messages = self.get_window(agent_id, settings.default_short_window_size)
-        summary = self.get_summary(agent_id)
-        summary_text = summary.summary_text if summary else ""
-
-        ctx = PromptContext(
-            system_prompt=system_prompt,
-            goal=goal,
-            task_description=task_description,
-            blackboard_snippets=blackboard_snippets or [],
-            recent_messages=messages,
-            summary_text=summary_text,
-        )
-
-        # 粗略 token 估算
-        def _to_text(v: object) -> str:
-            if isinstance(v, list):
-                return " ".join(p.get("text", "") for p in v if isinstance(p, dict) and p.get("type") == "text")
-            return str(v) if v else ""
-
-        total_text = system_prompt + goal + task_description + summary_text
-        total_text += " ".join(_to_text(m.get("content", "")) for m in messages)
-        total_text += " ".join(_to_text(s) for s in (blackboard_snippets or []))
-        ctx.token_estimate = estimate_tokens(total_text)
-
-        # 超过 60% token_budget 时截断低优先级内容（blackboard + 旧消息）
-        limit = int(token_budget * 0.6)
-        if ctx.token_estimate > limit:
-            ctx.blackboard_snippets = []
-            ctx.recent_messages = messages[-5:]  # 只保留最近 5 条
-
-        return ctx

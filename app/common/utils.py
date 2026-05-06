@@ -68,8 +68,10 @@ def now_iso() -> str:
 
 
 def estimate_tokens(text: str) -> int:
-    """粗略估算 token 数（约 4 字符/token）。"""
-    return max(1, len(text) // 4)
+    """估算 token 数：CJK 字符约 1.5 token/字，其余约 0.25 token/字符。"""
+    cjk = sum(1 for c in text if '一' <= c <= '鿿' or '㐀' <= c <= '䶿' or '豈' <= c <= '﫿')
+    other = len(text) - cjk
+    return max(1, int(cjk * 1.5 + other * 0.25))
 
 
 def extract_text(content: str | list) -> str:

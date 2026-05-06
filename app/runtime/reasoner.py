@@ -13,10 +13,14 @@ from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.task_service import TaskService
 from app.runtime.types import ContextResource, ReasoningContext
+from app.tools.definition import CallContext
 
 if TYPE_CHECKING:
     from app.agent_template.registry import AgentTemplateRegistry
+    from app.llm.base import BaseChatClient
+    from app.runtime.memory_compaction import MemoryCompactionAgent
     from app.skills.registry import SkillRegistry
+    from app.storage.file.agent_store import AgentStore
     from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -40,6 +44,9 @@ class Reasoner:
         skill_registry: "SkillRegistry | None" = None,
         task_svc: TaskService | None = None,
         agent_template_registry: "AgentTemplateRegistry | None" = None,
+        llm_client: "BaseChatClient | None" = None,
+        compaction_agent: "MemoryCompactionAgent | None" = None,
+        agent_store: "AgentStore | None" = None,
     ) -> None:
         self._memory_svc = memory_svc
         self._bb_svc = blackboard_svc
@@ -47,14 +54,18 @@ class Reasoner:
         self._skill_registry = skill_registry
         self._task_svc = task_svc
         self._agent_template_registry = agent_template_registry
+        self._llm_client = llm_client
+        self._compaction_agent = compaction_agent
+        self._agent_store = agent_store
 
     def reason(
         self, session: Session, agent: Agent, task: Task
     ) -> ReasoningContext:
         """构建本轮 ReasoningContext。"""
         messages, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
+        if self._maybe_compact(session, agent, token_estimate):
+            messages, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
         soul, role, skill_instructions = self._extract_agent_identity(agent, task, session.id)
-
         return ReasoningContext(
             goal=session.goal,
             recent_messages=messages,
@@ -68,6 +79,63 @@ class Reasoner:
             token_estimate=token_estimate,
             project_background=self._load_background(agent, task),
         )
+
+    def _maybe_compact(self, session: Session, agent: Agent, memory_tokens: int) -> bool:
+        """检查 token 预算，必要时触发 compaction，返回是否执行了压缩。"""
+        _llm_client = self._llm_client
+        if agent.llm_provider and _llm_client:
+            try:
+                from app.llm.registry import get_llm_registry
+                _llm_client = get_llm_registry().get_client(agent.llm_provider, agent.llm_model or None)
+            except Exception:
+                pass
+        context_limit = _llm_client.context_limit if _llm_client else 0
+        if not self._memory_svc.should_summarize(
+            agent.id,
+            context_tokens=memory_tokens,
+            context_limit=context_limit,
+        ):
+            return False
+        self._do_compact(session, agent)
+        return True
+
+    def _do_compact(self, session: Session, agent: Agent) -> None:
+        from app.common.utils import now_iso
+        from app.domain.models.memory import MemorySummary
+
+        messages = self._memory_svc.get_window(agent.id, 10000)
+        summary_text = ""
+
+        if self._compaction_agent is not None:
+            try:
+                agent_data = (self._agent_store.get(session.id, agent.id) if self._agent_store else None) or {}
+                working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
+                kept, compacted_summary = self._compaction_agent.compact(
+                    messages=messages,
+                    session_goal=session.goal,
+                    working_dir=working_dir,
+                    session_id=session.id,
+                    agent_id=agent.id,
+                )
+                if compacted_summary:
+                    summary_text = compacted_summary
+                    kept = [{"role": "assistant", "content": f"[Context so far]:\n{compacted_summary}"}] + kept
+                if len(kept) < len(messages):
+                    self._memory_svc.rewrite_messages(agent.id, kept)
+            except Exception:
+                logger.exception("Reasoner: compaction failed for agent %s", agent.id)
+
+        count = self._memory_svc.count_messages(agent.id)
+        self._memory_svc.save_summary(agent.id, MemorySummary(
+            session_id=session.id,
+            agent_id=agent.id,
+            summary_text=summary_text,
+            covered_up_to=count,
+            created_at=now_iso(),
+        ))
+        agent.loop_guard.context_tokens = 0
+        if self._agent_store:
+            self._agent_store.save(agent.to_dict())
 
     def _load_background(self, agent: Agent, task: Task) -> str:
         from app.config.settings import get_settings
@@ -111,7 +179,7 @@ class Reasoner:
 
     def _fetch_base(self, session: Session, agent: Agent, task: Task) -> tuple:
         """获取 memory、blackboard、token 估算等共享数据，返回 tuple。"""
-        messages = self._memory_svc.get_window(agent.id)
+        messages = self._memory_svc.get_all_messages(agent.id)
 
         # bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
         # bb_snippets = [entry.content for entry in bb_entries]
@@ -210,30 +278,6 @@ class Reasoner:
             for t in self._tool_registry.to_llm_tools(list(allowed))
         ]
         return tool_resources
-
-    def _retrieve_tools(self, goal: str, agent: Agent, allowed: set[str] | None = None) -> list:
-        if not self._tool_registry:
-            return []
-        if allowed is None:
-            allowed = self._resolve_act_tool_names(agent)
-        if not allowed:
-            return []
-
-        try:
-            from app.tools.tool_store_client import get_tool_store_client
-            store_client = get_tool_store_client()
-            if store_client.enabled:
-                results = store_client.search(goal, top_k=10)
-                if results:
-                    filtered = [r for r in results if r.name in allowed]
-                    if filtered:
-                        return self._tool_registry.to_llm_tools(
-                            [r.name for r in filtered]
-                        )
-        except Exception:
-            logger.debug("Reasoner: tool store search failed, falling back to full list")
-
-        return self._tool_registry.to_llm_tools(list(allowed))
 
     def _retrieve_skills(self, goal: str, agent: Agent, ctx: "CallContext | None" = None) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。"""

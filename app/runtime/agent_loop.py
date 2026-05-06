@@ -25,11 +25,6 @@ from app.runtime.observer import Observer
 from app.runtime.reasoner import Reasoner
 from app.storage.file.agent_store import AgentStore
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from app.runtime.memory_compaction import MemoryCompactionAgent
-
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +42,6 @@ class AgentLoop:
         reasoner: Reasoner,
         actor: Actor,
         observer: Observer,
-        compaction_agent: "MemoryCompactionAgent | None" = None,
     ) -> None:
         self._session_svc = session_svc
         self._task_svc = task_svc
@@ -58,7 +52,6 @@ class AgentLoop:
         self._reasoner = reasoner
         self._actor = actor
         self._observer = observer
-        self._compaction_agent = compaction_agent
 
     def run(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Execute one task synchronously inside a worker thread.
@@ -171,21 +164,6 @@ class AgentLoop:
                 for tool_call in result_turn.tool_calls:
                     self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
 
-            agent = self._load_agent(session_id, agent_id)
-            _llm_client = self._llm_client
-            if agent.llm_provider:
-                try:
-                    from app.llm.registry import get_llm_registry
-                    _llm_client = get_llm_registry().get_client(agent.llm_provider, agent.llm_model or None)
-                except Exception:
-                    pass
-            if self._memory_svc.should_summarize(
-                agent_id,
-                context_tokens=agent.loop_guard.context_tokens,
-                context_limit=_llm_client.context_limit,
-            ):
-                self._do_summarize(session_id, agent_id, verdict.summary)
-
         except AppError as e:
             logger.error(
                 "AgentLoop error: session=%s code=%s msg=%s",
@@ -208,51 +186,6 @@ class AgentLoop:
         if data is None:
             raise AppError("AGENT_NOT_FOUND", f"Agent {agent_id} not found")
         return Agent.from_dict(data)
-
-    def _do_summarize(
-        self, session_id: str, agent_id: str, latest_summary: str
-    ) -> None:
-        from app.common.utils import now_iso
-        from app.domain.models.memory import MemorySummary
-
-        messages = self._memory_svc.get_window(agent_id, 10000)
-        summary_text = latest_summary
-
-        if self._compaction_agent is not None:
-            try:
-                session = self._session_svc.get(session_id)
-                agent_data = self._agent_store.get(session_id, agent_id) or {}
-                working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
-
-                kept, compacted_summary = self._compaction_agent.compact(
-                    messages=messages,
-                    session_goal=session.goal,
-                    working_dir=working_dir,
-                    session_id=session_id,
-                    agent_id=agent_id,
-                )
-
-                if compacted_summary:
-                    summary_text = compacted_summary
-                    kept = [{"role": "assistant", "content": f"[Context so far]:\n{compacted_summary}"}] + kept
-
-                if len(kept) < len(messages):
-                    self._memory_svc.rewrite_messages(agent_id, kept)
-            except Exception:
-                logger.exception("AgentLoop: compaction failed for agent %s, keeping original messages", agent_id)
-
-        count = self._memory_svc.count_messages(agent_id)
-        self._memory_svc.save_summary(agent_id, MemorySummary(
-            session_id=session_id,
-            agent_id=agent_id,
-            summary_text=summary_text,
-            covered_up_to=count,
-            created_at=now_iso(),
-        ))
-
-        agent = self._load_agent(session_id, agent_id)
-        agent.loop_guard.context_tokens = 0
-        self._agent_store.save(agent.to_dict())
 
 
 def _summarize_spawn(result: "ActorResult") -> str:

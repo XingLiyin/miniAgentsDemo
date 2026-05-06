@@ -45,6 +45,8 @@ class SseBus:
             queues = self._queues.get(session_id)
             if queues and q in queues:
                 queues.remove(q)
+            if not queues:
+                self._queues.pop(session_id, None)
         handle = self._pending_flush_handles.pop(q, None)
         if handle is not None:
             handle.cancel()
