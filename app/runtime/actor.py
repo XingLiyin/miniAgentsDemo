@@ -114,7 +114,7 @@ class Actor:
                 _usage is not None
                 and _usage.prompt_tokens is not None
                 and llm_client.context_limit > 0
-                and _usage.prompt_tokens >= llm_client.context_limit
+                and _usage.prompt_tokens >= llm_client.context_limit * 0.9
             )
             if context_limit_hit:
                 logger.warning(
