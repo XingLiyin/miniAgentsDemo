@@ -30,7 +30,7 @@ class SessionService:
         template_id: str | None = None,
         token_budget: int = 200_000,
         root_max_turns: int = 20,
-        llm_name: str = "",
+        llm_provider: str = "",
         llm_model: str = "",
         working_dir: str = "",
     ) -> Session:
@@ -45,7 +45,7 @@ class SessionService:
             root_agent_id=None,
             token_budget=token_budget,
             root_max_turns=root_max_turns,
-            llm_name=llm_name,
+            llm_provider=llm_provider,
             llm_model=llm_model,
             working_dir=working_dir,
             created_at=now,

@@ -15,13 +15,14 @@ from typing import TYPE_CHECKING
 
 from app.config.settings import get_settings
 from app.domain.models.agent import Agent
+from app.domain.models.session import Session
 from app.domain.models.task import Task
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.llm.base import BaseChatClient, LLMMessage
 from app.runtime.prompt_builder import ActorPromptBuilder, PromptBuilderFactory
 from app.runtime.types import ActorResult, ContextResource, ConversationTurn, ReasoningContext, ToolCallRecord
-from app.tools.definition import CallContext, ToolResult
+from app.tools.types import CallContext, ToolResult
 
 if TYPE_CHECKING:
     from app.runtime.tool_gateway import ToolGateway
@@ -35,19 +36,17 @@ class Actor:
 
     def __init__(
         self,
-        llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
         session_svc: SessionService | None = None,
         prompt_builder: ActorPromptBuilder | None = None,
     ) -> None:
-        self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
         self._session_svc = session_svc
         self._prompt_builder = prompt_builder or PromptBuilderFactory.for_actor()
 
-    def act(self, task: Task, ctx: ReasoningContext, agent: Agent) -> ActorResult:
+    def act(self, task: Task, ctx: ReasoningContext, agent: Agent, session: Session) -> ActorResult:
         """执行单个 task，plan 和 act 共用同一循环。"""
         if task.status == "PENDING":
             self._task_svc.transition(task.id, "ACTIVE", task.session_id)
@@ -63,7 +62,7 @@ class Actor:
             or get_settings().bash_exec_cwd
         )
         toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, agent=agent, task=task, working_dir=_wd or "")
-        llm_client = self._resolve_llm_client(agent)
+        llm_client = self._resolve_llm_client(session)
         _sse = self._get_sse(session_id)
 
         tool_calls_made: list[ToolCallRecord] = []
@@ -129,14 +128,11 @@ class Actor:
 
     # ── 私有辅助方法 ──────────────────────────────────────────────────────────
 
-    def _resolve_llm_client(self, agent: Agent) -> BaseChatClient:
-        if agent.llm_provider:
-            try:
-                from app.llm.registry import get_llm_registry
-                return get_llm_registry().get_client(agent.llm_provider, agent.llm_model or None)
-            except Exception:
-                pass
-        return self._llm_client
+    def _resolve_llm_client(self, session: Session) -> BaseChatClient:
+        from app.config.settings import get_settings
+        from app.llm.registry import get_llm_registry
+        provider = session.llm_provider or get_settings().default_llm_provider
+        return get_llm_registry().get_client(provider, session.llm_model or None)
 
     def _get_sse(self, session_id: str):
         if not session_id:

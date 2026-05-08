@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.skills.definition import SkillMetadata
 from app.skills.skill_mcp_conn import SkillMCPConn
-from app.tools.definition import CallContext, ToolResult
+from app.tools.types import CallContext, ToolResult
 
 
 class MCPSkillExecutor:

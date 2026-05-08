@@ -1,46 +1,52 @@
 """Tests for MCP providers (app/tools/mcp_provider.py, mcp_http_provider.py).
 
-AF network calls are mocked out entirely — no real MCP server needed.
+mcp 网络调用全部 mock，不需要真实 MCP Server。
 """
 
 from __future__ import annotations
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.common.errors import AppError
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.types import ToolDefinition, ToolResult
 from app.tools.mcp_base import _MCPProviderBase
 
 
 # ── Shared helper ─────────────────────────────────────────────────────────────
 
-def _make_mock_ft(name: str = "list_dir", description: str = "List directory") -> MagicMock:
-    """Build a minimal AF FunctionTool mock with schema."""
-    ft = MagicMock()
-    ft.name = name
-    ft.description = description
-    ft.to_json_schema_spec.return_value = {
-        "function": {
-            "parameters": {
-                "type": "object",
-                "properties": {"path": {"type": "string", "description": "Directory path"}},
-                "required": ["path"],
-            }
-        }
+def _make_mock_mcp_tool(
+    name: str = "list_dir",
+    description: str = "List directory",
+    properties: dict | None = None,
+    required: list | None = None,
+) -> MagicMock:
+    """Build a minimal mcp.types.Tool mock."""
+    tool = MagicMock()
+    tool.name = name
+    tool.description = description
+    tool.inputSchema = {
+        "type": "object",
+        "properties": properties or {"path": {"type": "string", "description": "Directory path"}},
+        "required": required or ["path"],
     }
-    return ft
+    return tool
 
 
-async def _noop():
-    return None
+def _make_fake_connect(provider: _MCPProviderBase, tools: list):
+    """Return a no-op async _connect that seeds provider._tools and _session."""
+    async def fake_connect():
+        provider._tools = tools
+        provider._session = MagicMock()
+    return fake_connect
 
 
-def _noop_side_effect(*args, **kwargs):
-    """side_effect for MagicMock: returns a fresh coroutine on every call."""
-    return _noop()
+def _make_fake_close(provider: _MCPProviderBase):
+    async def fake_close():
+        provider._session = None
+        provider._tools = []
+    return fake_close
 
 
 # ── MCPStdioProvider ──────────────────────────────────────────────────────────
@@ -48,19 +54,12 @@ def _noop_side_effect(*args, **kwargs):
 class TestMCPStdioProvider:
     @pytest.fixture
     def provider(self):
-        """MCPStdioProvider with AF internals fully mocked."""
         from app.tools.mcp_provider import MCPStdioProvider
 
-        mock_ft = _make_mock_ft()
-        mock_af = MagicMock()
-        mock_af.functions = [mock_ft]
-        mock_af.connect = MagicMock(side_effect=_noop_side_effect)
-        mock_af.load_tools = MagicMock(side_effect=_noop_side_effect)
-        mock_af.close = MagicMock(side_effect=_noop_side_effect)
-
-        with patch("app.tools.mcp_provider.MCPStdioTool", return_value=mock_af):
-            p = MCPStdioProvider(name="fs", command="npx", args=["-y", "server"])
-        p._mock_af = mock_af
+        p = MCPStdioProvider(name="fs", command="npx", args=["-y", "server"])
+        mock_tool = _make_mock_mcp_tool()
+        p._connect = _make_fake_connect(p, [mock_tool])
+        p._close = _make_fake_close(p)
         return p
 
     def test_not_started_raises_on_list_definitions(self, provider):
@@ -95,15 +94,9 @@ class TestMCPStdioProvider:
             provider.stop()
 
     def test_call_tool_returns_tool_result(self, provider):
-        content = MagicMock()
-        content.text = "file1.txt\nfile2.txt"
-
-        async def _call_tool(name, **kwargs):
-            return [content]
-
-        provider._mock_af.call_tool = _call_tool
         provider.start()
         try:
+            provider._do_call = lambda name, args, meta: ToolResult(content="file1.txt\nfile2.txt")
             result = provider.call("list_dir", {"path": "."})
             assert isinstance(result, ToolResult)
             assert "file1.txt" in result.content
@@ -127,18 +120,12 @@ class TestMCPStdioProvider:
 class TestMCPStreamableHTTPProvider:
     @pytest.fixture
     def provider(self):
-        """MCPStreamableHTTPProvider with AF internals fully mocked."""
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
 
-        mock_ft = _make_mock_ft(name="fetch", description="Fetch URL")
-        mock_af = MagicMock()
-        mock_af.functions = [mock_ft]
-        mock_af.connect = MagicMock(side_effect=_noop_side_effect)
-        mock_af.close = MagicMock(side_effect=_noop_side_effect)
-
-        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPTool", return_value=mock_af):
-            p = MCPStreamableHTTPProvider(name="web", url="http://mcp-server/mcp")
-        p._mock_af = mock_af
+        p = MCPStreamableHTTPProvider(name="web", url="http://mcp-server/mcp")
+        mock_tool = _make_mock_mcp_tool(name="fetch", description="Fetch URL")
+        p._connect = _make_fake_connect(p, [mock_tool])
+        p._close = _make_fake_close(p)
         return p
 
     def test_not_started_raises_on_list_definitions(self, provider):
@@ -163,12 +150,9 @@ class TestMCPStreamableHTTPProvider:
             provider.stop()
 
     def test_call_tool_with_string_result(self, provider):
-        async def _call_tool(name, **kwargs):
-            return "fetched content"
-
-        provider._mock_af.call_tool = _call_tool
         provider.start()
         try:
+            provider._do_call = lambda name, args, meta: ToolResult(content="fetched content")
             result = provider.call("fetch", {"url": "https://example.com"})
             assert result.content == "fetched content"
             assert not result.is_error
@@ -212,14 +196,14 @@ class TestMCPProviderBaseShared:
         assert MCPStdioProvider._map_function_tool is _MCPProviderBase._map_function_tool
         assert MCPStreamableHTTPProvider._map_function_tool is _MCPProviderBase._map_function_tool
 
-    def test_stdio_own_methods_only_start(self):
+    def test_stdio_own_methods_only_start_and_client(self):
         from app.tools.mcp_provider import MCPStdioProvider
         own = {k for k, v in MCPStdioProvider.__dict__.items()
                if callable(v) and not k.startswith("__")}
-        assert own == {"start"}
+        assert own == {"start", "get_mcp_client"}
 
-    def test_http_own_methods_only_start(self):
+    def test_http_own_methods_only_start_and_client(self):
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
         own = {k for k, v in MCPStreamableHTTPProvider.__dict__.items()
                if callable(v) and not k.startswith("__")}
-        assert own == {"start"}
+        assert own == {"start", "get_mcp_client"}

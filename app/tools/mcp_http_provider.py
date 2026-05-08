@@ -1,7 +1,6 @@
 """MCP (Model Context Protocol) Streamable HTTP 工具提供者。
 
-使用 agent_framework.MCPStreamableHTTPTool 作为底层实现。
-通过后台事件循环线程将 AF 的全 async API 桥接为同步 ToolProvider 接口。
+使用 mcp.client.streamable_http
 
 使用示例：
     provider = MCPStreamableHTTPProvider(
@@ -17,20 +16,17 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
-from agent_framework import MCPStreamableHTTPTool
+from mcp.client.streamable_http import streamable_http_client
 
-from app.tools.mcp_base import _MCPProviderBase, _MetaInjectingMixin, _parse_mcp_tool_result
+from app.tools.mcp_base import _MCPProviderBase
 
 logger = logging.getLogger(__name__)
 
 
 class MCPStreamableHTTPProvider(_MCPProviderBase):
-    """MCP Server Streamable HTTP 工具提供者（agent-framework MCPStreamableHTTPTool 同步封装）。
-
-    start() 启动后台事件循环线程并完成 MCP 握手；
-    stop() 关闭连接并终止线程。
-    """
+    """MCP Server Streamable HTTP 工具提供者。"""
 
     def __init__(
         self,
@@ -39,30 +35,19 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
         *,
         timeout: int = 30,
     ) -> None:
-        """
-        Args:
-            name: MCP server 标识名（用于日志和 tool_name_prefix）
-            url:  MCP Server 的 HTTP 端点，如 "http://localhost:3000/mcp"
-            timeout: 请求超时秒数（默认 30）
-        """
-        class _Tool(_MetaInjectingMixin, MCPStreamableHTTPTool):
-            pass
+        super().__init__(thread_name="mcp-http-loop", request_timeout=timeout)
+        self._name = name
+        self._url = url
 
-        af_tool = _Tool(
-            name=name,
-            url=url,
-            load_tools=True,
-            request_timeout=timeout,
-            parse_tool_results=_parse_mcp_tool_result,
-        )
-        super().__init__(af_tool, thread_name="mcp-http-loop")
+    def get_mcp_client(self) -> Any:
+        return streamable_http_client(url=self._url, terminate_on_close=True)
 
     def start(self) -> None:
-        """启动后台事件循环，连接 MCP Server 并加载工具列表。"""
         self._start_loop()
-        self._run_sync(self._af_tool.connect())
+        self._run_sync(self._connect())
         self._initialized = True
         logger.info(
-            "MCPStreamableHTTPProvider started, %d tools loaded",
-            len(self._af_tool.functions),
+            "MCPStreamableHTTPProvider '%s' started, %d tools loaded",
+            self._name,
+            len(self._tools),
         )

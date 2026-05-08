@@ -20,7 +20,7 @@ from app.domain.models.agent import Agent
 from app.domain.models.tool_call import ToolCall
 from app.runtime.policy_engine import PolicyEngine
 from app.storage.file.tool_call_store import ToolCallStore
-from app.tools.definition import CallContext, ToolResult
+from app.tools.types import CallContext, ToolResult
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)

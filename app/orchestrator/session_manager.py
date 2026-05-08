@@ -101,7 +101,7 @@ class SessionManager:
             template_id=template_id,
             token_budget=token_budget or settings.default_token_budget,
             root_max_turns=root_max_turns or settings.default_root_max_turns,
-            llm_name=resolved_llm_name,
+            llm_provider=resolved_llm_name,
             llm_model=llm_model or "",
             working_dir=wd,
         )
@@ -137,8 +137,6 @@ class SessionManager:
             observe_tool_list=tpl.observe_tool_list if tpl else [],
             soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(),
-            llm_provider=resolved_llm_name,
-            llm_model=llm_model or "",
             has_spawn_permission=True,
             spawn_depth=0,
             settings={"working_dir": wd or settings.bash_exec_cwd},
@@ -220,10 +218,8 @@ class SessionManager:
             if self._task_manager is not None:
                 self._task_manager.spawn_metadata_filler(session_id, creator_agent_id, user_prompt, task.id)
 
-    def continue_session(self, session_id: str, user_message: str | list, *, initial_task: InitialTaskConfig | None = None) -> Session:
+    def continue_session(self, session_id: str, user_message: str | list, *, initial_task: InitialTaskConfig | None = None, llm_provider: str | None = None, llm_model: str | None = None) -> Session:
         """Append a user message and re-start the agent loop if the session has ended."""
-        from app.domain.services.memory_service import MemoryService
-        from app.storage.file.memory_store import MemoryStore
 
         # 提取纯文本用于 session/task 的 str 字段显示
         text_prompt = extract_text(user_message)
@@ -252,9 +248,9 @@ class SessionManager:
         except Exception:
             pass
 
-        # Loop still active — message will be picked up automatically
+        # Loop still active — reject, caller must wait for session to finish
         if session.status in ("QUEUED", "RUNNING"):
-            return session
+            raise AppError("SESSION_BUSY", f"Session {session_id} is still running (status={session.status})")
 
         # Session ended — reuse the existing root agent, reset its state
         if not session.root_agent_id:
@@ -266,6 +262,10 @@ class SessionManager:
         agent.status = "IDLE"
         agent.updated_at = now_iso()
         self._agent_store.save(agent.to_dict())
+        if llm_provider:
+            session.llm_provider = llm_provider
+            session.llm_model = llm_model or ""
+            self._session_svc.save(session)
         self._session_svc.transition(session_id, "QUEUED")
         # 重新初始化 LM 状态（旧 session 的状态已过期），并重新注册 root agent
         if self._lifecycle_manager is not None:
@@ -300,15 +300,6 @@ class SessionManager:
 
         # 注入答案并唤醒阻塞的工作线程
         get_hitl_store().submit(session_id, content)
-
-        # # 写入记忆（由 entry 携带的 agent_id 确定归属）
-        # if entry is not None and self._memory_svc is not None:
-        #     self._memory_svc.append_message(
-        #         agent_id=entry.agent_id,
-        #         role="user",
-        #         content=content,
-        #         session_id=session_id,
-        #     )
 
         # 推送用户回答气泡
         try:

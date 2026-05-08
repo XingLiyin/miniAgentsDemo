@@ -42,7 +42,7 @@ class Session:
     failure_counter: int = 0           # 连续失败计数
     failure_threshold: int = 3         # 达到阈值时暂停（Phase 2 HITL）
 
-    llm_name: str = ""
+    llm_provider: str = ""
     llm_model: str = ""
     working_dir: str = ""   # workspace path bound to this session
 
@@ -63,7 +63,7 @@ class Session:
             "root_max_turns": self.root_max_turns,
             "failure_counter": self.failure_counter,
             "failure_threshold": self.failure_threshold,
-            "llm_name": self.llm_name,
+            "llm_provider": self.llm_provider,
             "llm_model": self.llm_model,
             "working_dir": self.working_dir,
             "created_at": self.created_at,
@@ -85,7 +85,7 @@ class Session:
             root_max_turns=d.get("root_max_turns", 20),
             failure_counter=d.get("failure_counter", 0),
             failure_threshold=d.get("failure_threshold", 3),
-            llm_name=d.get("llm_name", ""),
+            llm_provider=d.get("llm_provider", ""),
             llm_model=d.get("llm_model", ""),
             working_dir=d.get("working_dir", ""),
             created_at=d.get("created_at", ""),

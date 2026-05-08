@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.common.errors import AppError
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.types import ToolDefinition, ToolResult
 from app.tools.registry import ToolRegistry
 
 
@@ -24,43 +24,18 @@ def _make_tool_def(name: str) -> ToolDefinition:
 
 
 def _mock_provider(tool_names: list[str]) -> MagicMock:
-    """Build a mock ToolProvider that lists given tool names."""
     provider = MagicMock()
     provider.list_definitions.return_value = [_make_tool_def(n) for n in tool_names]
     return provider
 
 
-async def _noop():
-    return None
-
-
-def _noop_side_effect(*args, **kwargs):
-    return _noop()
-
-
-def _make_mock_mcp_af(tool_names: list[str]) -> MagicMock:
-    """Build a mock AF MCP tool with given function names."""
-    fts = []
-    for name in tool_names:
-        ft = MagicMock()
-        ft.name = name
-        ft.description = f"Tool {name}"
-        ft.to_json_schema_spec.return_value = {
-            "function": {
-                "parameters": {
-                    "type": "object",
-                    "properties": {"x": {"type": "string"}},
-                    "required": ["x"],
-                }
-            }
-        }
-        fts.append(ft)
-    mock_af = MagicMock()
-    mock_af.functions = fts
-    mock_af.connect = MagicMock(side_effect=_noop_side_effect)
-    mock_af.load_tools = MagicMock(side_effect=_noop_side_effect)
-    mock_af.close = MagicMock(side_effect=_noop_side_effect)
-    return mock_af
+def _make_mock_mcp_provider(tool_names: list[str]) -> MagicMock:
+    """Build a mock MCPStdioProvider / MCPStreamableHTTPProvider instance."""
+    p = MagicMock()
+    p.list_definitions.return_value = [_make_tool_def(n) for n in tool_names]
+    p.start.return_value = None
+    p.stop.return_value = None
+    return p
 
 
 # ── Basic registry operations ──────────────────────────────────────────────────
@@ -121,9 +96,9 @@ class TestToolRegistryBasic:
 class TestRegisterMCPStdio:
     def test_registers_tools_after_start(self):
         reg = ToolRegistry()
-        mock_af = _make_mock_mcp_af(["read_file", "write_file"])
+        mock_p = _make_mock_mcp_provider(["read_file", "write_file"])
 
-        with patch("app.tools.mcp_provider.MCPStdioTool", return_value=mock_af):
+        with patch("app.tools.mcp_provider.MCPStdioProvider", return_value=mock_p):
             reg.register_mcp_stdio(name="fs", command="npx", args=["-y", "server-fs"])
 
         try:
@@ -134,9 +109,9 @@ class TestRegisterMCPStdio:
 
     def test_provider_added_to_mcp_providers_list(self):
         reg = ToolRegistry()
-        mock_af = _make_mock_mcp_af(["tool_x"])
+        mock_p = _make_mock_mcp_provider(["tool_x"])
 
-        with patch("app.tools.mcp_provider.MCPStdioTool", return_value=mock_af):
+        with patch("app.tools.mcp_provider.MCPStdioProvider", return_value=mock_p):
             reg.register_mcp_stdio(name="srv", command="python", args=["server.py"])
 
         try:
@@ -150,9 +125,9 @@ class TestRegisterMCPStdio:
 class TestRegisterMCPHttp:
     def test_registers_tools_after_start(self):
         reg = ToolRegistry()
-        mock_af = _make_mock_mcp_af(["search", "summarize"])
+        mock_p = _make_mock_mcp_provider(["search", "summarize"])
 
-        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPTool", return_value=mock_af):
+        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPProvider", return_value=mock_p):
             reg.register_mcp_http(name="web", url="http://mcp-server/mcp")
 
         try:
@@ -163,9 +138,9 @@ class TestRegisterMCPHttp:
 
     def test_provider_added_to_mcp_providers_list(self):
         reg = ToolRegistry()
-        mock_af = _make_mock_mcp_af(["tool_y"])
+        mock_p = _make_mock_mcp_provider(["tool_y"])
 
-        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPTool", return_value=mock_af):
+        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPProvider", return_value=mock_p):
             reg.register_mcp_http(name="srv", url="http://srv/mcp")
 
         try:
@@ -179,39 +154,39 @@ class TestRegisterMCPHttp:
 class TestRegistryShutdown:
     def test_shutdown_stops_all_providers(self):
         reg = ToolRegistry()
-        mock_af_a = _make_mock_mcp_af(["a1"])
-        mock_af_b = _make_mock_mcp_af(["b1"])
+        mock_p_a = _make_mock_mcp_provider(["a1"])
+        mock_p_b = _make_mock_mcp_provider(["b1"])
 
-        with patch("app.tools.mcp_provider.MCPStdioTool", return_value=mock_af_a):
+        with patch("app.tools.mcp_provider.MCPStdioProvider", return_value=mock_p_a):
             reg.register_mcp_stdio(name="srv_a", command="cmd_a")
-        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPTool", return_value=mock_af_b):
+        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPProvider", return_value=mock_p_b):
             reg.register_mcp_http(name="srv_b", url="http://b/mcp")
 
         assert len(reg._mcp_providers) == 2
         reg.shutdown()
-        assert reg._mcp_providers == []
+        assert not reg._mcp_providers
 
     def test_shutdown_with_no_mcp_providers_is_noop(self):
         reg = ToolRegistry()
-        reg.shutdown()  # must not raise
-        assert reg._mcp_providers == []
+        reg.shutdown()
+        assert not reg._mcp_providers
 
     def test_shutdown_tolerates_stop_exception(self):
         reg = ToolRegistry()
         bad_provider = MagicMock()
         bad_provider.stop.side_effect = RuntimeError("force fail")
-        reg._mcp_providers.append(bad_provider)
-        reg.shutdown()  # must not propagate
-        assert reg._mcp_providers == []
+        reg._mcp_providers["bad"] = bad_provider
+        reg.shutdown()
+        assert not reg._mcp_providers
 
     def test_multiple_mcp_servers_tools_coexist(self):
         reg = ToolRegistry()
-        mock_af_a = _make_mock_mcp_af(["tool_from_a"])
-        mock_af_b = _make_mock_mcp_af(["tool_from_b"])
+        mock_p_a = _make_mock_mcp_provider(["tool_from_a"])
+        mock_p_b = _make_mock_mcp_provider(["tool_from_b"])
 
-        with patch("app.tools.mcp_provider.MCPStdioTool", return_value=mock_af_a):
+        with patch("app.tools.mcp_provider.MCPStdioProvider", return_value=mock_p_a):
             reg.register_mcp_stdio(name="a", command="a_cmd")
-        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPTool", return_value=mock_af_b):
+        with patch("app.tools.mcp_http_provider.MCPStreamableHTTPProvider", return_value=mock_p_b):
             reg.register_mcp_http(name="b", url="http://b/mcp")
 
         try:

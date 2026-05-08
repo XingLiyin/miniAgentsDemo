@@ -14,9 +14,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.domain.models.session import Session
-from app.llm.base import BaseChatClient
 from app.llm.types import LLMMessage
-from app.tools.definition import CallContext
+from app.tools.types import CallContext
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.runtime.prompt_builder import ObserverPromptBuilder, PromptBuilderFactory
@@ -29,6 +28,7 @@ from app.runtime.types import (
 if TYPE_CHECKING:
     from app.domain.models.agent import Agent
     from app.domain.models.task import Task
+    from app.llm.base import BaseChatClient
     from app.runtime.tool_gateway import ToolGateway
 
 logger = logging.getLogger(__name__)
@@ -44,13 +44,11 @@ class Observer:
 
     def __init__(
         self,
-        llm_client: BaseChatClient,
         tool_gateway: "ToolGateway",
         task_svc: TaskService,
         session_svc: SessionService | None = None,
         prompt_builder: ObserverPromptBuilder | None = None,
     ) -> None:
-        self._llm_client = llm_client
         self._tool_gateway = tool_gateway
         self._task_svc = task_svc
         self._session_svc = session_svc
@@ -89,7 +87,7 @@ class Observer:
         task_list: list["Task"],
         agent: "Agent | None" = None,
     ) -> ObserverVerdict:
-        llm_client    = self._resolve_llm_client(agent)
+        llm_client    = self._resolve_llm_client(session)
         session_id    = task.session_id
         system_prompt = self._prompt_builder.build_system_prompt(ctx)
         messages      = self._prompt_builder.build_messages(session, result, ctx, task, task_list)
@@ -155,15 +153,11 @@ class Observer:
             context_tokens=max_context_tokens,
         )
 
-    def _resolve_llm_client(self, agent: "Agent | None") -> BaseChatClient:
-        """按 agent.llm_name 动态解析 LLM 客户端，缺省用注入的默认客户端。"""
-        if agent is not None and agent.llm_provider:
-            try:
-                from app.llm.registry import get_llm_registry
-                return get_llm_registry().get_client(agent.llm_provider)
-            except Exception:
-                pass
-        return self._llm_client
+    def _resolve_llm_client(self, session: Session) -> "BaseChatClient":
+        from app.config.settings import get_settings
+        from app.llm.registry import get_llm_registry
+        provider = session.llm_provider or get_settings().default_llm_provider
+        return get_llm_registry().get_client(provider, session.llm_model or None)
 
     def _rule_observe(
         self,

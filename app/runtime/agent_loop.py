@@ -19,10 +19,10 @@ from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
-from app.llm.base import BaseChatClient
 from app.runtime.actor import Actor
 from app.runtime.observer import Observer
 from app.runtime.reasoner import Reasoner
+from app.runtime.types import ActorResult
 from app.storage.file.agent_store import AgentStore
 
 logger = logging.getLogger(__name__)
@@ -38,7 +38,6 @@ class AgentLoop:
         memory_svc: MemoryService,
         blackboard_svc: BlackboardService,
         agent_store: AgentStore,
-        llm_client: BaseChatClient,
         reasoner: Reasoner,
         actor: Actor,
         observer: Observer,
@@ -48,7 +47,6 @@ class AgentLoop:
         self._memory_svc = memory_svc
         self._bb_svc = blackboard_svc
         self._agent_store = agent_store
-        self._llm_client = llm_client
         self._reasoner = reasoner
         self._actor = actor
         self._observer = observer
@@ -77,7 +75,7 @@ class AgentLoop:
             task = self._task_svc.get(task_id, session_id)
 
             ctx = self._reasoner.reason(session, agent, task)
-            result = self._actor.act(task, ctx, agent)
+            result = self._actor.act(task, ctx, agent, session)
 
             if result.context_tokens:
                 agent.loop_guard.context_tokens = result.context_tokens

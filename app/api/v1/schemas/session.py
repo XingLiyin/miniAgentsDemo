@@ -21,7 +21,7 @@ class CreateSessionRequest(BaseModel):
     template_id: Optional[str] = None
     token_budget: Optional[int] = None
     root_max_turns: Optional[int] = None
-    llm_name: Optional[str] = None
+    llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     working_dir: Optional[str] = None
     initial_task: Optional[InitialTaskConfig] = None
@@ -56,7 +56,7 @@ class SessionResponse(BaseModel):
     token_used: int
     root_max_turns: int
     failure_counter: int
-    llm_name: Optional[str] = None
+    llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     working_dir: str = ""
     created_at: str

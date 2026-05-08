@@ -434,7 +434,6 @@ class LifecycleManager:
             soul_path=parent_data.get("soul_path"),
             loop_guard=LoopGuard(actor_max_tool_rounds=50),
             inherit_memory=inherit_memory,
-            llm_provider=parent_data.get("llm_provider", settings.default_llm_provider),
             has_spawn_permission=(spawn_depth < self._max_spawn_depth),
             spawn_depth=spawn_depth,
             settings={"working_dir": parent_settings.get("working_dir", "")},

@@ -22,7 +22,7 @@ export interface Session {
   token_used: number
   root_max_turns: number
   failure_counter: number
-  llm_name: string | null
+  llm_provider: string | null
   llm_model: string | null
   created_at: string
   updated_at: string
@@ -39,10 +39,17 @@ export interface CreateSessionRequest {
   template_id?: string | null
   token_budget?: number
   root_max_turns?: number
-  llm_name?: string | null
+  llm_provider?: string | null
   llm_model?: string | null
   working_dir?: string | null
   initial_task?: InitialTaskConfig | null
+}
+
+export interface SendMessageRequest {
+  content: string | object[]
+  initial_task?: InitialTaskConfig | null
+  llm_provider?: string | null
+  llm_model?: string | null
 }
 
 export type SessionConfig = Omit<CreateSessionRequest, 'user_prompt'>
@@ -82,7 +89,6 @@ export interface Agent {
   tool_list: string[]
   skill_list: string[]
   loop_guard: { turns_used: number; max_turns: number }
-  llm_name: string
 }
 
 // ─── AgentTemplate ───────────────────────────────────────────────────────────

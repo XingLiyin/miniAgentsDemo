@@ -9,6 +9,7 @@ from app.domain.events.event_bus import get_event_bus
 from app.domain.services.agent_template_service import AgentTemplateService
 from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
+from app.domain.services.mcp_service import MCPService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.domain.state_machine import SessionStateMachine, TaskStateMachine
@@ -19,14 +20,13 @@ from app.orchestrator.task_manager import TaskManager
 from app.orchestrator.task_queue import TaskQueue
 from app.runtime.actor import Actor
 from app.runtime.agent_loop import AgentLoop
-from app.tools.control_tools import register_control_tools
 from app.runtime.observer import Observer
 from app.runtime.policy_engine import PolicyEngine
 from app.runtime.policy_rule import BashExecGuardRule, WhitelistRule
 from app.runtime.reasoner import Reasoner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
-from app.tools.registry import get_tool_registry
+from app.tools.registry import ToolRegistry
 from app.storage.file.agent_store import AgentStore
 from app.storage.file.agent_template_store import AgentTemplateStore
 from app.storage.file.blackboard_store import BlackboardStore
@@ -70,6 +70,23 @@ def get_agent_template_service() -> AgentTemplateService:
 
 
 @lru_cache
+def get_tool_registry() -> ToolRegistry:
+    from app.tools.builtins import get_builtin_tools
+    registry = ToolRegistry()
+    registry.register_tools(get_builtin_tools(), name="builtin")
+    return registry
+
+
+@lru_cache
+def get_mcp_service() -> MCPService:
+    from app.storage.file.mcp_config_store import MCPConfigStore
+    return MCPService(
+        tool_registry=get_tool_registry(),
+        store=MCPConfigStore(),
+    )
+
+
+@lru_cache
 def get_task_queue() -> TaskQueue:
     return TaskQueue(task_svc=get_task_service())
 
@@ -92,11 +109,7 @@ def get_task_manager() -> TaskManager:
 @lru_cache
 def get_tool_gateway() -> ToolGateway:
     registry = get_tool_registry()
-    register_control_tools(
-        registry=registry,
-        task_svc=get_task_service(),
-        session_svc=get_session_service(),
-    )
+    registry.register_control_tools(get_task_service(), get_session_service())
     return ToolGateway(
         policy=PolicyEngine([
             WhitelistRule(registry),
@@ -133,7 +146,6 @@ def get_reasoner() -> Reasoner:
         skill_registry=get_skill_registry(),
         task_svc=get_task_service(),
         agent_template_registry=get_agent_template_registry(),
-        llm_client=_get_llm_client(),
         compaction_agent=get_compaction_agent(),
         agent_store=AgentStore(),
     )
@@ -142,7 +154,6 @@ def get_reasoner() -> Reasoner:
 @lru_cache
 def get_actor() -> Actor:
     return Actor(
-        llm_client=_get_llm_client(),
         tool_gateway=get_tool_gateway(),
         task_svc=get_task_service(),
         session_svc=get_session_service(),
@@ -181,17 +192,15 @@ def get_compaction_agent():
 
 @lru_cache
 def get_agent_loop() -> AgentLoop:
-    llm_client = _get_llm_client()
     return AgentLoop(
         session_svc=get_session_service(),
         task_svc=get_task_service(),
         memory_svc=get_memory_service(),
         blackboard_svc=get_blackboard_service(),
         agent_store=AgentStore(),
-        llm_client=llm_client,
         reasoner=get_reasoner(),
         actor=get_actor(),
-        observer=Observer(llm_client=llm_client, tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
+        observer=Observer(tool_gateway=get_tool_gateway(), task_svc=get_task_service(), session_svc=get_session_service()),
     )
 
 

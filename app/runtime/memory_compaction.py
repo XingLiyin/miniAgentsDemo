@@ -12,7 +12,7 @@ _prompt_builder = BasePromptBuilder()
 
 if TYPE_CHECKING:
     from app.llm.base import BaseChatClient
-    from app.tools.definition import ToolResult
+    from app.tools.types import ToolResult
     from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ class MemoryCompactionAgent:
         session_id: str,
         agent_id: str,
     ) -> str:
-        from app.tools.definition import CallContext, ToolResult
+        from app.tools.types import CallContext, ToolResult
 
         tools = self._tool_registry.to_llm_tools(list(self._tool_allowlist))
         ctx = CallContext(session_id=session_id, agent_id=agent_id, working_dir=working_dir)
@@ -139,7 +139,7 @@ def _call_tool(
     registry: "ToolRegistry",
     allowlist: set[str],
 ) -> "ToolResult":
-    from app.tools.definition import ToolResult
+    from app.tools.types import ToolResult
 
     if name not in allowlist:
         return ToolResult(content=f"[Tool '{name}' not available in compaction context]", is_error=True)

@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.common.errors import AppError
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.types import ToolDefinition, ToolResult
 from app.tools.tool_decorator import _extract_input_schema, tool_result
 
 

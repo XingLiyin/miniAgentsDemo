@@ -18,7 +18,7 @@ const DEFAULT_CONFIG: SessionConfig = {
   template_id: null,
   token_budget: 200000,
   root_max_turns: 20,
-  llm_name: null,
+  llm_provider: null,
   llm_model: null,
   working_dir: null,
   initial_task: null,
@@ -105,9 +105,9 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
 
         <Select
           label="Provider"
-          value={config.llm_name ?? ''}
+          value={config.llm_provider ?? ''}
           onChange={(e) =>
-            setConfig((c) => ({ ...c, llm_name: e.target.value || null, llm_model: null }))
+            setConfig((c) => ({ ...c, llm_provider: e.target.value || null, llm_model: null }))
           }
         >
           <option value="">使用默认 Provider</option>
@@ -116,8 +116,8 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
           ))}
         </Select>
 
-        {config.llm_name && (() => {
-          const provider = llms?.find(l => l.name === config.llm_name)
+        {config.llm_provider && (() => {
+          const provider = llms?.find(l => l.name === config.llm_provider)
           if (!provider?.models.length) return null
           return (
             <Select

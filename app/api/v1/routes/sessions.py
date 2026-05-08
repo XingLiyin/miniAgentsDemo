@@ -19,6 +19,8 @@ from app.common.errors import AppError
 class SendMessageRequest(BaseModel):
     content: str | list           # str 纯文本 或 list[ContentPart dict] 多模态
     initial_task: InitialTaskConfig | None = None
+    llm_provider: str | None = None
+    llm_model: str | None = None
 
 
 class AnswerInputRequest(BaseModel):
@@ -46,7 +48,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             template_id=req.template_id,
             token_budget=req.token_budget,
             root_max_turns=req.root_max_turns,
-            llm_provider=req.llm_name,
+            llm_provider=req.llm_provider,
             llm_model=req.llm_model,
             working_dir=req.working_dir,
             initial_task=req.initial_task,
@@ -99,7 +101,12 @@ async def send_message(session_id: str, req: SendMessageRequest) -> SessionRespo
     """Send a user message to a session. Re-opens the session if it has ended."""
     try:
         mgr = get_session_manager()
-        session = mgr.continue_session(session_id, req.content, initial_task=req.initial_task)
+        session = mgr.continue_session(
+            session_id, req.content,
+            initial_task=req.initial_task,
+            llm_provider=req.llm_provider,
+            llm_model=req.llm_model,
+        )
         return SessionResponse(**session.to_dict())
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400

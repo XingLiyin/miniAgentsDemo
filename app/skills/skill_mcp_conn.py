@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 
-from app.tools.definition import CallContext, ToolResult
+from app.tools.types import CallContext, ToolResult
 from app.tools.mcp_base import _MCPProviderBase
 
 logger = logging.getLogger(__name__)

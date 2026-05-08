@@ -17,8 +17,8 @@ from typing import TYPE_CHECKING
 
 from app.common.errors import AppError
 from app.llm.types import LLMTool
-from app.tools.definition import ToolDefinition
-from app.tools.provider import ToolProvider
+from app.tools.control_tools import get_control_tools
+from app.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
     from app.tools.mcp_base import _MCPProviderBase
@@ -34,25 +34,22 @@ class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}             # builtin only
         self._mcp_providers: dict[str, _MCPProviderBase] = {}   # server_name → provider（懒连接）
-        self._control_tool_names: set[str] = set()
         self._last_connect_attempt: dict[str, float] = {}       # server_name → monotonic timestamp
 
     # ── Builtin 工具注册 ──────────────────────────────────────────────────────
 
-    def register(self, tool_def: ToolDefinition) -> None:
-        self._tools[tool_def.name] = tool_def
-        logger.debug("ToolRegistry: registered builtin tool '%s'", tool_def.name)
+    def register_tools(self, definitions: list[ToolDefinition], name: str = "builtin") -> None:
+        """批量注册内置工具。"""
+        for tool_def in definitions:
+            self._tools[tool_def.name] = tool_def
+            logger.debug("ToolRegistry: registered tool '%s' from %s", tool_def.name, name)
 
-    def register_as_control(self, tool_def: ToolDefinition) -> None:
-        self.register(tool_def)
-        self._control_tool_names.add(tool_def.name)
-
-    def register_provider(self, provider: ToolProvider, name: str = "builtin") -> None:
-        """批量注册 builtin Provider 的所有工具（仅供内置工具使用）。"""
-        tool_defs = list(provider.list_definitions())
-        for tool_def in tool_defs:
-            self.register(tool_def)
-        self._sync_added(tool_defs, provider=name)
+    def register_control_tools(self, task_svc, session_svc) -> None:
+        """注入服务并批量注册控制工具。"""
+        from app.tools.control_tools import get_control_tools
+        for tool_def in get_control_tools(task_svc, session_svc):
+            self._tools[tool_def.name] = tool_def
+            logger.debug("ToolRegistry: registered tool '%s' from control tools", tool_def.name)
 
     # ── MCP Server 注册 ───────────────────────────────────────────────────────
 
@@ -198,30 +195,4 @@ class ToolRegistry:
             logger.warning("ToolRegistry: failed to connect '%s': %s", name, e)
             return False
 
-    def _sync_added(self, tool_defs: list[ToolDefinition], provider: str) -> None:
-        try:
-            from app.tools.tool_sync import get_tool_sync_service
-            get_tool_sync_service().on_tools_added(tool_defs, provider=provider)
-        except Exception:
-            logger.warning("ToolRegistry: sync-added failed for provider '%s'", provider, exc_info=True)
 
-    def _sync_removed(self, names: list[str]) -> None:
-        try:
-            from app.tools.tool_sync import get_tool_sync_service
-            get_tool_sync_service().on_tools_removed(names)
-        except Exception:
-            logger.warning("ToolRegistry: sync-removed failed for %s", names, exc_info=True)
-
-
-# ── 全局单例 ──────────────────────────────────────────────────────────────────
-
-_registry: ToolRegistry | None = None
-
-
-def get_tool_registry() -> ToolRegistry:
-    global _registry
-    if _registry is None:
-        _registry = ToolRegistry()
-        from app.tools.builtins import get_builtin_provider
-        _registry.register_provider(get_builtin_provider(), name="builtin")
-    return _registry

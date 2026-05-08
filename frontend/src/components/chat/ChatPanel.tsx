@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
+import { llmsApi } from '@/api/llms'
+import type { Session } from '@/types'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
 import type { ChatItem, ChatMessage, ChatToolCall, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatObserverToolCall, ChatImageData } from '@/hooks/useSessionSSE'
 import { formatTime } from '@/lib/status'
@@ -357,19 +359,34 @@ function AttachmentPreview({ attachments, onRemove }: { attachments: Attachment[
 
 function TextInput({
   sessionId,
+  session,
   disabled,
 }: {
   sessionId: string
+  session: Session | null
   disabled?: boolean
 }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
+  const [llmProvider, setLlmProvider] = useState<string>('')
+  const [llmModel, setLlmModel] = useState<string>('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const queryClient = useQueryClient()
 
+  const { data: llms } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
+
+  // Sync LLM selectors with session when session loads or changes
+  useEffect(() => {
+    setLlmProvider(session?.llm_provider ?? '')
+    setLlmModel(session?.llm_model ?? '')
+  }, [session?.llm_provider, session?.llm_model])
+
+  const selectedProvider = llms?.find(l => l.name === llmProvider)
+
   const mutation = useMutation({
-    mutationFn: (content: string | ContentPart[]) => sessionsApi.sendMessage(sessionId, content),
+    mutationFn: (content: string | ContentPart[]) =>
+      sessionsApi.sendMessage(sessionId, content, null, llmProvider || null, llmModel || null),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['sessions'] })
       setText('')
@@ -386,7 +403,7 @@ function TextInput({
       const parts: ContentPart[] = [
         ...attachments.map((a): ImagePart => ({
           type: 'image',
-          data: a.dataUrl.split(',')[1],   // strip "data:...;base64," prefix
+          data: a.dataUrl.split(',')[1],
           media_type: a.mediaType,
           source_type: 'base64',
         })),
@@ -423,6 +440,32 @@ function TextInput({
   return (
     <div className="border-t border-gray-200 bg-white p-3">
       {mutation.isError && <p className="text-xs text-red-500 mb-2">发送失败，请重试</p>}
+      {/* LLM switcher */}
+      {llms && llms.length > 0 && (
+        <div className="flex items-center gap-1.5 mb-2">
+          <span className="text-xs text-gray-400 flex-shrink-0">LLM</span>
+          <select
+            value={llmProvider}
+            onChange={e => { setLlmProvider(e.target.value); setLlmModel('') }}
+            disabled={disabled}
+            className="text-xs border border-gray-200 rounded px-1.5 py-0.5 text-gray-600 bg-white focus:outline-none focus:border-blue-400 disabled:opacity-50 disabled:bg-gray-50"
+          >
+            <option value="">默认</option>
+            {llms.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
+          </select>
+          {selectedProvider && selectedProvider.models.length > 0 && (
+            <select
+              value={llmModel}
+              onChange={e => setLlmModel(e.target.value)}
+              disabled={disabled}
+              className="text-xs border border-gray-200 rounded px-1.5 py-0.5 text-gray-600 bg-white focus:outline-none focus:border-blue-400 disabled:opacity-50 disabled:bg-gray-50"
+            >
+              <option value="">默认（{selectedProvider.default_model}）</option>
+              {selectedProvider.models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
+            </select>
+          )}
+        </div>
+      )}
       <AttachmentPreview attachments={attachments} onRemove={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))} />
       <div className="flex items-end gap-2">
         <input
@@ -757,9 +800,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
                 {(session.token_used / 1000).toFixed(1)}k / {(session.token_budget / 1000).toFixed(0)}k tokens
               </span>
             )}
-            {session?.llm_name && (
+            {session?.llm_provider && (
               <span className="text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
-                {session.llm_name}{session.llm_model ? ` / ${session.llm_model}` : ''}
+                {session.llm_provider}{session.llm_model ? ` / ${session.llm_model}` : ''}
               </span>
             )}
             {!connected && (
@@ -888,7 +931,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       {waitingInput ? (
         <WaitingInputArea sessionId={sessionId} waitingInput={waitingInput} />
       ) : (
-        <TextInput sessionId={sessionId} disabled={isRunning} />
+        <TextInput sessionId={sessionId} session={session ?? null} disabled={isRunning} />
       )}
     </div>
   )

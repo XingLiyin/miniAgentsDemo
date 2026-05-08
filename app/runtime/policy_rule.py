@@ -10,7 +10,7 @@ from app.common.errors import AppError
 
 if TYPE_CHECKING:
     from app.domain.models.agent import Agent
-    from app.tools.definition import CallContext
+    from app.tools.types import CallContext
 
 
 class PolicyRule(ABC):

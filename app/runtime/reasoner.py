@@ -13,11 +13,10 @@ from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.task_service import TaskService
 from app.runtime.types import ContextResource, ReasoningContext
-from app.tools.definition import CallContext
+from app.tools.types import CallContext
 
 if TYPE_CHECKING:
     from app.agent_template.registry import AgentTemplateRegistry
-    from app.llm.base import BaseChatClient
     from app.runtime.memory_compaction import MemoryCompactionAgent
     from app.skills.registry import SkillRegistry
     from app.storage.file.agent_store import AgentStore
@@ -44,7 +43,6 @@ class Reasoner:
         skill_registry: "SkillRegistry | None" = None,
         task_svc: TaskService | None = None,
         agent_template_registry: "AgentTemplateRegistry | None" = None,
-        llm_client: "BaseChatClient | None" = None,
         compaction_agent: "MemoryCompactionAgent | None" = None,
         agent_store: "AgentStore | None" = None,
     ) -> None:
@@ -54,7 +52,6 @@ class Reasoner:
         self._skill_registry = skill_registry
         self._task_svc = task_svc
         self._agent_template_registry = agent_template_registry
-        self._llm_client = llm_client
         self._compaction_agent = compaction_agent
         self._agent_store = agent_store
 
@@ -82,14 +79,15 @@ class Reasoner:
 
     def _maybe_compact(self, session: Session, agent: Agent, memory_tokens: int) -> bool:
         """检查 token 预算，必要时触发 compaction，返回是否执行了压缩。"""
-        _llm_client = self._llm_client
-        if agent.llm_provider and _llm_client:
-            try:
-                from app.llm.registry import get_llm_registry
-                _llm_client = get_llm_registry().get_client(agent.llm_provider, agent.llm_model or None)
-            except Exception:
-                pass
-        context_limit = _llm_client.context_limit if _llm_client else 0
+        context_limit = 0
+        try:
+            from app.config.settings import get_settings
+            from app.llm.registry import get_llm_registry
+            provider = session.llm_provider or get_settings().default_llm_provider
+            _llm_client = get_llm_registry().get_client(provider, session.llm_model or None)
+            context_limit = _llm_client.context_limit
+        except Exception:
+            pass
         if not self._memory_svc.should_summarize(
             agent.id,
             context_tokens=memory_tokens,
@@ -163,7 +161,7 @@ class Reasoner:
         skill_name = task.settings.get("skill_name") if task.settings else None
         if skill_name and self._skill_registry:
             from app.config.settings import get_settings
-            from app.tools.definition import CallContext
+            from app.tools.types import CallContext
             _wd = (
                 (task.settings.get("working_dir") if task.settings else None)
                 or agent.settings.get("working_dir")
@@ -226,7 +224,7 @@ class Reasoner:
     def _build_actor_resources(self, goal: str, agent: Agent, task: Task, session_id: str = "") -> list[ContextResource]:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
         from app.config.settings import get_settings
-        from app.tools.definition import CallContext
+        from app.tools.types import CallContext
         _wd = (
             (task.settings.get("working_dir") if task.settings else None)
             or agent.settings.get("working_dir")

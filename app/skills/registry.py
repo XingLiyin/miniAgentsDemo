@@ -26,7 +26,7 @@ from app.skills.definition import (
 )
 from app.skills.loader import SkillLoader
 from app.skills.skill_mcp_conn import SkillMCPConn
-from app.tools.definition import CallContext
+from app.tools.types import CallContext
 
 logger = logging.getLogger(__name__)
 

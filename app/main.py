@@ -22,7 +22,7 @@ async def _lifespan(app: FastAPI):
     set_main_loop(_asyncio.get_running_loop())
 
     # 应用启动时从持久化配置恢复 MCP Server
-    from app.domain.services.mcp_service import get_mcp_service
+    from app.api.v1.deps import get_mcp_service
     get_mcp_service().restore_all()
     # 恢复远端 skill 来源（须在 MCP restore 之后，依赖事件循环已就绪）
     from app.domain.services.skill_source_service import get_remote_skill_source_service
@@ -32,7 +32,7 @@ async def _lifespan(app: FastAPI):
     get_agent_template_registry()
     yield
     # 应用关闭时停止所有 MCP Provider
-    from app.tools.registry import get_tool_registry
+    from app.api.v1.deps import get_tool_registry
     get_tool_registry().shutdown()
 
 

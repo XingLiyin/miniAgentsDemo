@@ -203,18 +203,3 @@ class MCPService:
             )
         return None
 
-
-# ── 全局单例 ──────────────────────────────────────────────────────────────────
-
-_mcp_service: MCPService | None = None
-
-
-def get_mcp_service() -> MCPService:
-    global _mcp_service
-    if _mcp_service is None:
-        from app.tools.registry import get_tool_registry
-        _mcp_service = MCPService(
-            tool_registry=get_tool_registry(),
-            store=MCPConfigStore(),
-        )
-    return _mcp_service

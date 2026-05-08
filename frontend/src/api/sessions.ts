@@ -12,8 +12,19 @@ export const sessionsApi = {
   create: (data: CreateSessionRequest) => http.post<Session>('/sessions', data),
   cancel: (id: string) => http.post<Session>(`/sessions/${id}/cancel`),
   getTasks: (id: string) => http.get<Task[]>(`/sessions/${id}/tasks`),
-  sendMessage: (id: string, content: MessageContent, initialTask?: InitialTaskConfig | null) =>
-    http.post<Session>(`/sessions/${id}/messages`, { content, initial_task: initialTask ?? null }),
+  sendMessage: (
+    id: string,
+    content: MessageContent,
+    initialTask?: InitialTaskConfig | null,
+    llmProvider?: string | null,
+    llmModel?: string | null,
+  ) =>
+    http.post<Session>(`/sessions/${id}/messages`, {
+      content,
+      initial_task: initialTask ?? null,
+      llm_provider: llmProvider ?? null,
+      llm_model: llmModel ?? null,
+    }),
   answerInput: (id: string, content: string) =>
     http.post<Session>(`/sessions/${id}/input`, { content }),
   delete: (id: string) => http.delete<void>(`/sessions/${id}`),

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from app.tools.builtins import bash_exec, http_request
-from app.tools.definition import ToolDefinition, ToolResult
+from app.tools.types import ToolDefinition, ToolResult
 
 
 # ── bash_exec ─────────────────────────────────────────────────────────────────

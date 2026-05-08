@@ -6,7 +6,8 @@ from fastapi import APIRouter, HTTPException
 
 from app.api.v1.schemas.mcp import MCPHttpRegisterRequest, MCPServerResponse, MCPStdioRegisterRequest
 from app.common.errors import AppError
-from app.domain.services.mcp_service import MCPServerInfo, get_mcp_service
+from app.api.v1.deps import get_mcp_service
+from app.domain.services.mcp_service import MCPServerInfo
 
 router = APIRouter()
 
