@@ -299,7 +299,7 @@ def submit_task_assessment(
     task = ctx.task if ctx else None
     if task_outcome not in ("success", "failed", "active", "needs_user_input"):
         task_outcome = "failed"
-    actor_result = f"{task_result}\n\n下一步建议：{next_step_hint}" if next_step_hint else task_result
+    actor_result = f"{task_result}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_result
 
     if task is not None:
         task.actor_outcome = task_outcome
@@ -408,7 +408,7 @@ def submit_task(
     use_subagent: Annotated[bool, "True if the task should run in an independent sub-agent"] = False,
     subagent_template: Annotated[str, "Template name for the sub-agent (e.g. 'planner'); empty uses system default"] = "",
     inherit_memory: Annotated[bool, "True (default) for sub-agents that need session history"] = True,
-    user_prompt: Annotated[str, "The user prompt that triggered this task, or empty"] = "",
+    task_prompt: Annotated[str, "Detailed prompt for this task — extract and include as much relevant context from the user's original request as possible; leave empty only if no additional detail is needed"] = "",
     *,
     ctx: CallContext | None = None,
     task_svc: "TaskService" = None,
@@ -417,6 +417,8 @@ def submit_task(
     """Create a single new task in the current session. The current task continues running.
     Use when you need to delegate work to another task/agent without replacing the current plan."""
     task = ctx.task if ctx else None
+    if skill_name and not use_subagent:
+        use_subagent = True
     inputs: dict = {}
     if skill_name:
         inputs["skill_name"] = skill_name
@@ -428,7 +430,7 @@ def submit_task(
     t = task_svc.create(
         session_id=task.session_id if task else "",
         creator_agent_id=task.assigned_agent_id if task else "",
-        user_prompt=user_prompt,
+        user_prompt=task_prompt,
         title=title,
         description=description,
         inputs=inputs,

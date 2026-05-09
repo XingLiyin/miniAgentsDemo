@@ -228,6 +228,7 @@ class StreamChunk:
     is_done: bool = False
     finish_reason: Optional[str] = None
     usage: Optional[LLMUsage] = None
+    error: Optional[str] = None
 
 
 # ── Schema ────────────────────────────────────────────────────────────────

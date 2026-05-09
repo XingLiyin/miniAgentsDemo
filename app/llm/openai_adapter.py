@@ -90,56 +90,59 @@ class OpenAIAdapter(BaseAdapter):
         # 聚合 tool_call 增量（按 index）
         tool_call_buffers: dict[int, dict[str, Any]] = {}
 
-        for raw_line in self._transport.stream_post(url, self._headers(), payload, self._timeout_sec):
-            try:
-                data = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
+        try:
+            for raw_line in self._transport.stream_post(url, self._headers(), payload, self._timeout_sec):
+                try:
+                    data = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
 
-            choices = data.get('choices') or []
-            if not choices:
-                # 最后一个 chunk 可能只含 usage
-                usage_data = data.get('usage')
-                if usage_data:
-                    yield StreamChunk(is_done=True, usage=_parse_usage(usage_data))
-                continue
+                choices = data.get('choices') or []
+                if not choices:
+                    # 最后一个 chunk 可能只含 usage
+                    usage_data = data.get('usage')
+                    if usage_data:
+                        yield StreamChunk(is_done=True, usage=_parse_usage(usage_data))
+                    continue
 
-            choice = choices[0]
-            delta = choice.get('delta') or {}
-            finish_reason = choice.get('finish_reason')
+                choice = choices[0]
+                delta = choice.get('delta') or {}
+                finish_reason = choice.get('finish_reason')
 
-            # 正文 / 推理 / 图片增量分开处理，避免 reasoning_content 混入最终回复文本。
-            for text_delta in _iter_openai_content_delta(delta):
-                yield StreamChunk(text_delta=text_delta)
+                # 正文 / 推理 / 图片增量分开处理，避免 reasoning_content 混入最终回复文本。
+                for text_delta in _iter_openai_content_delta(delta):
+                    yield StreamChunk(text_delta=text_delta)
 
-            for reasoning_delta in _iter_openai_reasoning_delta(delta):
-                yield StreamChunk(reasoning_delta=reasoning_delta)
+                for reasoning_delta in _iter_openai_reasoning_delta(delta):
+                    yield StreamChunk(reasoning_delta=reasoning_delta)
 
-            for image in _iter_openai_delta_images(delta):
-                yield StreamChunk(image=image)
+                for image in _iter_openai_delta_images(delta):
+                    yield StreamChunk(image=image)
 
-            # tool_call 增量
-            for tc_delta in delta.get('tool_calls') or []:
-                idx = tc_delta.get('index', 0)
-                buf = tool_call_buffers.setdefault(idx, {'id': '', 'name': '', 'arguments': ''})
-                if tc_delta.get('id'):
-                    buf['id'] = tc_delta['id']
-                fn = tc_delta.get('function') or {}
-                if fn.get('name'):
-                    buf['name'] += fn['name']
-                if fn.get('arguments'):
-                    buf['arguments'] += fn['arguments']
-                yield StreamChunk(tool_call_delta={'index': idx, **buf})
+                # tool_call 增量
+                for tc_delta in delta.get('tool_calls') or []:
+                    idx = tc_delta.get('index', 0)
+                    buf = tool_call_buffers.setdefault(idx, {'id': '', 'name': '', 'arguments': ''})
+                    if tc_delta.get('id'):
+                        buf['id'] = tc_delta['id']
+                    fn = tc_delta.get('function') or {}
+                    if fn.get('name'):
+                        buf['name'] += fn['name']
+                    if fn.get('arguments'):
+                        buf['arguments'] += fn['arguments']
+                    yield StreamChunk(tool_call_delta={'index': idx, **buf})
 
-            if finish_reason:
-                usage_data = data.get('usage')
-                yield StreamChunk(
-                    is_done=True,
-                    finish_reason=finish_reason,
-                    usage=_parse_usage(usage_data) if usage_data else None,
-                )
-                # don't return: let the loop continue so the trailing usage-only
-                # chunk (choices=[]) can be captured when stream_options is used
+                if finish_reason:
+                    usage_data = data.get('usage')
+                    yield StreamChunk(
+                        is_done=True,
+                        finish_reason=finish_reason,
+                        usage=_parse_usage(usage_data) if usage_data else None,
+                    )
+                    # don't return: let the loop continue so the trailing usage-only
+                    # chunk (choices=[]) can be captured when stream_options is used
+        except RuntimeError as exc:
+            yield StreamChunk(is_done=True, finish_reason='api_error', error=_format_api_error(exc, req.model, url))
 
     # ── 内部工具 ──────────────────────────────────────────────────────────
 
@@ -427,3 +430,26 @@ def _map_openai_tools(tools: list[LLMTool]) -> list[dict]:
             fn['description'] = tool.description
         mapped.append({'type': 'function', 'function': fn})
     return mapped
+
+
+def _format_api_error(exc: RuntimeError, model: str, url: str) -> str:
+    """从 RuntimeError 中提取 API 错误详情，拼成可读字符串。"""
+    raw = str(exc)
+    # 尝试解析响应体中的 JSON error 对象
+    try:
+        brace = raw.index('{')
+        body = json.loads(raw[brace:])
+        api_msg = (body.get('error') or {}).get('message') or body.get('message') or ''
+        request_id = (body.get('error') or {}).get('request_id') or body.get('request_id') or ''
+    except (ValueError, json.JSONDecodeError):
+        api_msg = ''
+        request_id = ''
+
+    parts = [raw]
+    if api_msg and api_msg not in raw:
+        parts.append(f'api_message={api_msg!r}')
+    parts.append(f'model={model!r}')
+    parts.append(f'url={url!r}')
+    if request_id:
+        parts.append(f'request_id={request_id!r}')
+    return ' | '.join(parts)

@@ -129,6 +129,16 @@ class _MCPProviderBase(ABC):
         self._loop = asyncio.new_event_loop()
         _loop = self._loop
 
+        def _exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+            exc = context.get("exception")
+            # anyio cancel scope cross-task error caused by streamable_http_client
+            # teardown racing with connection failure — harmless, suppress the log noise.
+            if isinstance(exc, RuntimeError) and "cancel scope" in str(exc):
+                return
+            loop.default_exception_handler(context)
+
+        _loop.set_exception_handler(_exception_handler)
+
         def _run() -> None:
             asyncio.set_event_loop(_loop)
             _loop.run_forever()

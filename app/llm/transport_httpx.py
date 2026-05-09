@@ -18,7 +18,7 @@ class HttpxTransport(Transport, StreamTransport):
     def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any], timeout: int) -> Dict[str, Any]:
         """发送 POST 请求并返回 JSON 响应（非流式）。"""
         try:
-            with httpx.Client(timeout=timeout or self._timeout) as client:
+            with httpx.Client(timeout=timeout or self._timeout, trust_env=False) as client:
                 resp = client.post(url, headers=headers, json=json)
                 resp.raise_for_status()
                 return resp.json()

@@ -39,7 +39,14 @@ def read_json(path: Path) -> dict[str, Any] | None:
     """读取 JSON 文件，文件不存在返回 None。"""
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    # Windows: file may be transiently locked during os.replace() or antivirus scan.
+    for attempt in range(5):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (2 ** attempt))
 
 
 def write_jsonl_atomic(path: Path, records: list[dict[str, Any]]) -> None:
@@ -76,8 +83,16 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     """读取 .jsonl 文件，返回所有记录列表；文件不存在返回空列表。"""
     if not path.exists():
         return []
+    for attempt in range(5):
+        try:
+            text = path.read_text(encoding="utf-8")
+            break
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.02 * (2 ** attempt))
     records = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         line = line.strip()
         if line:
             records.append(json.loads(line))

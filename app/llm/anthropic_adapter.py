@@ -120,69 +120,72 @@ class AnthropicAdapter(BaseAdapter):
         current_block_index: int = -1
         input_tokens: Optional[int] = None
 
-        for raw_line in self._transport.stream_post(url, headers, payload, self._timeout_sec):
-            try:
-                event = json.loads(raw_line)
-            except json.JSONDecodeError:
-                continue
+        try:
+            for raw_line in self._transport.stream_post(url, headers, payload, self._timeout_sec):
+                try:
+                    event = json.loads(raw_line)
+                except json.JSONDecodeError:
+                    continue
 
-            event_type = event.get('type', '')
+                event_type = event.get('type', '')
 
-            if event_type == 'message_start':
-                usage_data = (event.get('message') or {}).get('usage') or {}
-                input_tokens = usage_data.get('input_tokens')
+                if event_type == 'message_start':
+                    usage_data = (event.get('message') or {}).get('usage') or {}
+                    input_tokens = usage_data.get('input_tokens')
 
-            elif event_type == 'content_block_start':
-                block = event.get('content_block') or {}
-                current_block_index = event.get('index', 0)
-                current_block_type = block.get('type', '')
-                if current_block_type == 'tool_use':
-                    tool_blocks[current_block_index] = {
-                        'id': block.get('id', ''),
-                        'name': block.get('name', ''),
-                        'arguments': '',
-                    }
-                elif current_block_type == 'image':
-                    source = block.get('source') or {}
-                    yield StreamChunk(image=ImageBlock(
-                        type='image',
-                        media_type=source.get('media_type', ''),
-                        source_type=source.get('type', 'base64'),
-                        data=source.get('data') or source.get('url', ''),
-                    ))
+                elif event_type == 'content_block_start':
+                    block = event.get('content_block') or {}
+                    current_block_index = event.get('index', 0)
+                    current_block_type = block.get('type', '')
+                    if current_block_type == 'tool_use':
+                        tool_blocks[current_block_index] = {
+                            'id': block.get('id', ''),
+                            'name': block.get('name', ''),
+                            'arguments': '',
+                        }
+                    elif current_block_type == 'image':
+                        source = block.get('source') or {}
+                        yield StreamChunk(image=ImageBlock(
+                            type='image',
+                            media_type=source.get('media_type', ''),
+                            source_type=source.get('type', 'base64'),
+                            data=source.get('data') or source.get('url', ''),
+                        ))
 
-            elif event_type == 'content_block_delta':
-                delta = event.get('delta') or {}
-                delta_type = delta.get('type', '')
+                elif event_type == 'content_block_delta':
+                    delta = event.get('delta') or {}
+                    delta_type = delta.get('type', '')
 
-                if delta_type == 'text_delta':
-                    text = delta.get('text') or ''
-                    if text:
-                        yield StreamChunk(text_delta=text)
+                    if delta_type == 'text_delta':
+                        text = delta.get('text') or ''
+                        if text:
+                            yield StreamChunk(text_delta=text)
 
-                elif delta_type == 'input_json_delta':
-                    partial = delta.get('partial_json') or ''
-                    idx = event.get('index', current_block_index)
-                    if idx in tool_blocks:
-                        tool_blocks[idx]['arguments'] += partial
-                        yield StreamChunk(tool_call_delta={
-                            'index': idx,
-                            **tool_blocks[idx],
-                        })
+                    elif delta_type == 'input_json_delta':
+                        partial = delta.get('partial_json') or ''
+                        idx = event.get('index', current_block_index)
+                        if idx in tool_blocks:
+                            tool_blocks[idx]['arguments'] += partial
+                            yield StreamChunk(tool_call_delta={
+                                'index': idx,
+                                **tool_blocks[idx],
+                            })
 
-            elif event_type == 'message_delta':
-                # 包含 stop_reason 和最终 usage
-                stop_reason = event.get('delta', {}).get('stop_reason') or event.get('stop_reason')
-                usage_data = event.get('usage') or {}
-                output_tokens = usage_data.get('output_tokens')
-                total = (input_tokens or 0) + (output_tokens or 0) or None
-                usage = LLMUsage(
-                    prompt_tokens=input_tokens,
-                    completion_tokens=output_tokens,
-                    total_tokens=total,
-                ) if (input_tokens or output_tokens) else None
-                yield StreamChunk(is_done=True, finish_reason=stop_reason, usage=usage)
-                return
+                elif event_type == 'message_delta':
+                    # 包含 stop_reason 和最终 usage
+                    stop_reason = event.get('delta', {}).get('stop_reason') or event.get('stop_reason')
+                    usage_data = event.get('usage') or {}
+                    output_tokens = usage_data.get('output_tokens')
+                    total = (input_tokens or 0) + (output_tokens or 0) or None
+                    usage = LLMUsage(
+                        prompt_tokens=input_tokens,
+                        completion_tokens=output_tokens,
+                        total_tokens=total,
+                    ) if (input_tokens or output_tokens) else None
+                    yield StreamChunk(is_done=True, finish_reason=stop_reason, usage=usage)
+                    return
+        except RuntimeError as exc:
+            yield StreamChunk(is_done=True, finish_reason='api_error', error=_format_api_error(exc, req.model, url))
 
     # ── 内部工具 ──────────────────────────────────────────────────────────
 
@@ -355,3 +358,25 @@ def _map_anthropic_tools(tools: list[LLMTool]) -> list[dict]:
             item['description'] = tool.description
         mapped.append(item)
     return mapped
+
+
+def _format_api_error(exc: RuntimeError, model: str, url: str) -> str:
+    """从 RuntimeError 中提取 Anthropic API 错误详情，拼成可读字符串。"""
+    raw = str(exc)
+    try:
+        brace = raw.index('{')
+        body = json.loads(raw[brace:])
+        api_msg = body.get('error', {}).get('message') or body.get('message') or ''
+        error_type = body.get('error', {}).get('type') or ''
+    except (ValueError, json.JSONDecodeError):
+        api_msg = ''
+        error_type = ''
+
+    parts = [raw]
+    if api_msg and api_msg not in raw:
+        parts.append(f'api_message={api_msg!r}')
+    if error_type:
+        parts.append(f'error_type={error_type!r}')
+    parts.append(f'model={model!r}')
+    parts.append(f'url={url!r}')
+    return ' | '.join(parts)

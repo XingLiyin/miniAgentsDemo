@@ -171,6 +171,8 @@ class Reasoner:
             skill_def = self._skill_registry.load_definition(skill_name, ctx)
             if skill_def is not None:
                 skill_instructions = skill_def.instructions or ""
+            if skill_instructions:
+                skill_instructions = f"Instructions for skill '{skill_name}':\n{skill_instructions}"
         return soul, role, skill_instructions
 
     # ── 私有：共享数据获取 ──────────────────────────────────────────────────

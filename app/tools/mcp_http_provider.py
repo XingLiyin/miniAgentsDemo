@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import httpx
 from mcp.client.streamable_http import streamable_http_client
 
 from app.tools.mcp_base import _MCPProviderBase
@@ -40,7 +41,8 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
         self._url = url
 
     def get_mcp_client(self) -> Any:
-        return streamable_http_client(url=self._url, terminate_on_close=True)
+        http_client = httpx.AsyncClient(trust_env=False)
+        return streamable_http_client(url=self._url, terminate_on_close=True, http_client=http_client)
 
     def start(self) -> None:
         self._start_loop()
