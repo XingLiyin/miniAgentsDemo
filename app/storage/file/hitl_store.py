@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 
 @dataclass
@@ -71,8 +72,6 @@ class HitlStore:
 
 # ── 全局单例 ───────────────────────────────────────────────────────────────────
 
-_hitl_store = HitlStore()
-
-
+@lru_cache
 def get_hitl_store() -> HitlStore:
-    return _hitl_store
+    return HitlStore()

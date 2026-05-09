@@ -11,6 +11,7 @@ import asyncio
 import logging
 import threading
 from collections import defaultdict
+from functools import lru_cache
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -154,11 +155,6 @@ class SseBus:
                 logger.debug("SSE: no running main loop for session %s", session_id)
 
 
-_sse_bus: SseBus | None = None
-
-
+@lru_cache
 def get_sse_bus() -> SseBus:
-    global _sse_bus
-    if _sse_bus is None:
-        _sse_bus = SseBus()
-    return _sse_bus
+    return SseBus()

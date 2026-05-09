@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from functools import lru_cache
 
 from app.llm.base import BaseChatClient
 from app.llm.provider_registry import ProviderRegistry
@@ -198,20 +198,15 @@ class LLMRegistry:
 
 # ── 全局单例 ──────────────────────────────────────────────────────────────────
 
-_registry: Optional[LLMRegistry] = None
-
-
+@lru_cache
 def get_llm_registry() -> LLMRegistry:
-    global _registry
-    if _registry is None:
-        from app.config.settings import get_settings
-        transport = HttpxTransport(timeout=get_settings().default_llm_timeout_sec)
-        provider_registry = ProviderRegistry(transport)
-        _registry = LLMRegistry(provider_registry)
-        loaded = _registry.load_from_store()
-        if loaded:
-            logger.info("LLMRegistry: restored %d provider(s)", loaded)
-    return _registry
+    from app.config.settings import get_settings
+    transport = HttpxTransport(timeout=get_settings().default_llm_timeout_sec)
+    registry = LLMRegistry(ProviderRegistry(transport))
+    loaded = registry.load_from_store()
+    if loaded:
+        logger.info("LLMRegistry: restored %d provider(s)", loaded)
+    return registry
 
 
 def get_llm_registry_client(name: str, model: str | None = None) -> BaseChatClient:

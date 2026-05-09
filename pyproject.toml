@@ -5,8 +5,6 @@ description = "Agent 后端服务（Task/Session/Memory 调度与 LLM 工具链�
 readme = "README.md"
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "agent-framework-anthropic>=1.0.0b260319",
-    "agent-framework-core>=1.0.0rc5",
     "fastapi>=0.135.1",
     "httpx>=0.28.1",
     "python-dotenv>=1.0.0",
@@ -14,7 +12,8 @@ dependencies = [
     "pytest>=9.0.2",
     "uvicorn>=0.42.0",
     "cairosvg>=2.9.0",
-    "pydantic-settings>=2.14.0"
+    "pydantic-settings>=2.14.0",
+    "mcp>=1.27.1",
 ]
 
 [tool.pytest.ini_options]

@@ -137,21 +137,3 @@ class AgentTemplateRegistry:
         except Exception as e:
             logger.warning("AgentTemplateRegistry: failed to load content for '%s': %s", label, e)
             return None
-
-
-# ── 全局单例 ──────────────────────────────────────────────────────────────
-
-_registry: AgentTemplateRegistry | None = None
-
-
-def get_agent_template_registry() -> AgentTemplateRegistry:
-    """获取全局 AgentTemplateRegistry（首次调用时从 settings.agents_dir 扫描）。"""
-    global _registry
-    if _registry is None:
-        from app.api.v1.deps import get_agent_template_service
-        from app.config.settings import get_settings
-        _registry = AgentTemplateRegistry(
-            template_service=get_agent_template_service()
-        )
-        _registry.load_from_dir(get_settings().agents_dir)
-    return _registry

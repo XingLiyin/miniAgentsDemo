@@ -77,20 +77,6 @@ class RemoteSkillSourceService:
                 )
 
 
-# ── 全局单例 ──────────────────────────────────────────────────────────────────
-
-_service: RemoteSkillSourceService | None = None
-
-
-def get_remote_skill_source_service() -> RemoteSkillSourceService:
-    global _service
-    if _service is None:
-        from app.skills.registry import get_skill_registry
-        _service = RemoteSkillSourceService(
-            registry=get_skill_registry(),
-            store=RemoteSkillSourceStore(),
-        )
-    return _service
 
 
 # ── 序列化工具 ────────────────────────────────────────────────────────────────

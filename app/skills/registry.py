@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from app.common.errors import AppError
@@ -507,13 +508,9 @@ class SkillRegistry:
 
 # ── 全局单例 ──────────────────────────────────────────────────────────────────
 
-_registry: SkillRegistry | None = None
-
-
+@lru_cache
 def get_skill_registry() -> SkillRegistry:
-    global _registry
-    if _registry is None:
-        _registry = SkillRegistry()
-        from app.config.settings import get_settings
-        _registry.load_from_dir(get_settings().skills_dir)
-    return _registry
+    from app.config.settings import get_settings
+    registry = SkillRegistry()
+    registry.load_from_dir(get_settings().skills_dir)
+    return registry

@@ -11,7 +11,7 @@ from app.api.v1.schemas.remote_skill_source import (
 )
 from app.common.errors import AppError
 from app.skills.definition import RemoteSkillSourceConfig
-from app.domain.services.skill_source_service import get_remote_skill_source_service
+from app.api.v1.deps import get_remote_skill_source_service
 
 router = APIRouter()
 

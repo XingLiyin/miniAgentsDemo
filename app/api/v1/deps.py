@@ -26,6 +26,8 @@ from app.runtime.policy_rule import BashExecGuardRule, WhitelistRule
 from app.runtime.reasoner import Reasoner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
+from app.domain.services.skill_source_service import RemoteSkillSourceService
+from app.storage.file.remote_skill_source_store import RemoteSkillSourceStore
 from app.tools.registry import ToolRegistry
 from app.storage.file.agent_store import AgentStore
 from app.storage.file.agent_template_store import AgentTemplateStore
@@ -87,6 +89,14 @@ def get_mcp_service() -> MCPService:
 
 
 @lru_cache
+def get_remote_skill_source_service() -> RemoteSkillSourceService:
+    return RemoteSkillSourceService(
+        registry=get_skill_registry(),
+        store=RemoteSkillSourceStore(),
+    )
+
+
+@lru_cache
 def get_task_queue() -> TaskQueue:
     return TaskQueue(task_svc=get_task_service())
 
@@ -120,10 +130,13 @@ def get_tool_gateway() -> ToolGateway:
     )
 
 
+@lru_cache
 def get_agent_template_registry():
     """获取全局 AgentTemplateRegistry（首次调用时从 settings.agents_dir 扫描）。"""
-    from app.agent_template.registry import get_agent_template_registry as _get
-    return _get()
+    from app.agent_template.registry import AgentTemplateRegistry
+    registry = AgentTemplateRegistry(template_service=get_agent_template_service())
+    registry.load_from_dir(get_settings().agents_dir)
+    return registry
 
 
 def _get_llm_client():
