@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from app.api.v1.schemas.mcp import MCPHttpRegisterRequest, MCPServerResponse, MCPStdioRegisterRequest
+from app.api.v1.schemas.mcp import MCPHttpRegisterRequest, MCPServerResponse, MCPStdioRegisterRequest, MCPToolResponse
 from app.common.errors import AppError
 from app.api.v1.deps import get_mcp_service
 from app.domain.services.mcp_service import MCPServerInfo
@@ -13,10 +13,13 @@ router = APIRouter()
 
 
 def _to_response(info: MCPServerInfo) -> MCPServerResponse:
+    tools = [MCPToolResponse(name=t.name, description=t.description) for t in info.tools]
     return MCPServerResponse(
         name=info.name,
         type=info.type,
-        tools=info.tools,
+        status=info.status,
+        tool_count=len(tools),
+        tools=tools,
         command=info.command,
         args=info.args,
         url=info.url,

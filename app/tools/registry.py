@@ -138,6 +138,10 @@ class ToolRegistry:
 
     def get_server_tool_names(self, server_name: str) -> list[str]:
         """返回指定 MCP server 的工具名列表（实时读取，未连接时触发懒连接）。"""
+        return [td.name for td in self.get_server_tool_definitions(server_name)]
+
+    def get_server_tool_definitions(self, server_name: str) -> list[ToolDefinition]:
+        """返回指定 MCP server 的工具定义列表（含描述），未连接时触发懒连接。"""
         provider = self._mcp_providers.get(server_name)
         if provider is None:
             return []
@@ -145,10 +149,17 @@ class ToolRegistry:
             if not self._try_connect(server_name, provider):
                 return []
         try:
-            return [td.name for td in provider.list_definitions()]
+            return provider.list_definitions()
         except Exception as e:
-            logger.warning("ToolRegistry.get_server_tool_names '%s' failed: %s", server_name, e)
+            logger.warning("ToolRegistry.get_server_tool_definitions '%s' failed: %s", server_name, e)
             return []
+
+    def get_server_status(self, server_name: str) -> str:
+        """返回指定 MCP server 的连接状态：CONNECTED / DISCONNECTED。"""
+        provider = self._mcp_providers.get(server_name)
+        if provider is None:
+            return "DISCONNECTED"
+        return "CONNECTED" if provider._initialized else "DISCONNECTED"
 
     def get_control_tool_names(self) -> frozenset[str]:
         return frozenset(self._control_tool_names)

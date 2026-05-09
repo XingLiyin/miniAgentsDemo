@@ -20,11 +20,18 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class MCPToolInfo:
+    name: str
+    description: str
+
+
+@dataclass
 class MCPServerInfo:
     """MCP Server 的概要信息（用于 API 响应）。"""
     name: str
     type: str           # "stdio" | "http"
-    tools: list[str] = field(default_factory=list)
+    status: str = "DISCONNECTED"   # "CONNECTED" | "DISCONNECTED"
+    tools: list[MCPToolInfo] = field(default_factory=list)
     # stdio 字段
     command: str | None = None
     args: list[str] | None = None
@@ -65,7 +72,8 @@ class MCPService:
 
         return MCPServerInfo(
             name=name, type="stdio",
-            tools=self._registry.get_server_tool_names(name),
+            status=self._registry.get_server_status(name),
+            tools=self._tool_infos(name),
             command=command, args=args or [],
         )
 
@@ -90,7 +98,8 @@ class MCPService:
 
         return MCPServerInfo(
             name=name, type="http",
-            tools=self._registry.get_server_tool_names(name),
+            status=self._registry.get_server_status(name),
+            tools=self._tool_infos(name),
             url=url, timeout=timeout,
         )
 
@@ -102,7 +111,8 @@ class MCPService:
         for cfg in self._store.list_all():
             info = self._config_to_info(cfg)
             if info:
-                info.tools = self._registry.get_server_tool_names(info.name)
+                info.status = self._registry.get_server_status(info.name)
+                info.tools = self._tool_infos(info.name)
                 result.append(info)
         return result
 
@@ -114,7 +124,8 @@ class MCPService:
         info = self._config_to_info(cfg)
         if info is None:
             raise AppError("MCP_INVALID_CONFIG", f"MCP server '{name}' has invalid config")
-        info.tools = self._registry.get_server_tool_names(name)
+        info.status = self._registry.get_server_status(name)
+        info.tools = self._tool_infos(name)
         return info
 
     # ── 删除 ──────────────────────────────────────────────────────────────
@@ -139,7 +150,8 @@ class MCPService:
         info = self._config_to_info(cfg)
         if info is None:
             raise AppError("MCP_INVALID_CONFIG", f"MCP server '{name}' has invalid config")
-        info.tools = self._registry.get_server_tool_names(name)
+        info.status = self._registry.get_server_status(name)
+        info.tools = self._tool_infos(name)
         return info
 
     # ── 启动恢复 ──────────────────────────────────────────────────────────
@@ -184,6 +196,12 @@ class MCPService:
             )
         else:
             raise AppError("MCP_INVALID_CONFIG", f"Unknown MCP server type: '{server_type}'")
+
+    def _tool_infos(self, name: str) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo(name=td.name, description=td.description)
+            for td in self._registry.get_server_tool_definitions(name)
+        ]
 
     @staticmethod
     def _config_to_info(cfg: dict) -> MCPServerInfo | None:

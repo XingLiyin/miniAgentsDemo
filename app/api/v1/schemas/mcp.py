@@ -19,10 +19,17 @@ class MCPHttpRegisterRequest(BaseModel):
     timeout: int = Field(default=30, ge=1, description="请求超时秒数")
 
 
+class MCPToolResponse(BaseModel):
+    name: str
+    description: str
+
+
 class MCPServerResponse(BaseModel):
     name: str
     type: str                           # "stdio" | "http"
-    tools: list[str] = Field(default_factory=list)
+    status: str = "DISCONNECTED"        # "CONNECTED" | "DISCONNECTED"
+    tool_count: int = 0
+    tools: list[MCPToolResponse] = Field(default_factory=list)
     # stdio 字段
     command: Optional[str] = None
     args: Optional[list[str]] = None
