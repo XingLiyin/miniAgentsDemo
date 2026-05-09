@@ -397,6 +397,8 @@ class LifecycleManager:
                 tpl = self._template_svc.get(template_id)
                 act_tool_list = tpl.act_tool_list
                 observe_tool_list = tpl.observe_tool_list
+                mcp_act_servers = tpl.mcp_act_servers
+                mcp_observe_servers = tpl.mcp_observe_servers
                 agent_name = f"sub-agent-{tpl.name}"
                 content = self._template_registry.load_content_by_id(template_id) if self._template_registry else None
                 soul_md = content.soul_md if content else ""
@@ -407,6 +409,8 @@ class LifecycleManager:
                 role_md = parent_data.get("role_md", "")
                 act_tool_list = parent_data.get("act_tool_list", [])
                 observe_tool_list = parent_data.get("observe_tool_list", [])
+                mcp_act_servers = parent_data.get("mcp_act_servers", [])
+                mcp_observe_servers = parent_data.get("mcp_observe_servers", [])
                 template_id = parent_data.get("template_id") or ""
                 agent_name = f"sub-agent-d{spawn_depth}"
         else:
@@ -414,6 +418,8 @@ class LifecycleManager:
             role_md = parent_data.get("role_md", "")
             act_tool_list = parent_data.get("act_tool_list", [])
             observe_tool_list = parent_data.get("observe_tool_list", [])
+            mcp_act_servers = parent_data.get("mcp_act_servers", [])
+            mcp_observe_servers = parent_data.get("mcp_observe_servers", [])
             template_id = parent_data.get("template_id") or ""
             agent_name = f"sub-agent-d{spawn_depth}"
 
@@ -430,6 +436,8 @@ class LifecycleManager:
             role_md=role_md,
             act_tool_list=act_tool_list,
             observe_tool_list=observe_tool_list,
+            mcp_act_servers=mcp_act_servers,
+            mcp_observe_servers=mcp_observe_servers,
             skill_list=parent_data.get("skill_list", []),
             soul_path=parent_data.get("soul_path"),
             loop_guard=LoopGuard(actor_max_tool_rounds=50),
