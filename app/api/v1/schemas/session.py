@@ -53,7 +53,8 @@ class SessionResponse(BaseModel):
     template_id: Optional[str] = None
     root_agent_id: Optional[str] = None
     token_budget: int
-    token_used: int
+    input_tokens_used: int
+    output_tokens_used: int
     root_max_turns: int
     failure_counter: int
     llm_provider: Optional[str] = None

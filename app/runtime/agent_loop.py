@@ -65,11 +65,11 @@ class AgentLoop:
         try:
             session = self._session_svc.get(session_id)
 
-            if session.token_used >= session.token_budget:
+            if session.output_tokens_used >= session.token_budget:
                 raise AppError(
                     "TOKEN_BUDGET_EXCEEDED",
-                    f"Session {session_id} token budget exhausted "
-                    f"({session.token_used}/{session.token_budget})",
+                    f"Session {session_id} output token budget exhausted "
+                    f"({session.output_tokens_used}/{session.token_budget})",
                 )
 
             task = self._task_svc.get(task_id, session_id)
@@ -79,6 +79,7 @@ class AgentLoop:
 
             if result.context_tokens:
                 agent.loop_guard.context_tokens = result.context_tokens
+                agent.loop_guard.context_message_count = self._memory_svc.count_messages(agent_id)
                 self._agent_store.save(agent.to_dict())
 
             task = self._task_svc.get(task_id, session_id)

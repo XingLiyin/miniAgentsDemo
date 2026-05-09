@@ -372,7 +372,7 @@ class LifecycleManager:
             return f"concurrent_agents limit ({state.max_concurrent_agents}) would be exceeded"
         try:
             session = self._session_svc.get(state.session_id)
-            if session.token_used > session.token_budget * 0.9:
+            if session.output_tokens_used > session.token_budget * 0.9:
                 return "Token budget nearly exhausted (>90%)"
         except Exception:
             pass

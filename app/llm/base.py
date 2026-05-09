@@ -69,14 +69,25 @@ class BaseAdapter(ABC):
 class BaseChatClient:
     """统一的 LLM 调用客户端。"""
 
-    def __init__(self, adapter: BaseAdapter, model: str, context_limit: int = 200_000) -> None:
+    def __init__(
+        self,
+        adapter: BaseAdapter,
+        model: str,
+        context_limit: int = 200_000,
+        max_output_tokens: int = 8192,
+    ) -> None:
         self._adapter = adapter
         self._model = model
         self._context_limit = context_limit
+        self._max_output_tokens = max_output_tokens
 
     @property
     def context_limit(self) -> int:
         return self._context_limit
+
+    @property
+    def max_output_tokens(self) -> int:
+        return self._max_output_tokens
 
     def send_message(
         self,

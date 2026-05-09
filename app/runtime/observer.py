@@ -105,17 +105,22 @@ class Observer:
 
         last_llm_text       = ""
         max_context_tokens  = 0
-        
+        last_prompt_tokens  = result.context_tokens or 0
+
         for _round in range(max_rounds):
+            from app.runtime.actor import _compute_max_tokens
+            round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens) if last_prompt_tokens else None
             _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools)
             full_text, tool_call_acc, image_acc, _usage = _stream_observer(
-                llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}"
+                llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}", round_max_tokens
             )
             if _usage:
                 if self._session_svc and session_id:
-                    tokens = _usage.total_tokens or (_usage.prompt_tokens or 0) + (_usage.completion_tokens or 0)
-                    if tokens:
-                        self._session_svc.add_tokens(session_id, tokens)
+                    self._session_svc.add_tokens(
+                        session_id,
+                        input_tokens=_usage.prompt_tokens or 0,
+                        output_tokens=_usage.completion_tokens or 0,
+                    )
                 if _usage.prompt_tokens:
                     max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
             if full_text:
@@ -129,6 +134,7 @@ class Observer:
             messages = self._prompt_builder.append_assistant_tool_calls(
                 messages, full_text, tool_calls
             )
+            tool_results_text = ""
             for tool_call in tool_calls:
                 tool_result = self._tool_gateway.call(
                     tool_call.name, tool_call.input, None, task.id, toolcall_ctx
@@ -136,6 +142,12 @@ class Observer:
                 messages = self._prompt_builder.append_tool_result(
                     messages, tool_call.name, tool_result, tool_call_id=tool_call.id
                 )
+                from app.llm.types import content_to_text
+                tool_results_text += content_to_text(tool_result.content) if isinstance(tool_result.content, list) else (tool_result.content or "")
+
+            if _usage and _usage.prompt_tokens:
+                from app.common.utils import estimate_tokens
+                last_prompt_tokens = _usage.prompt_tokens + estimate_tokens(tool_results_text)
                 _push_observer_tool_call(
                     session_id, f"observer_round_{_round}",
                     tool_call.name, tool_call.input,
@@ -170,7 +182,7 @@ class Observer:
     ) -> ObserverVerdict:
         """降级规则：observer LLM 不可用时使用。直接写入 task 状态，跳过任务复核。"""
         token_pct = (
-            session.token_used / session.token_budget
+            session.output_tokens_used / session.token_budget
             if session.token_budget
             else 0
         )
@@ -222,6 +234,7 @@ def _stream_observer(
     tools: list,
     session_id: str,
     round_label: str,
+    max_tokens: int | None = None,
 ) -> tuple[str, dict, list]:
     """流式调用 LLM，推送 observer_text_delta / observer_text_done，返回 (full_text, tool_call_acc, image_acc)。"""
     full_text = ""
@@ -237,7 +250,7 @@ def _stream_observer(
     except Exception:
         _sse = None
 
-    for chunk in client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools):
+    for chunk in client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
         if chunk.text_delta:
             full_text += chunk.text_delta
             if _sse:

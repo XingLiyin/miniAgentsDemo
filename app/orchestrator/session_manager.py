@@ -368,9 +368,9 @@ class SessionManager:
         self._session_svc.delete(session_id)
 
     def check_token_budget(self, session: Session) -> None:
-        """Guard 硬检查：超出 token_budget 立即抛出 AppError。"""
-        if session.token_used >= session.token_budget:
+        """Guard 硬检查：输出超出 token_budget 立即抛出 AppError。"""
+        if session.output_tokens_used >= session.token_budget:
             raise AppError(
                 "TOKEN_BUDGET_EXCEEDED",
-                f"Session {session.id} token budget exhausted ({session.token_used}/{session.token_budget})",
+                f"Session {session.id} output token budget exhausted ({session.output_tokens_used}/{session.token_budget})",
             )

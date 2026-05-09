@@ -86,7 +86,8 @@ class SessionService:
                 "type": "session_update",
                 "session_id": session_id,
                 "status": to_status,
-                "token_used": session.token_used,
+                "input_tokens_used": session.input_tokens_used,
+                "output_tokens_used": session.output_tokens_used,
             }
             get_sse_bus().push(session_id, sse_event)
             if to_status in ("SUCCEEDED", "FAILED", "CANCELED"):
@@ -100,13 +101,18 @@ class SessionService:
         session.root_agent_id = agent_id
         self.save(session)
 
-    def add_tokens(self, session_id: str, tokens: int) -> Session:
-        """累加 token 消耗，超出 budget 立即抛出 AppError（硬终止）。"""
+    def add_tokens(self, session_id: str, input_tokens: int = 0, output_tokens: int = 0) -> Session:
+        """累加 token 消耗，输出超出 budget 立即抛出 AppError（硬终止）。"""
         session = self.get(session_id)
-        session.token_used += tokens
+        session.input_tokens_used += input_tokens
+        session.output_tokens_used += output_tokens
         self.save(session)
-        if session.token_used >= session.token_budget:
-            raise AppError("TOKEN_BUDGET_EXCEEDED", f"Session {session_id} token budget exhausted ({session.token_used}/{session.token_budget})")
+        if session.output_tokens_used >= session.token_budget:
+            raise AppError(
+                "TOKEN_BUDGET_EXCEEDED",
+                f"Session {session_id} output token budget exhausted "
+                f"({session.output_tokens_used}/{session.token_budget})",
+            )
         return session
 
     def list_ids(self) -> list[str]:

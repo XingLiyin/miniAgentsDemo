@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -35,6 +36,7 @@ class ToolRegistry:
         self._tools: dict[str, ToolDefinition] = {}             # builtin only
         self._mcp_providers: dict[str, _MCPProviderBase] = {}   # server_name → provider（懒连接）
         self._last_connect_attempt: dict[str, float] = {}       # server_name → monotonic timestamp
+        self._connect_locks: dict[str, threading.Lock] = {}     # 防止并发 start()
 
     # ── Builtin 工具注册 ──────────────────────────────────────────────────────
 
@@ -64,6 +66,7 @@ class ToolRegistry:
         from app.tools.mcp_provider import MCPStdioProvider
         provider = MCPStdioProvider(name=name, command=command, args=args, env=env)
         self._mcp_providers[name] = provider
+        self._connect_locks[name] = threading.Lock()
         logger.info("ToolRegistry: registered MCP stdio server '%s' (lazy)", name)
 
     def register_mcp_http(
@@ -77,12 +80,14 @@ class ToolRegistry:
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
         provider = MCPStreamableHTTPProvider(name=name, url=url, timeout=timeout)
         self._mcp_providers[name] = provider
+        self._connect_locks[name] = threading.Lock()
         logger.info("ToolRegistry: registered MCP http server '%s' (lazy)", name)
 
     def shutdown_one(self, name: str) -> None:
         """停止并移除指定 MCP Server。"""
         provider = self._mcp_providers.pop(name, None)
         self._last_connect_attempt.pop(name, None)
+        self._connect_locks.pop(name, None)
         if provider is None:
             logger.warning("ToolRegistry.shutdown_one: server '%s' not found", name)
             return
@@ -190,16 +195,22 @@ class ToolRegistry:
 
     def _try_connect(self, name: str, provider: _MCPProviderBase) -> bool:
         """尝试启动未连接的 provider，冷却期内跳过。返回是否连接成功。"""
-        now = time.monotonic()
-        if now - self._last_connect_attempt.get(name, 0) < self._CONNECT_COOLDOWN:
+        lock = self._connect_locks.get(name)
+        if lock is None:
             return False
-        self._last_connect_attempt[name] = now
-        try:
-            provider.start()
-            logger.info("ToolRegistry: connected MCP server '%s'", name)
-            return True
-        except Exception as e:
-            logger.warning("ToolRegistry: failed to connect '%s': %s", name, e)
-            return False
+        with lock:
+            if provider._initialized:
+                return True
+            now = time.monotonic()
+            if now - self._last_connect_attempt.get(name, 0) < self._CONNECT_COOLDOWN:
+                return False
+            self._last_connect_attempt[name] = now
+            try:
+                provider.start()
+                logger.info("ToolRegistry: connected MCP server '%s'", name)
+                return True
+            except Exception as e:
+                logger.warning("ToolRegistry: failed to connect '%s': %s", name, e)
+                return False
 
 

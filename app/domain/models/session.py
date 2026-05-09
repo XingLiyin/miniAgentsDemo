@@ -36,8 +36,9 @@ class Session:
     root_agent_id: str | None
 
     # Guard 字段
-    token_budget: int = 200_000        # 硬上限，超出立即终止
-    token_used: int = 0                # 已消耗 token 总数
+    token_budget: int = 200_000        # 输出 token 硬上限，超出立即终止
+    input_tokens_used: int = 0         # 已消耗输入 token 总数
+    output_tokens_used: int = 0        # 已消耗输出 token 总数
     root_max_turns: int = 20           # 软上限，超出给出警告
     failure_counter: int = 0           # 连续失败计数
     failure_threshold: int = 3         # 达到阈值时暂停（Phase 2 HITL）
@@ -59,7 +60,8 @@ class Session:
             "template_id": self.template_id,
             "root_agent_id": self.root_agent_id,
             "token_budget": self.token_budget,
-            "token_used": self.token_used,
+            "input_tokens_used": self.input_tokens_used,
+            "output_tokens_used": self.output_tokens_used,
             "root_max_turns": self.root_max_turns,
             "failure_counter": self.failure_counter,
             "failure_threshold": self.failure_threshold,
@@ -81,7 +83,8 @@ class Session:
             template_id=d.get("template_id"),
             root_agent_id=d.get("root_agent_id"),
             token_budget=d.get("token_budget", 200_000),
-            token_used=d.get("token_used", 0),
+            input_tokens_used=d.get("input_tokens_used", 0),
+            output_tokens_used=d.get("output_tokens_used", 0),
             root_max_turns=d.get("root_max_turns", 20),
             failure_counter=d.get("failure_counter", 0),
             failure_threshold=d.get("failure_threshold", 3),

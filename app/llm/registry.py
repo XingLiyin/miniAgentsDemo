@@ -20,13 +20,22 @@ logger = logging.getLogger(__name__)
 class ModelConfig:
     name: str
     context_limit: int
+    max_output_tokens: int = 8192
 
     def to_dict(self) -> dict:
-        return {"name": self.name, "context_limit": self.context_limit}
+        return {
+            "name": self.name,
+            "context_limit": self.context_limit,
+            "max_output_tokens": self.max_output_tokens,
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "ModelConfig":
-        return cls(name=d["name"], context_limit=d["context_limit"])
+        return cls(
+            name=d["name"],
+            context_limit=d["context_limit"],
+            max_output_tokens=d.get("max_output_tokens", 8192),
+        )
 
 
 @dataclass
@@ -140,8 +149,14 @@ class LLMRegistry:
             raise ValueError(f"Provider '{name}' 无可用模型")
         model_cfg = self._find_model(provider, resolved_model)
         context_limit = model_cfg.context_limit if model_cfg else get_settings().default_context_limit
+        max_output_tokens = model_cfg.max_output_tokens if model_cfg else 8192
         adapter = self._provider_registry.get(name)
-        return BaseChatClient(adapter=adapter, model=resolved_model, context_limit=context_limit)
+        return BaseChatClient(
+            adapter=adapter,
+            model=resolved_model,
+            context_limit=context_limit,
+            max_output_tokens=max_output_tokens,
+        )
 
     def get_provider(self, name: str) -> LLMProvider:
         return self._get(name)

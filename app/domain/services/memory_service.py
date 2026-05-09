@@ -95,6 +95,9 @@ class MemoryService:
         covered = summary.covered_up_to if summary else 0
         return (count - covered) >= threshold
 
+    def count_messages(self, agent_id: str) -> int:
+        return self._store.count_messages(agent_id)
+
     def rewrite_messages(self, agent_id: str, messages: list[dict[str, Any]]) -> None:
         """用 compact 后的消息替换活跃窗口（原内容归档到 .bak）。"""
         self._store.rewrite_messages(agent_id, messages)

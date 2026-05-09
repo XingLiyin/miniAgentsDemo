@@ -69,20 +69,24 @@ class Actor:
         conversation_turns: list[ConversationTurn] = []
         last_text = ""
         max_context_tokens = 0
+        last_prompt_tokens = ctx.token_estimate
 
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
             messages = self._prompt_builder.sanitize_messages(messages)
             messages_sent = list(messages)
             self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx)
 
+            round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens)
             full_text, reasoning_text, tool_call_acc, image_acc, _usage = self._stream_llm(
-                llm_client, messages, system_prompt, tools, _round, _sse, session_id
+                llm_client, messages, system_prompt, tools, _round, _sse, session_id, round_max_tokens
             )
             if _usage:
                 if self._session_svc and session_id:
-                    tokens = _usage.total_tokens or (_usage.prompt_tokens or 0) + (_usage.completion_tokens or 0)
-                    if tokens:
-                        self._session_svc.add_tokens(session_id, tokens)
+                    self._session_svc.add_tokens(
+                        session_id,
+                        input_tokens=_usage.prompt_tokens or 0,
+                        output_tokens=_usage.completion_tokens or 0,
+                    )
                 if _usage.prompt_tokens:
                     max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
             last_text = full_text
@@ -100,6 +104,11 @@ class Actor:
                     tool_calls_from_stream, agent, task, toolcall_ctx, messages, _sse, session_id
                 )
                 tool_calls_made.extend(round_tool_calls)
+
+            if _usage and _usage.prompt_tokens:
+                from app.common.utils import estimate_tokens
+                tool_text = " ".join(tc.result for tc in round_tool_calls)
+                last_prompt_tokens = _usage.prompt_tokens + estimate_tokens(tool_text)
 
             conversation_turns.append(ConversationTurn(
                 round=_round,
@@ -160,7 +169,7 @@ class Actor:
             "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
         })
 
-    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str):
+    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str, max_tokens: int | None = None):
         full_text = ""
         reasoning_text = ""
         tool_call_acc: dict[int, dict] = {}
@@ -168,7 +177,7 @@ class Actor:
         finish_reason = None
         final_usage = None
 
-        for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools):
+        for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
             if chunk.text_delta:
                 full_text += chunk.text_delta
                 self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
@@ -290,3 +299,8 @@ class Actor:
             skill_used=skill_used,
             context_tokens=context_tokens,
         )
+
+
+def _compute_max_tokens(llm_client: BaseChatClient, prompt_tokens: int) -> int:
+    available = llm_client.context_limit - prompt_tokens
+    return max(1, min(llm_client.max_output_tokens, available))

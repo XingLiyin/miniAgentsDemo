@@ -208,9 +208,7 @@ class AnthropicAdapter(BaseAdapter):
         }
         if system_text:
             payload['system'] = system_text
-        if req.max_tokens is None:
-            raise ValueError('Anthropic 请求必须提供 max_tokens')
-        payload['max_tokens'] = req.max_tokens
+        payload['max_tokens'] = req.max_tokens or 4096
         if req.temperature is not None:
             payload['temperature'] = req.temperature
         if req.top_p is not None:

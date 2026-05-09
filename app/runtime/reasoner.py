@@ -196,12 +196,18 @@ class Reasoner:
         def _item_text(v: object) -> str:
             return content_to_text(v) if isinstance(v, (str, list)) else ""
 
-        text_sample = (
-            session.goal
-            + " ".join(_item_text(m.get("content", "")) for m in messages)
-            + " ".join(_item_text(s) for s in bb_snippets)
-        )
-        token_estimate = estimate_tokens(text_sample)
+        if agent.loop_guard.context_tokens > 0:
+            # 有上次精确值：只估算新增消息，避免重复计算历史
+            new_messages = messages[agent.loop_guard.context_message_count:]
+            new_text = " ".join(_item_text(m.get("content", "")) for m in new_messages)
+            token_estimate = agent.loop_guard.context_tokens + estimate_tokens(new_text)
+        else:
+            text_sample = (
+                session.goal
+                + " ".join(_item_text(m.get("content", "")) for m in messages)
+                + " ".join(_item_text(s) for s in bb_snippets)
+            )
+            token_estimate = estimate_tokens(text_sample)
 
         return messages, bb_snippets, token_estimate
 
