@@ -88,10 +88,6 @@ class AgentTemplateService:
         name: str,
         version: str,
         description: str,
-        act_tool_list: list[str],
-        observe_tool_list: list[str],
-        mcp_act_servers: list[str] | None = None,
-        mcp_observe_servers: list[str] | None = None,
         source_dir: str = "",
         scope: str = "global",
         workspace_dir: str = "",
@@ -103,10 +99,6 @@ class AgentTemplateService:
         if existing is not None:
             existing.version = version
             existing.description = description
-            existing.act_tool_list = act_tool_list
-            existing.observe_tool_list = observe_tool_list
-            existing.mcp_act_servers = mcp_act_servers or []
-            existing.mcp_observe_servers = mcp_observe_servers or []
             existing.source_dir = source_dir
             existing.updated_at = now
             self._store.save(existing.to_dict())
@@ -117,10 +109,6 @@ class AgentTemplateService:
             name=name,
             version=version,
             description=description,
-            act_tool_list=act_tool_list,
-            observe_tool_list=observe_tool_list,
-            mcp_act_servers=mcp_act_servers or [],
-            mcp_observe_servers=mcp_observe_servers or [],
             source_dir=source_dir,
             scope=scope,
             workspace_dir=workspace_dir,
@@ -145,10 +133,6 @@ class AgentTemplateService:
                 name=meta.name,
                 version=meta.version,
                 description=meta.description,
-                act_tool_list=meta.act_tool_spec.effective(),
-                observe_tool_list=meta.observe_tool_spec.effective(),
-                mcp_act_servers=meta.mcp_act_servers,
-                mcp_observe_servers=meta.mcp_observe_servers,
                 source_dir=str(meta.agent_dir),
                 scope="workspace",
                 workspace_dir=working_dir,

@@ -40,7 +40,7 @@ class AgentTemplate:
             "mcp_act_servers": self.mcp_act_servers,
             "mcp_observe_servers": self.mcp_observe_servers,
             "source_dir": self.source_dir,
-            "has_spawn_permission": self.has_spawn_permission,
+            "has_spawn_permission": self.  has_spawn_permission,
             "scope": self.scope,
             "workspace_dir": self.workspace_dir,
             "created_at": self.created_at,

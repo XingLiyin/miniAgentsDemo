@@ -26,7 +26,7 @@ from app.storage.file.task_store import TaskStore
 from app.storage.file.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
-    from app.agent_template.definition import AgentDefContent
+    from app.agent_template.definition import AgentDefContent, AgentDefMetadata
     from app.orchestrator.lifecycle_manager import LifecycleManager
     from app.orchestrator.task_manager import TaskManager
 
@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 
 
 
-def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent) -> None:  # type: ignore[name-defined]
+def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent, metadata: "AgentDefMetadata | None" = None) -> None:  # type: ignore[name-defined]
     agent.soul_md = content.soul_md if content else ""
     agent.role_md = content.role_md if content else ""
-    agent.act_tool_list = tpl.act_tool_list
-    agent.observe_tool_list = tpl.observe_tool_list
-    agent.mcp_act_servers = tpl.mcp_act_servers
-    agent.mcp_observe_servers = tpl.mcp_observe_servers
+    agent.act_tool_list = metadata.act_tool_spec.effective() if metadata else []
+    agent.observe_tool_list = metadata.observe_tool_spec.effective() if metadata else []
+    agent.mcp_act_servers = metadata.mcp_act_servers if metadata else []
+    agent.mcp_observe_servers = metadata.mcp_observe_servers if metadata else []
 
 
 class SessionManager:
@@ -133,8 +133,8 @@ class SessionManager:
             template_id=template_id,
             name="root",
             status="IDLE",
-            act_tool_list=tpl.act_tool_list if tpl else [],
-            observe_tool_list=tpl.observe_tool_list if tpl else [],
+            act_tool_list=[],
+            observe_tool_list=[],
             soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(),
             has_spawn_permission=True,
@@ -145,7 +145,8 @@ class SessionManager:
         )
         if tpl is not None:
             content = self._template_registry.load_content(tpl.name, workspace_dir=wd) if self._template_registry else None
-            _apply_template_to_agent(tpl, content, agent)
+            metadata = self._template_registry.get_metadata(tpl.name, workspace_dir=wd) if self._template_registry else None
+            _apply_template_to_agent(tpl, content, agent, metadata)
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 

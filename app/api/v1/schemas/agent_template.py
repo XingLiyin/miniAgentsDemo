@@ -10,10 +10,6 @@ class AgentTemplateResponse(BaseModel):
     name: str
     version: str
     description: str
-    act_tool_list: list[str]
-    observe_tool_list: list[str]
-    mcp_act_servers: list[str]
-    mcp_observe_servers: list[str]
     source_dir: str
     has_spawn_permission: bool
     scope: str = "global"

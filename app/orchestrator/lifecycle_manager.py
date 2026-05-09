@@ -18,6 +18,7 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from app.agent_template.registry import AgentTemplateRegistry
 from app.common.utils import new_agent_id, now_iso
 from app.domain.events.event_types import (
     LIFECYCLE_AGENT_RECYCLED,
@@ -84,7 +85,7 @@ class LifecycleManager:
         max_spawn_depth: int = 1,
         template_svc: "AgentTemplateService | None" = None,
         memory_svc: "MemoryService | None" = None,
-        template_registry=None,
+        template_registry: "AgentTemplateRegistry | None" = None,
     ) -> None:
         self._session_svc = session_svc
         self._agent_store = agent_store
@@ -395,10 +396,11 @@ class LifecycleManager:
         if template_id and self._template_svc is not None:
             try:
                 tpl = self._template_svc.get(template_id)
-                act_tool_list = tpl.act_tool_list
-                observe_tool_list = tpl.observe_tool_list
-                mcp_act_servers = tpl.mcp_act_servers
-                mcp_observe_servers = tpl.mcp_observe_servers
+                _meta = self._template_registry.get_metadata_by_id(template_id) if self._template_registry else None
+                act_tool_list = _meta.act_tool_spec.effective() if _meta else []
+                observe_tool_list = _meta.observe_tool_spec.effective() if _meta else []
+                mcp_act_servers = _meta.mcp_act_servers if _meta else []
+                mcp_observe_servers = _meta.mcp_observe_servers if _meta else []
                 agent_name = f"sub-agent-{tpl.name}"
                 content = self._template_registry.load_content_by_id(template_id) if self._template_registry else None
                 soul_md = content.soul_md if content else ""

@@ -21,20 +21,6 @@ from app.domain.services.agent_template_service import AgentTemplateService
 logger = logging.getLogger(__name__)
 
 
-def _metadata_from_template(tpl: AgentTemplate) -> AgentDefMetadata:
-    """从 store AgentTemplate 重建 AgentDefMetadata（用于 workspace 模板）。"""
-    return AgentDefMetadata(
-        name=tpl.name,
-        version=tpl.version,
-        description=tpl.description,
-        act_tool_spec=ToolSpec(required=tpl.act_tool_list),
-        observe_tool_spec=ToolSpec(required=tpl.observe_tool_list),
-        agent_dir=Path(tpl.source_dir) if tpl.source_dir else Path("."),
-        mcp_act_servers=tpl.mcp_act_servers,
-        mcp_observe_servers=tpl.mcp_observe_servers,
-    )
-
-
 class AgentTemplateRegistry:
     """内存索引，存储 global AgentDefMetadata（Level 1），支持按需加载 Level 2。"""
 
@@ -44,6 +30,33 @@ class AgentTemplateRegistry:
         self._loader = AgentLoader()
         self._template_svc = template_service
 
+    def _metadata_from_template(self, tpl: AgentTemplate) -> AgentDefMetadata:
+        """从源文件重建 AgentDefMetadata（用于 workspace 模板按需加载）。"""
+        if not tpl.source_dir:
+            return AgentDefMetadata(
+                name=tpl.name,
+                version=tpl.version,
+                description=tpl.description,
+                act_tool_spec=ToolSpec(),
+                observe_tool_spec=ToolSpec(),
+                agent_dir=Path("."),
+            )
+        try:
+            return self._loader.load_metadata(Path(tpl.source_dir))
+        except Exception as e:
+            logger.warning(
+                "AgentTemplateRegistry: failed to load metadata for '%s' from '%s': %s",
+                tpl.name, tpl.source_dir, e,
+            )
+            return AgentDefMetadata(
+                name=tpl.name,
+                version=tpl.version,
+                description=tpl.description,
+                act_tool_spec=ToolSpec(),
+                observe_tool_spec=ToolSpec(),
+                agent_dir=Path(tpl.source_dir),
+            )
+
     def load_from_dir(self, agents_dir: Path) -> None:
         """扫描内置目录，批量 upsert global 模板到 store 并建立内存索引。"""
         for metadata in self._loader.scan(agents_dir):
@@ -52,10 +65,6 @@ class AgentTemplateRegistry:
                 name=metadata.name,
                 version=metadata.version,
                 description=metadata.description,
-                act_tool_list=metadata.act_tool_spec.effective(),
-                observe_tool_list=metadata.observe_tool_spec.effective(),
-                mcp_act_servers=metadata.mcp_act_servers,
-                mcp_observe_servers=metadata.mcp_observe_servers,
                 source_dir=str(metadata.agent_dir),
                 scope="global",
             )
@@ -81,7 +90,7 @@ class AgentTemplateRegistry:
             if tpl is not None:
                 if tpl.scope == "global" and tpl.name in self._agents:
                     return self._agents[tpl.name]
-                return _metadata_from_template(tpl)
+                return self._metadata_from_template(tpl)
         # 无 workspace_dir，或 workspace 中未找到：查 global 内存索引
         return self._agents.get(name)
 
@@ -92,7 +101,7 @@ class AgentTemplateRegistry:
         # 兜底：从 store 重建（workspace 模板按 ID 查）
         try:
             tpl = self._template_svc.get(template_id)
-            return _metadata_from_template(tpl)
+            return self._metadata_from_template(tpl)
         except Exception:
             return None
 
@@ -108,7 +117,7 @@ class AgentTemplateRegistry:
             if tpl.scope == "global" and tpl.name in self._agents:
                 result.append(self._agents[tpl.name])
             else:
-                result.append(_metadata_from_template(tpl))
+                result.append(self._metadata_from_template(tpl))
         return result
 
     def load_content(self, name: str, workspace_dir: str = "") -> AgentDefContent | None:

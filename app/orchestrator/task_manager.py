@@ -202,7 +202,6 @@ class TaskManager:
                     logger.exception("TM: failed to check active task %s", finished_task_id)
 
             self._task_queue.notify_completed(session_id, finished_task_id)
-            self._write_child_result_to_parent_memory(session_id, finished_task_id)
             self._try_resume_parent(session_id, finished_task_id)
 
             next_task = self._task_queue.pop(session_id)
@@ -359,31 +358,26 @@ class TaskManager:
         if self._lm is not None:
             self._lm.release(session_id, finished_agent_id)
 
-    def _write_child_result_to_parent_memory(self, session_id: str, finished_task_id: str) -> None:
-        """将已完成子任务的结果实时写入父 agent 的 memory，供父 agent 恢复后直接感知。"""
-        if not finished_task_id or self._memory_svc is None:
+    def _write_children_results_to_parent_memory(self, session_id: str, parent: Task, children: list[Task]) -> None:
+        """在父任务恢复前，将所有子任务结果批量写入父 agent 的 memory。"""
+        if self._memory_svc is None or not parent.assigned_agent_id:
             return
-        try:
-            finished_task = self._task_svc.get(finished_task_id, session_id)
-            if not finished_task.parent_task_id:
-                return
-            parent = self._task_svc.get(finished_task.parent_task_id, session_id)
-            if parent.status != "SUSPENDED":
-                return
-            outcome = "completed" if finished_task.status == "FINISHED" else "failed"
-            result_text = finished_task.result or finished_task.error or ""
-            content = f"Sub-task「{finished_task.title}」{outcome}."
-            if result_text:
-                content += f"\nResult: {result_text}"
-            self._memory_svc.append_message(
-                agent_id=parent.assigned_agent_id,
-                role="assistant",
-                content=content,
-                session_id=session_id,
-                task_id=finished_task.parent_task_id,
-            )
-        except Exception:
-            logger.exception("TM: failed to write child result to parent memory for task %s", finished_task_id)
+        for child in children:
+            try:
+                outcome = "completed" if child.status == "FINISHED" else "failed"
+                result_text = child.result or child.error or ""
+                content = f"Sub-task「{child.title}」{outcome}."
+                if result_text:
+                    content += f"\nResult: {result_text}"
+                self._memory_svc.append_message(
+                    agent_id=parent.assigned_agent_id,
+                    role="assistant",
+                    content=content,
+                    session_id=session_id,
+                    task_id=parent.id,
+                )
+            except Exception:
+                logger.exception("TM: failed to write child result to parent memory for task %s", child.id)
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
         """Conclude a SUSPENDED parent once all its children are terminal.
@@ -409,6 +403,7 @@ class TaskManager:
                 self._task_queue.remove(session_id, parent.id)
                 self._cascade_fail(session_id, parent.id)
             else:
+                self._write_children_results_to_parent_memory(session_id, parent, children)
                 self._task_svc.resume(parent.id, session_id)
                 self._task_queue.push(session_id, parent.id)
         except Exception:
