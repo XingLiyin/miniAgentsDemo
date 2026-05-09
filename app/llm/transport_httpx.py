@@ -41,7 +41,7 @@ class HttpxTransport(Transport, StreamTransport):
         调用方负责在 for 循环中消费，本方法在整个迭代完成前保持连接开启。
         """
         try:
-            with httpx.Client(timeout=timeout or self._timeout) as client:
+            with httpx.Client(timeout=timeout or self._timeout, trust_env=False) as client:
                 with client.stream('POST', url, headers=headers, json=json) as resp:
                     if resp.status_code >= 400:
                         resp.read()   # 必须先读 body，否则流式上下文下 text 为空

@@ -194,8 +194,8 @@ class Actor:
                 finish_reason = chunk.finish_reason
                 final_usage = chunk.usage
                 if chunk.error:
-                    logger.warning("Actor LLM API error: %s", chunk.error)
-                    full_text = full_text or f"[LLM API error: {chunk.error}]"
+                    from app.common.errors import AppError
+                    raise AppError("LLM_API_ERROR", str(chunk.error))
 
         if reasoning_text:
             self._sse_push(_sse, session_id, {

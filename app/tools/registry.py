@@ -176,7 +176,14 @@ class ToolRegistry:
                 if not self._try_connect(name, provider):
                     continue
             try:
-                result.extend(provider.list_definitions())
+                defs = provider.list_definitions()
+                for td in defs:
+                    if td.name in self._tools:
+                        logger.warning(
+                            "ToolRegistry: MCP tool '%s' from server '%s' conflicts with a builtin tool; builtin takes precedence",
+                            td.name, name,
+                        )
+                result.extend(defs)
             except Exception as e:
                 logger.warning("ToolRegistry: list_definitions failed for '%s': %s", name, e)
         return result

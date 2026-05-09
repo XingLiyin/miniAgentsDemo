@@ -267,6 +267,9 @@ def _stream_observer(
         if chunk.is_done:
             finish_reason = chunk.finish_reason
             final_usage = chunk.usage
+            if chunk.error:
+                from app.common.errors import AppError
+                raise AppError("LLM_API_ERROR", str(chunk.error))
 
     if _sse:
         try:

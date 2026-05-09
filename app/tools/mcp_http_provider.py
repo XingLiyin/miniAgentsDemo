@@ -41,7 +41,7 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
         self._url = url
 
     def get_mcp_client(self) -> Any:
-        http_client = httpx.AsyncClient(trust_env=False)
+        http_client = httpx.AsyncClient(trust_env=False, timeout=self._request_timeout)
         return streamable_http_client(url=self._url, terminate_on_close=True, http_client=http_client)
 
     def start(self) -> None:

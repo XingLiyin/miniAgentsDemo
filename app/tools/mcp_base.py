@@ -152,8 +152,9 @@ class _MCPProviderBase(ABC):
         if self._loop is None:
             raise AppError("MCP_NOT_STARTED", "Event loop not initialized")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        timeout = self._request_timeout or 30
         try:
-            return future.result(timeout=30)
+            return future.result(timeout=timeout)
         except concurrent.futures.CancelledError as exc:
             raise AppError(
                 "MCP_CONNECT_CANCELLED",
@@ -163,7 +164,7 @@ class _MCPProviderBase(ABC):
             future.cancel()
             raise AppError(
                 "MCP_CONNECT_TIMEOUT",
-                "MCP connection timed out after 30 s",
+                f"MCP connection timed out after {timeout} s",
             ) from exc
 
     async def _connect(self) -> None:

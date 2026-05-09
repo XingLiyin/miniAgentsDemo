@@ -128,6 +128,9 @@ def _stream(
             full_text += chunk.text_delta
         if chunk.tool_call_delta:
             tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
+        if chunk.is_done and chunk.error:
+            from app.common.errors import AppError
+            raise AppError("LLM_API_ERROR", str(chunk.error))
 
     return full_text, tool_call_acc
 

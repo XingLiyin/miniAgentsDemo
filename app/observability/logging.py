@@ -1,37 +1,29 @@
-"""结构化 JSON 日志初始化（Phase 1）。"""
+"""日志初始化：统一使用 uvicorn 默认格式。"""
 
 from __future__ import annotations
 
-import json
 import logging
 import sys
-from datetime import datetime, timezone
-
-
-class JsonFormatter(logging.Formatter):
-    """将日志记录格式化为单行 JSON。"""
-
-    def format(self, record: logging.LogRecord) -> str:
-        log_obj = {
-            "ts": datetime.now(timezone.utc).isoformat(),
-            "level": record.levelname,
-            "logger": record.name,
-            "msg": record.getMessage(),
-        }
-        if record.exc_info:
-            log_obj["exc"] = self.formatException(record.exc_info)
-        return json.dumps(log_obj, ensure_ascii=False)
 
 
 def init_logging(level: str = "INFO") -> None:
-    """初始化结构化 JSON 日志。"""
-    root = logging.getLogger()
-    root.setLevel(getattr(logging, level.upper(), logging.INFO))
+    """初始化日志，使用 uvicorn DefaultFormatter 统一格式。"""
+    from uvicorn.logging import DefaultFormatter
 
+    log_level = getattr(logging, level.upper(), logging.INFO)
+    formatter = DefaultFormatter("%(levelprefix)s %(message)s", use_colors=False)
+
+    root = logging.getLogger()
+    root.setLevel(log_level)
     if not root.handlers:
         handler = logging.StreamHandler(sys.stdout)
-        handler.setFormatter(JsonFormatter())
+        handler.setFormatter(formatter)
         root.addHandler(handler)
     else:
         for handler in root.handlers:
-            handler.setFormatter(JsonFormatter())
+            handler.setFormatter(formatter)
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uv = logging.getLogger(name)
+        uv.handlers.clear()
+        uv.propagate = True
