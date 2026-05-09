@@ -47,7 +47,7 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
     def start(self) -> None:
         self._start_loop()
         self._run_sync(self._connect())
-        self._initialized = True
+        self._finish_start()
         logger.info(
             "MCPStreamableHTTPProvider '%s' started, %d tools loaded",
             self._name,

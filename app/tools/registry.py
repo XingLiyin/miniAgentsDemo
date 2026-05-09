@@ -67,6 +67,7 @@ class ToolRegistry:
         provider = MCPStdioProvider(name=name, command=command, args=args, env=env)
         self._mcp_providers[name] = provider
         self._connect_locks[name] = threading.Lock()
+        provider._reconnect_fn = lambda gen, n=name, p=provider: self._reconnect_provider(n, p, gen)
         logger.info("ToolRegistry: registered MCP stdio server '%s' (lazy)", name)
 
     def register_mcp_http(
@@ -81,6 +82,7 @@ class ToolRegistry:
         provider = MCPStreamableHTTPProvider(name=name, url=url, timeout=timeout)
         self._mcp_providers[name] = provider
         self._connect_locks[name] = threading.Lock()
+        provider._reconnect_fn = lambda gen, n=name, p=provider: self._reconnect_provider(n, p, gen)
         logger.info("ToolRegistry: registered MCP http server '%s' (lazy)", name)
 
     def shutdown_one(self, name: str) -> None:
@@ -193,6 +195,26 @@ class ToolRegistry:
                 logger.warning("ToolRegistry: list_definitions failed for '%s': %s", name, e)
         return result
 
+    def _reconnect_provider(self, name: str, provider: _MCPProviderBase, gen: int) -> None:
+        """通过 _connect_locks 统一执行重连，防止与 _try_connect 并发 start()。"""
+        lock = self._connect_locks.get(name)
+        if lock is None:
+            return
+        with lock:
+            if provider._generation > gen:
+                return  # 另一线程已完成重连，跳过
+            try:
+                provider.stop()
+            except Exception:
+                pass
+            try:
+                provider.start()
+                self._last_connect_attempt.pop(name, None)
+                logger.info("ToolRegistry: reconnected MCP server '%s'", name)
+            except Exception as e:
+                self._last_connect_attempt[name] = time.monotonic()
+                logger.warning("ToolRegistry: failed to reconnect '%s': %s", name, e)
+
     def _try_connect(self, name: str, provider: _MCPProviderBase) -> bool:
         """尝试启动未连接的 provider，冷却期内跳过。返回是否连接成功。"""
         lock = self._connect_locks.get(name)
@@ -207,6 +229,9 @@ class ToolRegistry:
             self._last_connect_attempt[name] = now
             try:
                 provider.start()
+                # Clear the timestamp so a future reconnect is not blocked by cooldown.
+                # The cooldown only makes sense after a *failed* attempt, not a success.
+                self._last_connect_attempt.pop(name, None)
                 logger.info("ToolRegistry: connected MCP server '%s'", name)
                 return True
             except Exception as e:

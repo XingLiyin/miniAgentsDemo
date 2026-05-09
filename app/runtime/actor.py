@@ -177,34 +177,42 @@ class Actor:
         finish_reason = None
         final_usage = None
 
-        for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
-            if chunk.text_delta:
-                full_text += chunk.text_delta
-                self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
-            if chunk.reasoning_delta:
-                reasoning_text += chunk.reasoning_delta
-                self._sse_push(_sse, session_id, {
-                    "type": "reasoning_delta",
-                    "delta": chunk.reasoning_delta,
-                    "round": _round,
-                })
-            if chunk.tool_call_delta:
-                tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
-            if chunk.image:
-                image_acc.append(chunk.image)
-                self._sse_push(_sse, session_id, {
-                    "type": "image",
-                    "media_type": chunk.image.media_type,
-                    "source_type": chunk.image.source_type,
-                    "data": chunk.image.data,
-                    "round": _round,
-                })
-            if chunk.is_done:
-                finish_reason = chunk.finish_reason
-                final_usage = chunk.usage
-                if chunk.error:
-                    from app.common.errors import AppError
-                    raise AppError("LLM_API_ERROR", str(chunk.error))
+        from app.common.errors import AppError
+        try:
+            for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
+                if chunk.text_delta:
+                    full_text += chunk.text_delta
+                    self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
+                if chunk.reasoning_delta:
+                    reasoning_text += chunk.reasoning_delta
+                    self._sse_push(_sse, session_id, {
+                        "type": "reasoning_delta",
+                        "delta": chunk.reasoning_delta,
+                        "round": _round,
+                    })
+                if chunk.tool_call_delta:
+                    tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
+                if chunk.image:
+                    image_acc.append(chunk.image)
+                    self._sse_push(_sse, session_id, {
+                        "type": "image",
+                        "media_type": chunk.image.media_type,
+                        "source_type": chunk.image.source_type,
+                        "data": chunk.image.data,
+                        "round": _round,
+                    })
+                if chunk.is_done:
+                    finish_reason = chunk.finish_reason
+                    final_usage = chunk.usage
+                    if chunk.error:
+                        raise AppError("LLM_API_ERROR", str(chunk.error))
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError("LLM_API_ERROR", str(e)) from e
+
+        if final_usage is None and not full_text and not tool_call_acc:
+            raise AppError("LLM_API_ERROR", "LLM stream ended without completion")
 
         if reasoning_text:
             self._sse_push(_sse, session_id, {
