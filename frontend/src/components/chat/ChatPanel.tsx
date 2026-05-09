@@ -4,6 +4,7 @@ import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircl
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
+import { MarkdownContent } from './MarkdownContent'
 import { llmsApi } from '@/api/llms'
 import type { Session } from '@/types'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
@@ -97,7 +98,11 @@ function MessageBubble({ item }: { item: ChatMessage }) {
         )}>
           {item.images && item.images.length > 0 && <ImageGrid images={item.images} />}
           {!isUser && item.reasoning && <ReasoningBlock reasoning={item.reasoning} />}
-          {item.content && <p className="whitespace-pre-wrap break-words mt-1">{item.content}</p>}
+          {item.content && (
+            isUser
+              ? <p className="whitespace-pre-wrap break-words mt-1">{item.content}</p>
+              : <MarkdownContent content={item.content} />
+          )}
         </div>
         {item.created_at && (
           <p className="text-xs text-gray-400 mt-1 px-1">{formatTime(item.created_at)}</p>
@@ -165,10 +170,7 @@ function StreamingBubble({ text, images, reasoning }: { text: string; images?: C
           {images && images.length > 0 && <ImageGrid images={images} />}
           {reasoning && <ReasoningBlock reasoning={reasoning} defaultOpen />}
           {(text || !reasoning) && (
-            <p className="whitespace-pre-wrap break-words mt-1">
-              {text}
-              <span className="inline-block w-0.5 h-4 bg-gray-400 ml-0.5 align-text-bottom animate-pulse" />
-            </p>
+            <MarkdownContent content={text} streaming />
           )}
         </div>
       </div>
@@ -239,7 +241,7 @@ function ObserverBubble({ item }: { item: ChatObserverMessage }) {
         <p className="text-xs text-purple-400 mb-0.5">{isRound2 ? 'Observer · 任务复核' : 'Observer · 评估'}</p>
         <div className="rounded-xl px-3 py-2 text-sm leading-relaxed bg-purple-50 border border-purple-200 text-purple-900 rounded-tl-sm">
           {item.reasoning && <ReasoningBlock reasoning={item.reasoning} tone="observer" />}
-          <p className="whitespace-pre-wrap break-words">{item.content}</p>
+          <MarkdownContent content={item.content} />
         </div>
         {item.created_at && (
           <p className="text-xs text-gray-400 mt-1 px-1">{formatTime(item.created_at)}</p>
@@ -307,10 +309,7 @@ function ObserverStreamingBubble({ text, reasoning }: { text: string; reasoning?
         <div className="rounded-xl px-3 py-2 text-sm leading-relaxed bg-purple-50 border border-purple-200 text-purple-900 rounded-tl-sm">
           {reasoning && <ReasoningBlock reasoning={reasoning} tone="observer" defaultOpen />}
           {(text || !reasoning) && (
-            <p className="whitespace-pre-wrap break-words">
-              {text}
-              <span className="inline-block w-0.5 h-4 bg-purple-400 ml-0.5 align-text-bottom animate-pulse" />
-            </p>
+            <MarkdownContent content={text} streaming />
           )}
         </div>
       </div>

@@ -3,6 +3,7 @@ import { User, Bot, Wrench } from 'lucide-react'
 import type { MemoryMessage } from '@/types'
 import { Spinner } from '@/components/ui/spinner'
 import { formatTime } from '@/lib/status'
+import { MarkdownContent } from '@/components/chat/MarkdownContent'
 
 function MessageBubble({ message }: { message: MemoryMessage }) {
   const isUser = message.role === 'user'
@@ -49,7 +50,10 @@ function MessageBubble({ message }: { message: MemoryMessage }) {
               : 'bg-white border border-gray-200 text-gray-800 rounded-tl-sm'
           )}
         >
-          <p className="whitespace-pre-wrap break-words">{message.content}</p>
+          {isUser
+            ? <p className="whitespace-pre-wrap break-words">{message.content}</p>
+            : <MarkdownContent content={message.content} />
+          }
         </div>
         <p className="text-xs text-gray-400 mt-1 px-1">{formatTime(message.created_at)}</p>
       </div>
