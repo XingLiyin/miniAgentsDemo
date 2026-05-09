@@ -1,7 +1,8 @@
 # miniAgents one-click startup script (PowerShell)
 param(
     [switch]$BackendOnly,
-    [switch]$FrontendOnly
+    [switch]$FrontendOnly,
+    [int]$BackendPort = 15926
 )
 
 $Root = $PSScriptRoot
@@ -50,14 +51,15 @@ function Sync-Venv {
 
 # --- Start backend ---
 function Start-Backend {
-    Write-Host "`n==> Starting backend (FastAPI :8000)" -ForegroundColor Cyan
+    Write-Host "`n==> Starting backend (FastAPI :$BackendPort)" -ForegroundColor Cyan
 
     Ensure-Uv | Out-Null
     $pythonExe = Sync-Venv
 
+    $cmd = "& '$pythonExe' -m uvicorn app.main:app --reload --host 0.0.0.0 --port $BackendPort; Write-Host '`n[Backend exited. Press any key to close...]' -ForegroundColor Red; `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')"
     $params = @{
-        FilePath         = $pythonExe
-        ArgumentList     = "-m", "uvicorn", "app.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000"
+        FilePath         = "powershell.exe"
+        ArgumentList     = "-NoExit", "-Command", "Set-Location '$Root'; $cmd"
         WorkingDirectory = $Root
         NoNewWindow      = $false
         PassThru         = $true
@@ -76,6 +78,7 @@ function Start-Frontend {
         Write-Host "  [OK] Frontend dependencies installed" -ForegroundColor Green
     }
 
+    $env:BACKEND_PORT = $BackendPort
     $params = @{
         FilePath         = "npm.cmd"
         ArgumentList     = "run", "dev"
@@ -94,7 +97,7 @@ if (-not $BackendOnly)  { $procs += Start-Frontend }
 
 Write-Host "`n==========================================" -ForegroundColor Green
 Write-Host "  Services started! Press Ctrl+C to stop." -ForegroundColor Green
-Write-Host "  Backend docs: http://localhost:8000/docs"
+Write-Host "  Backend docs: http://localhost:$BackendPort/docs"
 Write-Host "  Frontend:     http://localhost:5173"
 Write-Host "==========================================" -ForegroundColor Green
 
