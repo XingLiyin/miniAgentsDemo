@@ -340,6 +340,12 @@ class TaskManager:
             inherit_memory=bool(next_task.settings.get("inherit_memory", True)),
         )
         if agent_id:
+            try:
+                task = self._task_svc.get(next_task.id, session_id)
+                task.assigned_agent_id = agent_id
+                self._task_svc.save(task)
+            except Exception:
+                logger.exception("TM: failed to update assigned_agent_id for task %s", next_task.id)
             self._lm.run_agent(session_id, agent_id, next_task.id)
 
     def _resolve_template_id(self, session_id: str, template_name: str) -> str:

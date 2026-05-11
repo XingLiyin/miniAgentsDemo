@@ -12,13 +12,6 @@ from __future__ import annotations
 import glob as _glob
 import logging
 import os
-
-if os.name == "nt":
-    _gtk_bin = r"C:\Program Files\GTK3-Runtime Win64\bin"
-    if _gtk_bin not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = _gtk_bin + os.pathsep + os.environ.get("PATH", "")
-    if hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(_gtk_bin)
 import re
 import subprocess
 import sys
@@ -31,6 +24,23 @@ from app.tools.types import CallContext, ToolDefinition, ToolResult
 from app.tools.utils import extract_input_schema, make_tool_handler
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_gtk_path() -> None:
+    """将 GTK3 运行时目录加入 PATH（仅 Windows），供 WeasyPrint 等依赖使用。"""
+    gtk_bin = Path(os.environ.get("GTK3_BIN", r"C:\Program Files\GTK3-Runtime Win64\bin"))
+    if not gtk_bin.is_dir():
+        logger.debug("GTK3 runtime not found at %s, skipping PATH setup", gtk_bin)
+        return
+    gtk_bin_str = str(gtk_bin)
+    if gtk_bin_str not in os.environ.get("PATH", ""):
+        os.environ["PATH"] = gtk_bin_str + os.pathsep + os.environ.get("PATH", "")
+    if hasattr(os, "add_dll_directory"):
+        os.add_dll_directory(gtk_bin_str)
+
+
+if os.name == "nt":
+    _setup_gtk_path()
 
 
 # ── @builtin_tool 装饰器 ──────────────────────────────────────────────────────
