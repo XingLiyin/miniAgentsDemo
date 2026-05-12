@@ -1,0 +1,54 @@
+"""PyInstaller 打包入口 — 生产模式下由 exe 直接调用。"""
+import sys
+import os
+
+# ── 冻结模式（PyInstaller）初始化 ────────────────────────────────────────────
+if getattr(sys, "frozen", False):
+    _meipass = sys._MEIPASS  # 只读资源目录
+    _exe_dir = os.path.dirname(sys.executable)  # exe 所在目录（可写）
+
+    # 将 GTK3 DLL 加入 PATH，供 cairosvg 使用
+    _gtk3_bin = os.path.join(_meipass, "gtk3_bin")
+    if os.path.isdir(_gtk3_bin):
+        os.environ["PATH"] = _gtk3_bin + os.pathsep + os.environ.get("PATH", "")
+
+    # 从 exe 同级目录加载 .env
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(_exe_dir, ".env"))
+
+    # 将路径环境变量设置为绝对路径（允许用户 .env 覆盖）
+    os.environ.setdefault("MINIAGENTS_DATA_DIR",   os.path.join(_exe_dir, "data"))
+    os.environ.setdefault("MINIAGENTS_SKILLS_DIR", os.path.join(_meipass, "resources", "skills"))
+    os.environ.setdefault("MINIAGENTS_AGENTS_DIR", os.path.join(_meipass, "resources", "agents"))
+else:
+    from dotenv import load_dotenv
+    load_dotenv()
+
+# ── 延迟导入（确保 PATH / 环境变量已就绪再导入 cairosvg 等）───────────────────
+from app.main import create_app  # noqa: E402
+import uvicorn  # noqa: E402
+
+
+def main() -> None:
+    port = int(os.environ.get("MINIAGENTS_BACKEND_PORT", 15926))
+    application = create_app()
+
+    # 挂载前端静态文件
+    if getattr(sys, "frozen", False):
+        frontend_dist = os.path.join(sys._MEIPASS, "frontend_dist")
+    else:
+        frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
+
+    if os.path.isdir(frontend_dist):
+        from fastapi.staticfiles import StaticFiles
+        # 挂载到 "/" 必须在所有 API 路由注册之后
+        application.mount(
+            "/", StaticFiles(directory=frontend_dist, html=True), name="frontend"
+        )
+
+    print(f"[miniAgents] Starting on http://0.0.0.0:{port}")
+    uvicorn.run(application, host="0.0.0.0", port=port, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

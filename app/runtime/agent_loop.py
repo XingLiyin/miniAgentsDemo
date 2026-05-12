@@ -181,7 +181,7 @@ class AgentLoop:
                 task_id=task_id,
             )
             task.user_prompt_in_memory = True
-            task_output = result.output or ""
+            task_output = result.output if result.output != task.result else ""
             self._task_svc.save(task)
         if verdict.summary or (result.conversation_turns and result.conversation_turns[-1].images):
             last_images = result.conversation_turns[-1].images if result.conversation_turns else []

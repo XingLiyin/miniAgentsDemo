@@ -165,7 +165,7 @@ function RegisterSkillSourceDialog({ open, onClose }: { open: boolean; onClose: 
                 <Input
                   key={key}
                   label={label}
-                  value={(currentForm as Record<string, unknown>)[key] as string}
+                  value={(currentForm as unknown as Record<string, unknown>)[key] as string}
                   onChange={(e) => setCurrentForm({ [key]: e.target.value })}
                 />
               ))}

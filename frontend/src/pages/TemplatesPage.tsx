@@ -163,7 +163,7 @@ export function TemplatesPage() {
 
   const { data: templates, isLoading, error } = useQuery({
     queryKey: ['templates'],
-    queryFn: templatesApi.list,
+    queryFn: () => templatesApi.list(),
   })
 
   return (
