@@ -147,7 +147,8 @@ class ActorPromptBuilder(BasePromptBuilder):
             parts.append(f"Current goal: {task.title}\nDescription: {task.description}")
 
         user_prompt = ctx.current_task.user_prompt
-        parts.append(f"Current message: {content_to_text(user_prompt)}")
+        if user_prompt:
+            parts.append(f"Current message: {content_to_text(user_prompt)}")
         text_content = "\n".join(parts)
 
         if isinstance(user_prompt, list):

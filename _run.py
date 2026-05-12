@@ -40,11 +40,21 @@ def main() -> None:
         frontend_dist = os.path.join(os.path.dirname(__file__), "frontend", "dist")
 
     if os.path.isdir(frontend_dist):
-        from fastapi.staticfiles import StaticFiles
+        from starlette.staticfiles import StaticFiles
+        from starlette.exceptions import HTTPException as _StarletteHTTPException
+
+        class _SPAFiles(StaticFiles):
+            """BrowserRouter SPA 支持：找不到文件时回退到 index.html。"""
+            async def get_response(self, path: str, scope):
+                try:
+                    return await super().get_response(path, scope)
+                except _StarletteHTTPException as exc:
+                    if exc.status_code == 404:
+                        return await super().get_response("index.html", scope)
+                    raise
+
         # 挂载到 "/" 必须在所有 API 路由注册之后
-        application.mount(
-            "/", StaticFiles(directory=frontend_dist, html=True), name="frontend"
-        )
+        application.mount("/", _SPAFiles(directory=frontend_dist, html=True), name="frontend")
 
     print(f"[miniAgents] Starting on http://0.0.0.0:{port}")
     uvicorn.run(application, host="0.0.0.0", port=port, log_level="info")
