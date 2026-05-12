@@ -534,6 +534,9 @@ def exec_skill_script(
     timeout_sec = settings.bash_exec_timeout_ms / 1000
     cwd = _resolve_cwd(ctx) or str(Path.cwd())
 
+    env = os.environ.copy()
+    env["SKILL_DIR"] = str(abs_skill_dir)
+
     try:
         proc = subprocess.run(
             command,
@@ -544,6 +547,7 @@ def exec_skill_script(
             errors="replace",
             timeout=timeout_sec,
             cwd=cwd,
+            env=env,
         )
         output = (proc.stdout or "") + (proc.stderr or "")
         limit = settings.bash_exec_output_limit_bytes

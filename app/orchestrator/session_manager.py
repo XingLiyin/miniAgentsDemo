@@ -103,7 +103,7 @@ class SessionManager:
         session = self._session_svc.create(
             user_prompt=user_prompt,
             template_id=template_id,
-            token_budget=token_budget or settings.default_token_budget,
+            token_budget=token_budget if token_budget is not None else settings.default_token_budget,
             llm_provider=resolved_llm_name,
             llm_model=llm_model or "",
             working_dir=wd,

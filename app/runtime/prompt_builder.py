@@ -132,24 +132,19 @@ class ActorPromptBuilder(BasePromptBuilder):
             if ctx.recent_messages and ctx.recent_messages[-1].get("role") == "user"
             else ctx.recent_messages
         )
-        for m in recent_messages:
-            messages.append(LLMMessage(
-                role=m.get("role", "user"),
-                content=content_from_raw(m.get("content", "")),
-                tool_call_id=m.get("tool_call_id"),
-                tool_calls=m.get("tool_calls"),
-            ))
 
         parts: list[str] = []
         if ctx.blackboard_snippets:
-            parts.append("Task Background:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
+            parts.append("## Task Background\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
         if task.title and task.description:
-            parts.append(f"Current goal: {task.title}\nDescription: {task.description}")
+            parts.append(f"## Current Goal\n{task.title}\n{task.description}")
 
         user_prompt = ctx.current_task.user_prompt
         if user_prompt:
-            parts.append(f"Current message: {content_to_text(user_prompt)}")
-        text_content = "\n".join(parts)
+            parts.append(f"## Current Message\n{content_to_text(user_prompt)}")
+        if recent_messages:
+            parts.append("## History\n" + self._format_history(recent_messages))
+        text_content = "\n\n".join(parts)
 
         if isinstance(user_prompt, list):
             image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]
@@ -159,6 +154,27 @@ class ActorPromptBuilder(BasePromptBuilder):
 
         messages.append(LLMMessage(role="user", content=msg_content))
         return messages
+
+    def _format_history(self, messages: list[dict]) -> str:
+        """将 recent_messages 格式化为可读的轮次文本。"""
+        lines: list[str] = []
+        round_num = 0
+        for m in messages:
+            role = m.get("role", "user")
+            content = content_to_text(content_from_raw(m.get("content", "")))
+            if role == "user":
+                round_num += 1
+                lines.append(f"--- Round {round_num} ---")
+                if content:
+                    lines.append(f"User: {content}")
+            elif role == "assistant":
+                if content:
+                    lines.append(f"Assistant: {content}")
+                for tc in (m.get("tool_calls") or []):
+                    lines.append(f"  Tool call: {tc.get('name')}({tc.get('input')})")
+            elif role == "tool":
+                lines.append(f"  Tool result: {content[:500]}")
+        return "\n".join(lines)
 
     def _build_resources_section(self, ctx: "ReasoningContext") -> str:
         """将 ctx.actor_resources 按 kind 分组渲染为 system prompt 段落。"""

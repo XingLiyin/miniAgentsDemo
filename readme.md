@@ -13,7 +13,7 @@ Built as an architectural learning project; designed to be readable, extensible,
 - **LIFO task queue** — depth-first task scheduling with DAG dependency tracking
 - **Dual-phase tool authorization** — Actor and Observer phases each have independent tool allowlists
 - **File-defined agents** — define agent identity, tools, and behavior with plain Markdown files (`SOUL.md`, `ROLE.md`, `TOOLS.md`)
-- **Skills** — reusable workflows defined in `SKILL.md`, loaded on demand
+- **Skills** — reusable workflows defined in `SKILL.md`, loaded on demand; skill scripts receive a `SKILL_DIR` env var for locating skill-relative files
 - **Memory compaction** — rolling summary compression keeps context windows manageable
 - **Blackboard** — parent→child result passing via topic-keyed file append log
 - **Human-in-the-Loop** — agents can pause mid-execution and wait for user input
@@ -234,7 +234,7 @@ An agent can invoke a skill by calling `submit_task` with `skill_name: "summariz
 | `bash_exec` | Run shell commands (blacklisted commands blocked; timeout enforced) |
 | `http_request` | Make HTTP requests (SSRF protection included) |
 | `read_file` / `write_file` / `glob` | File system operations (scoped to `working_dir`) |
-| `exec_skill_script` | Execute a script in `scripts/` or `references/` |
+| `exec_skill_script` | Execute a script in the skill directory; `SKILL_DIR` env var is injected so scripts can locate skill-relative files via `os.environ["SKILL_DIR"]` |
 | `load_skill_reference` | Load a skill's reference document into context |
 
 ### Control Tools (agent-internal)

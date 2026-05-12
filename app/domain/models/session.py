@@ -89,7 +89,7 @@ class Session:
             status=d["status"],
             template_id=d.get("template_id") or d.get("template_name"),
             root_agent_id=d.get("root_agent_id"),
-            token_budget=d.get("token_budget", 200_000),
+            token_budget=d.get("token_budget", 0),
             input_tokens_used=d.get("input_tokens_used", 0),
             output_tokens_used=d.get("output_tokens_used", 0),
             failure_counter=d.get("failure_counter", 0),
