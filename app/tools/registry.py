@@ -22,6 +22,7 @@ from app.tools.control_tools import get_control_tools
 from app.tools.types import ToolDefinition
 
 if TYPE_CHECKING:
+    from app.domain.models.agent import AgentCapability
     from app.tools.mcp_base import _MCPProviderBase
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,16 @@ class ToolRegistry:
             if td.name == name:
                 return td
         raise AppError("TOOL_NOT_FOUND", f"Tool '{name}' is not registered")
+
+    def get_from_capability(self, name: str, capability: "AgentCapability") -> ToolDefinition:
+        """在 capability 允许的资源范围内查找工具定义：先查 builtin，再查授权 MCP server。"""
+        if name in self._tools:
+            return self._tools[name]
+        for server_name in capability.mcp_servers:
+            for td in self.get_server_tool_definitions(server_name):
+                if td.name == name:
+                    return td
+        raise AppError("TOOL_NOT_FOUND", f"Tool '{name}' not found in agent's allowed resources")
 
     def is_registered(self, name: str) -> bool:
         if name in self._tools:

@@ -18,8 +18,9 @@ import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from app.agent_template.registry import AgentTemplateRegistry
+from app.agent_template.loader import AgentLoader
 from app.common.utils import new_agent_id, now_iso
+
 from app.domain.events.event_types import (
     LIFECYCLE_AGENT_RECYCLED,
     LIFECYCLE_AGENT_SCHEDULED,
@@ -27,13 +28,12 @@ from app.domain.events.event_types import (
     TASK_EXECUTION_FAILED,
     TASK_EXECUTION_FINISHED,
 )
-from app.domain.models.agent import Agent, LoopGuard
+from app.domain.models.agent import Agent, AgentCapability, LoopGuard
 from app.domain.services.session_service import SessionService
 from app.storage.file.agent_store import AgentStore
 
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
-    from app.domain.services.agent_template_service import AgentTemplateService
     from app.domain.services.memory_service import MemoryService
     from app.domain.models.task import Task
     from app.runtime.agent_loop import AgentLoop
@@ -83,9 +83,8 @@ class LifecycleManager:
         max_concurrent_agents: int = 5,
         max_concurrent_tasks: int = 10,
         max_spawn_depth: int = 1,
-        template_svc: "AgentTemplateService | None" = None,
         memory_svc: "MemoryService | None" = None,
-        template_registry: "AgentTemplateRegistry | None" = None,
+        template_loader: AgentLoader | None = None,
     ) -> None:
         self._session_svc = session_svc
         self._agent_store = agent_store
@@ -93,9 +92,8 @@ class LifecycleManager:
         self._max_concurrent_agents = max_concurrent_agents
         self._max_concurrent_tasks = max_concurrent_tasks
         self._max_spawn_depth = max_spawn_depth
-        self._template_svc = template_svc
         self._memory_svc = memory_svc
-        self._template_registry = template_registry
+        self._template_loader = template_loader
 
         self._agent_loop: "AgentLoop | None" = None
         self._states: dict[str, LMState] = {}
@@ -233,6 +231,17 @@ class LifecycleManager:
 
         logger.info("LM: prepared sub-agent %s (depth=%d, parent=%s)", sub_agent_id, spawn_depth, base_executor)
         return sub_agent_id
+
+    def running_agent_count(self, session_id: str) -> int:
+        """Return number of agents currently in RUNNING status for the session."""
+        lock = self._locks.get(session_id)
+        if lock is None:
+            return 0
+        with lock:
+            state = self._states.get(session_id)
+            if state is None:
+                return 0
+            return sum(1 for meta in state.agent_registry.values() if meta.status == "RUNNING")
 
     def release(self, session_id: str, finished_agent_id: str) -> None:
         """Session has no more tasks. Recycle all remaining agents in the tree."""
@@ -392,36 +401,30 @@ class LifecycleManager:
 
         settings = get_settings()
         parent_data = self._agent_store.get(session_id, parent_agent_id) or {}
+        workspace_dir = (parent_data.get("settings") or {}).get("working_dir", "")
 
-        if template_id and self._template_svc is not None:
+        _details = None
+        if template_id and self._template_loader is not None:
             try:
-                tpl = self._template_svc.get(template_id)
-                _meta = self._template_registry.get_metadata_by_id(template_id) if self._template_registry else None
-                act_tool_list = _meta.act_tool_spec.effective() if _meta else []
-                observe_tool_list = _meta.observe_tool_spec.effective() if _meta else []
-                mcp_act_servers = _meta.mcp_act_servers if _meta else []
-                mcp_observe_servers = _meta.mcp_observe_servers if _meta else []
-                agent_name = f"sub-agent-{tpl.name}"
-                content = self._template_registry.load_content_by_id(template_id) if self._template_registry else None
-                soul_md = content.soul_md if content else ""
-                role_md = content.role_md if content else ""
+                _details = self._template_loader.get_details(template_id, workspace_dir)
             except Exception:
-                logger.warning("LM: template id '%s' not found, falling back to parent config", template_id)
-                soul_md = parent_data.get("soul_md", "")
-                role_md = parent_data.get("role_md", "")
-                act_tool_list = parent_data.get("act_tool_list", [])
-                observe_tool_list = parent_data.get("observe_tool_list", [])
-                mcp_act_servers = parent_data.get("mcp_act_servers", [])
-                mcp_observe_servers = parent_data.get("mcp_observe_servers", [])
-                template_id = parent_data.get("template_id") or ""
-                agent_name = f"sub-agent-d{spawn_depth}"
+                logger.warning("LM: failed to load template '%s', falling back to parent config", template_id)
+
+        if _details is not None:
+            actor = AgentCapability(
+                instruction_md=_details.actor_soul,
+                tools=_details.actor_capability.effective_tools(),
+                mcp_servers=_details.actor_capability.required_mcp_servers,
+            )
+            observer = AgentCapability(
+                instruction_md=_details.observer_role,
+                tools=_details.observer_capability.effective_tools(),
+                mcp_servers=_details.observer_capability.required_mcp_servers,
+            )
+            agent_name = f"sub-agent-{template_id}"
         else:
-            soul_md = parent_data.get("soul_md", "")
-            role_md = parent_data.get("role_md", "")
-            act_tool_list = parent_data.get("act_tool_list", [])
-            observe_tool_list = parent_data.get("observe_tool_list", [])
-            mcp_act_servers = parent_data.get("mcp_act_servers", [])
-            mcp_observe_servers = parent_data.get("mcp_observe_servers", [])
+            actor = AgentCapability.from_dict(parent_data.get("actor", {}))
+            observer = AgentCapability.from_dict(parent_data.get("observer", {}))
             template_id = parent_data.get("template_id") or ""
             agent_name = f"sub-agent-d{spawn_depth}"
 
@@ -434,14 +437,8 @@ class LifecycleManager:
             template_id=template_id,
             name=agent_name,
             status="IDLE",
-            soul_md=soul_md,
-            role_md=role_md,
-            act_tool_list=act_tool_list,
-            observe_tool_list=observe_tool_list,
-            mcp_act_servers=mcp_act_servers,
-            mcp_observe_servers=mcp_observe_servers,
-            skill_list=parent_data.get("skill_list", []),
-            soul_path=parent_data.get("soul_path"),
+            actor=actor,
+            observer=observer,
             loop_guard=LoopGuard(actor_max_tool_rounds=50),
             inherit_memory=inherit_memory,
             has_spawn_permission=(spawn_depth < self._max_spawn_depth),

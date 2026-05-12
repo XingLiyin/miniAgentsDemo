@@ -64,7 +64,7 @@ def control_tool(fn):
 
 # ── 模块级辅助函数 ─────────────────────────────────────────────────────────────
 
-def _confirm_with_user(task: Task, task_result: str, outputs, *, task_svc: "TaskService", session_svc: "SessionService") -> tuple[str, str]:
+def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService", session_svc: "SessionService") -> tuple[str, str]:
     from app.storage.file.hitl_store import get_hitl_store
     from app.common.sse_bus import get_sse_bus
     from app.common.utils import now_iso
@@ -91,7 +91,7 @@ def _confirm_with_user(task: Task, task_result: str, outputs, *, task_svc: "Task
     session_svc.transition(session_id, "RUNNING")
 
     if answer.startswith("用户已确认任务完成"):
-        task_svc.finish(task.id, result=task_result, outputs=outputs, session_id=task.session_id)
+        task_svc.finish(task.id, result=task_result, session_id=task.session_id)
         return "success", task_result
     else:
         prefix = "用户表示任务未完成，请重试。用户补充说明："
@@ -269,7 +269,7 @@ def replan(
 
 @control_tool
 def submit_task_assessment(
-    task_outcome: Annotated[
+    task_status: Annotated[
         str,
         "Outcome of the current task: "
         "'success' if completed successfully; "
@@ -297,38 +297,37 @@ def submit_task_assessment(
 ) -> ToolResult:
     """Submit your assessment of the current task's execution result, and optionally review sibling tasks in one call."""
     task = ctx.task if ctx else None
-    if task_outcome not in ("success", "failed", "active", "needs_user_input"):
-        task_outcome = "failed"
-    actor_result = f"{task_result}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_result
+    if task_status not in ("success", "failed", "active", "needs_user_input"):
+        task_status = "failed"
+    task_result = f"{task_result}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_result
 
     if task is not None:
-        task.actor_outcome = task_outcome
-        task.actor_result  = actor_result
+        task.actor_outcome = task_status
+        task.actor_result  = task_result
         task.proceed_to_review = True
-        outputs = {"progress_text": task.progress_text} if getattr(task, "progress_text", None) else None
 
-        if task_outcome == "success":
-            task_svc.finish(task.id, result=task_result, outputs=outputs, session_id=task.session_id)
+        if task_status == "success":
+            task_svc.finish(task.id, result=task_result, session_id=task.session_id)
             task.status = "FINISHED"
-        elif task_outcome == "failed":
+        elif task_status == "failed":
             task_svc.fail(task.id, error=task_result, session_id=task.session_id)
             task.status = "FAILED"
-        elif task_outcome == "active":
+        elif task_status == "active":
             task_svc.transition(task.id, "PENDING", task.session_id)
             task.status = "PENDING"
         else:  # needs_user_input
-            task_outcome, task_result = _confirm_with_user(
-                task, task_result, outputs, task_svc=task_svc, session_svc=session_svc,
+            task_status, task_result = _confirm_with_user(
+                task, task_result, task_svc=task_svc, session_svc=session_svc,
             )
-            task.actor_outcome = task_outcome
+            task.actor_outcome = task_status
             task.actor_result  = task_result
-            task.status = "FINISHED" if task_outcome == "success" else "FAILED"
+            task.status = "FINISHED" if task_status == "success" else "FAILED"
 
     review_msg = ""
     if task_reviews and ctx:
         review_msg = _apply_reviews(task_reviews, ctx, task_svc=task_svc)
 
-    return ToolResult(content=f"Assessment recorded: outcome={task_outcome}. {task_result}{review_msg}")
+    return ToolResult(content=f"Assessment recorded: outcome={task_status}. {task_result}{review_msg}")
 
 
 @control_tool

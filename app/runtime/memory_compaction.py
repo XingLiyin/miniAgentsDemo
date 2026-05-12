@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from app.domain.models.agent import AgentCapability
 from app.llm.types import LLMMessage
 from app.runtime.prompt_builder import BasePromptBuilder
 
@@ -12,8 +13,9 @@ _prompt_builder = BasePromptBuilder()
 
 if TYPE_CHECKING:
     from app.llm.base import BaseChatClient
-    from app.tools.types import ToolResult
+    from app.runtime.tool_gateway import ToolGateway
     from app.tools.registry import ToolRegistry
+    from app.tools.types import ToolResult
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +35,16 @@ class MemoryCompactionAgent:
         self,
         llm_client: "BaseChatClient",
         tool_registry: "ToolRegistry",
+        tool_gateway: "ToolGateway",
         soul: str,
         tool_allowlist: list[str],
         keep_last: int = 6,
     ) -> None:
         self._llm_client = llm_client
         self._tool_registry = tool_registry
+        self._tool_gateway = tool_gateway
         self._soul = soul
-        self._tool_allowlist = set(tool_allowlist)
+        self._capability = AgentCapability(tools=tool_allowlist)
         self._keep_last = keep_last
 
     def compact(
@@ -85,9 +89,9 @@ class MemoryCompactionAgent:
         session_id: str,
         agent_id: str,
     ) -> str:
-        from app.tools.types import CallContext, ToolResult
+        from app.tools.types import CallContext
 
-        tools = self._tool_registry.to_llm_tools(list(self._tool_allowlist))
+        tools = self._tool_registry.to_llm_tools(self._capability.tools)
         ctx = CallContext(session_id=session_id, agent_id=agent_id, working_dir=working_dir)
 
         messages: list[LLMMessage] = [
@@ -106,7 +110,7 @@ class MemoryCompactionAgent:
             messages = _prompt_builder.append_assistant_tool_calls(messages, full_text, parsed.tool_calls)
 
             for tc in parsed.tool_calls:
-                result = _call_tool(tc.name, tc.input, ctx, self._tool_registry, self._tool_allowlist)
+                result = self._tool_gateway.call(tc.name, tc.input, self._capability, task_id="", ctx=ctx)
                 messages = _prompt_builder.append_tool_result(messages, tc.name, result, tool_call_id=tc.id)
 
         return last_text
@@ -134,22 +138,6 @@ def _stream(
 
     return full_text, tool_call_acc
 
-
-def _call_tool(
-    name: str,
-    arguments: dict,
-    ctx: "object",
-    registry: "ToolRegistry",
-    allowlist: set[str],
-) -> "ToolResult":
-    from app.tools.types import ToolResult
-
-    if name not in allowlist:
-        return ToolResult(content=f"[Tool '{name}' not available in compaction context]", is_error=True)
-    try:
-        return registry.get(name).handler(arguments, ctx)
-    except Exception as e:
-        return ToolResult(content=str(e), is_error=True)
 
 
 def _build_user_message(messages: list[dict], session_goal: str) -> str:

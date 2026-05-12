@@ -16,7 +16,7 @@ class TaskResponse(BaseModel):
     description: str = ""
     settings: dict[str, Any] = {}
     result: Optional[str] = None
-    outputs: dict[str, Any] = {}
+    outputs: str = ""
     error: Optional[str] = None
     created_at: str
     updated_at: str

@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.orchestrator.task_queue import TaskQueue
 
 
 def _coerce_str(v: Any) -> str:
@@ -51,6 +54,10 @@ class Session:
     updated_at: str = ""
     metadata: dict[str, Any] = field(default_factory=dict)
 
+    # runtime status
+    active_tasks: list[str] = field(default_factory=list)
+    task_queue: "TaskQueue | None" = field(default=None, repr=False, compare=False)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
@@ -71,6 +78,8 @@ class Session:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "metadata": self.metadata,
+            "active_tasks": list(self.active_tasks),
+            "task_queue": self.task_queue.to_dict() if self.task_queue else None,
         }
 
     @classmethod
@@ -80,7 +89,7 @@ class Session:
             user_prompt=_coerce_str(d["user_prompt"]),
             goal=d.get("goal") or _coerce_str(d.get("user_prompt", "")),
             status=d["status"],
-            template_id=d.get("template_id"),
+            template_id=d.get("template_id") or d.get("template_name"),
             root_agent_id=d.get("root_agent_id"),
             token_budget=d.get("token_budget", 200_000),
             input_tokens_used=d.get("input_tokens_used", 0),
@@ -94,4 +103,5 @@ class Session:
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
             metadata=d.get("metadata", {}),
+            active_tasks=d.get("active_tasks", []),
         )

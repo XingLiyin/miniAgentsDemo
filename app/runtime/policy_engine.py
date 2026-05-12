@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from app.runtime.policy_rule import GlobalRule, PolicyRule, ToolRule, WhitelistRule
 
 if TYPE_CHECKING:
-    from app.domain.models.agent import Agent
+    from app.domain.models.agent import AgentCapability
     from app.tools.types import CallContext
     from app.tools.registry import ToolRegistry
 
@@ -31,13 +31,13 @@ class PolicyEngine:
 
     def authorize(
         self,
-        agent: "Agent",
+        capability: "AgentCapability",
         tool_name: str,
         arguments: dict | None = None,
         ctx: "CallContext | None" = None,
     ) -> None:
         args = arguments or {}
         for rule in self._global_rules:
-            rule.check(agent, tool_name, args, ctx)
+            rule.check(capability, tool_name, args, ctx)
         for rule in self._tool_rules.get(tool_name, ()):
-            rule.check(agent, tool_name, args, ctx)
+            rule.check(capability, tool_name, args, ctx)

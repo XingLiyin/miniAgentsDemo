@@ -17,7 +17,6 @@ from app.llm.registry import get_llm_registry
 from app.orchestrator.lifecycle_manager import LifecycleManager
 from app.orchestrator.session_manager import SessionManager
 from app.orchestrator.task_manager import TaskManager
-from app.orchestrator.task_queue import TaskQueue
 from app.runtime.actor import Actor
 from app.runtime.agent_loop import AgentLoop
 from app.runtime.observer import Observer
@@ -29,6 +28,8 @@ from app.skills.registry import get_skill_registry
 from app.domain.services.skill_source_service import RemoteSkillSourceService
 from app.storage.file.remote_skill_source_store import RemoteSkillSourceStore
 from app.tools.registry import ToolRegistry
+from app.agent_template.loader import AgentLoader
+from app.agent_template.syncer import AgentTemplateSyncer
 from app.storage.file.agent_store import AgentStore
 from app.storage.file.agent_template_store import AgentTemplateStore
 from app.storage.file.blackboard_store import BlackboardStore
@@ -44,6 +45,7 @@ def get_session_service() -> SessionService:
         store=SessionStore(),
         state_machine=SessionStateMachine(),
         event_bus=get_event_bus(),
+        task_svc=get_task_service(),
     )
 
 
@@ -66,7 +68,6 @@ def get_blackboard_service() -> BlackboardService:
     return BlackboardService(store=BlackboardStore())
 
 
-@lru_cache
 def get_agent_template_service() -> AgentTemplateService:
     return AgentTemplateService(store=AgentTemplateStore())
 
@@ -97,22 +98,15 @@ def get_remote_skill_source_service() -> RemoteSkillSourceService:
 
 
 @lru_cache
-def get_task_queue() -> TaskQueue:
-    return TaskQueue(task_svc=get_task_service())
-
-
-@lru_cache
 def get_task_manager() -> TaskManager:
     settings = get_settings()
     return TaskManager(
         task_svc=get_task_service(),
         session_svc=get_session_service(),
-        task_queue=get_task_queue(),
         lifecycle_manager=get_lifecycle_manager(),
         event_bus=get_event_bus(),
         max_task_retries=settings.max_task_retries,
         memory_svc=get_memory_service(),
-        template_svc=get_agent_template_service(),
     )
 
 
@@ -131,12 +125,18 @@ def get_tool_gateway() -> ToolGateway:
 
 
 @lru_cache
-def get_agent_template_registry():
-    """获取全局 AgentTemplateRegistry（首次调用时从 settings.agents_dir 扫描）。"""
-    from app.agent_template.registry import AgentTemplateRegistry
-    registry = AgentTemplateRegistry(template_service=get_agent_template_service())
-    registry.load_from_dir(get_settings().agents_dir)
-    return registry
+def get_agent_template_loader() -> AgentLoader:
+    """AgentLoader 注入 store，供消费方通过 get_details / list_details 查询。"""
+    return AgentLoader(store=AgentTemplateStore())
+
+
+@lru_cache
+def get_agent_template_syncer() -> AgentTemplateSyncer:
+    """启动时同步全局模板并启动 watcher。"""
+    syncer = AgentTemplateSyncer(store=AgentTemplateStore(), loader=AgentLoader())
+    syncer.sync_global(get_settings().agents_dir)
+    syncer.start_watcher(get_settings().agents_dir)
+    return syncer
 
 
 def _get_llm_client():
@@ -158,7 +158,7 @@ def get_reasoner() -> Reasoner:
         tool_registry=get_tool_registry(),
         skill_registry=get_skill_registry(),
         task_svc=get_task_service(),
-        agent_template_registry=get_agent_template_registry(),
+        agent_template_loader=get_agent_template_loader(),
         compaction_agent=get_compaction_agent(),
         agent_store=AgentStore(),
     )
@@ -197,6 +197,7 @@ def get_compaction_agent():
     return MemoryCompactionAgent(
         llm_client=_get_llm_client(),
         tool_registry=get_tool_registry(),
+        tool_gateway=get_tool_gateway(),
         soul=soul,
         tool_allowlist=tool_allowlist,
         keep_last=get_settings().compaction_keep_last,
@@ -227,9 +228,8 @@ def get_lifecycle_manager() -> LifecycleManager:
         max_concurrent_agents=settings.max_concurrent_agents,
         max_concurrent_tasks=settings.max_concurrent_tasks,
         max_spawn_depth=settings.max_spawn_depth,
-        template_svc=get_agent_template_service(),
         memory_svc=get_memory_service(),
-        template_registry=get_agent_template_registry(),
+        template_loader=get_agent_template_loader(),
     )
     lm.set_agent_loop(get_agent_loop())
     return lm
@@ -239,7 +239,6 @@ def get_lifecycle_manager() -> LifecycleManager:
 def get_session_manager() -> SessionManager:
     mgr = SessionManager(
         session_svc=get_session_service(),
-        template_svc=get_agent_template_service(),
         agent_store=AgentStore(),
         event_bus=get_event_bus(),
         task_svc=get_task_service(),
@@ -247,7 +246,8 @@ def get_session_manager() -> SessionManager:
         task_store=TaskStore(),
         tool_call_store=ToolCallStore(),
         blackboard_store=BlackboardStore(),
-        template_registry=get_agent_template_registry(),
+        template_loader=get_agent_template_loader(),
+        template_syncer=get_agent_template_syncer(),
     )
     mgr.set_lifecycle_manager(get_lifecycle_manager())
     mgr.set_task_manager(get_task_manager())

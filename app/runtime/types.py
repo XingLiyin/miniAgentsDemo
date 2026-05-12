@@ -92,6 +92,7 @@ class ActorResult:
     skill_used: str | None = None
     error: str | None = None
     context_tokens: int = 0            # 本次执行中最大单轮 prompt_tokens
+    exit_reason: str = "normal"        # "normal" | "context_limit" | "max_rounds"
 
 
 @dataclass

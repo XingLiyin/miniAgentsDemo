@@ -16,7 +16,6 @@ from app.config.settings import get_settings
 from app.domain.events.event_bus import EventBus
 from app.domain.models.agent import Agent, LoopGuard
 from app.domain.models.session import Session
-from app.domain.services.agent_template_service import AgentTemplateService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
@@ -26,21 +25,27 @@ from app.storage.file.task_store import TaskStore
 from app.storage.file.tool_call_store import ToolCallStore
 
 if TYPE_CHECKING:
-    from app.agent_template.definition import AgentDefContent, AgentDefMetadata
+    from app.agent_template.definition import AgentDefDetails
+    from app.agent_template.loader import AgentLoader
+    from app.agent_template.syncer import AgentTemplateSyncer
     from app.orchestrator.lifecycle_manager import LifecycleManager
     from app.orchestrator.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
 
-
-def _apply_template_to_agent(tpl: "AgentTemplate", content: "AgentDefContent | None", agent: Agent, metadata: "AgentDefMetadata | None" = None) -> None:  # type: ignore[name-defined]
-    agent.soul_md = content.soul_md if content else ""
-    agent.role_md = content.role_md if content else ""
-    agent.act_tool_list = metadata.act_tool_spec.effective() if metadata else []
-    agent.observe_tool_list = metadata.observe_tool_spec.effective() if metadata else []
-    agent.mcp_act_servers = metadata.mcp_act_servers if metadata else []
-    agent.mcp_observe_servers = metadata.mcp_observe_servers if metadata else []
+def _apply_template_to_agent(agent: Agent, details: "AgentDefDetails | None") -> None:
+    from app.domain.models.agent import AgentCapability
+    agent.actor = AgentCapability(
+        instruction_md=details.actor_soul if details else "",
+        tools=details.actor_capability.effective_tools() if details else [],
+        mcp_servers=details.actor_capability.required_mcp_servers if details else [],
+    )
+    agent.observer = AgentCapability(
+        instruction_md=details.observer_role if details else "",
+        tools=details.observer_capability.effective_tools() if details else [],
+        mcp_servers=details.observer_capability.required_mcp_servers if details else [],
+    )
 
 
 class SessionManager:
@@ -49,7 +54,6 @@ class SessionManager:
     def __init__(
         self,
         session_svc: SessionService,
-        template_svc: AgentTemplateService,
         agent_store: AgentStore,
         event_bus: EventBus,
         task_svc: TaskService | None = None,
@@ -57,10 +61,10 @@ class SessionManager:
         task_store: TaskStore | None = None,
         tool_call_store: ToolCallStore | None = None,
         blackboard_store: BlackboardStore | None = None,
-        template_registry=None,
+        template_loader: "AgentLoader | None" = None,
+        template_syncer: "AgentTemplateSyncer | None" = None,
     ) -> None:
         self._session_svc = session_svc
-        self._template_svc = template_svc
         self._agent_store = agent_store
         self._bus = event_bus
         self._task_svc = task_svc
@@ -68,7 +72,8 @@ class SessionManager:
         self._task_store = task_store
         self._tool_call_store = tool_call_store
         self._blackboard_store = blackboard_store
-        self._template_registry = template_registry
+        self._template_loader = template_loader
+        self._template_syncer = template_syncer
         self._lifecycle_manager: "LifecycleManager | None" = None
         self._task_manager: "TaskManager | None" = None
 
@@ -106,36 +111,26 @@ class SessionManager:
             working_dir=wd,
         )
 
-        # workspace 模板同步：session 创建时将 .agents/ 持久化到 store
-        if wd and self._template_registry:
-            self._template_registry.sync_workspace(wd)
+        # workspace 模板同步
+        if wd and self._template_syncer:
+            self._template_syncer.sync_workspace(wd)
+            self._template_syncer.register_workspace(wd)
 
-        # 查找模板：UUID 精确匹配 > 按名称（workspace > global） > 默认模板
-        tpl = None
-        if template_id:
-            try:
-                tpl = self._template_svc.get(template_id)  # UUID 精确查找
-            except AppError:
-                pass
-            if tpl is None:
-                tpl = self._template_svc.get_by_name_for_workspace(template_id, wd)
-        if tpl is None:
-            tpl = self._template_svc.get_by_name_for_workspace(
-                settings.default_agent_template_name, wd
-            )
-        if tpl is None:
-            logger.warning("No template found, creating agent with empty config")
+        # 查找模板：按名称（workspace > global） > 默认模板
+        resolved_name = template_id or settings.default_agent_template_name
+        details = self._template_loader.get_details(resolved_name, wd) if self._template_loader else None
+        if details is None and template_id:
+            details = self._template_loader.get_details(settings.default_agent_template_name, wd) if self._template_loader else None
+        if details is None:
+            logger.warning("No template found for '%s', creating agent with empty config", resolved_name)
 
         now = now_iso()
         agent = Agent(
             id=new_agent_id(),
             session_id=session.id,
-            template_id=template_id,
+            template_id=resolved_name if details else "",
             name="root",
             status="IDLE",
-            act_tool_list=[],
-            observe_tool_list=[],
-            soul_path=tpl.source_dir or None if tpl else None,
             loop_guard=LoopGuard(),
             has_spawn_permission=True,
             spawn_depth=0,
@@ -143,10 +138,7 @@ class SessionManager:
             created_at=now,
             updated_at=now,
         )
-        if tpl is not None:
-            content = self._template_registry.load_content(tpl.name, workspace_dir=wd) if self._template_registry else None
-            metadata = self._template_registry.get_metadata(tpl.name, workspace_dir=wd) if self._template_registry else None
-            _apply_template_to_agent(tpl, content, agent, metadata)
+        _apply_template_to_agent(agent, details)
         self._agent_store.save(agent.to_dict())
         self._session_svc.set_root_agent(session.id, agent.id)
 
@@ -232,10 +224,6 @@ class SessionManager:
 
         if session.status == "CANCELED":
             raise AppError("SESSION_CANCELED", f"Session {session_id} is canceled and cannot be continued")
-
-        # 续聊时重新同步 workspace 模板，感知用户对 .agents/ 的变更
-        if session.working_dir and self._template_registry:
-            self._template_registry.sync_workspace(session.working_dir)
 
         # Push SSE user message event（多模态内容透传给前端）
         try:
@@ -364,6 +352,12 @@ class SessionManager:
             self._lifecycle_manager.cleanup_session(session_id)
         if self._task_manager is not None:
             self._task_manager.cleanup_session(session_id)
+
+        # 清除 workspace 模板记录并停止监控（仅当无其他 session 共用该目录时）
+        if session.working_dir and self._template_syncer:
+            if not self._session_svc.is_working_dir_in_use(session.working_dir, session_id):
+                self._template_syncer.purge_workspace(session.working_dir)
+                self._template_syncer.unregister_workspace(session.working_dir)
 
         # 最后删除 session 文件
         self._session_svc.delete(session_id)

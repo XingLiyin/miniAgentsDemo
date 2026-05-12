@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any, Callable
 from app.llm.types import InputSchema, LLMTool
 
 if TYPE_CHECKING:
-    from app.domain.models.agent import Agent
     from app.domain.models.task import Task
 
 
@@ -17,13 +16,12 @@ class CallContext:
     """工具调用上下文，由调用方构造并传入每个 handler。
 
     - MCP handler 读 session_id 注入 _meta
-    - 控制工具直接读写 agent / task 对象（mutation pattern）
+    - 控制工具直接读写 task 对象（mutation pattern）
     - 内置工具可忽略所有字段
     """
 
     session_id: str
     agent_id: str = ""
-    agent: "Agent | None" = field(default=None, repr=False)
     task: "Task | None" = field(default=None, repr=False)
     working_dir: str = ""  # 解析后的绝对路径，空 = 进程 cwd
 

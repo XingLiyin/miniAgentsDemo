@@ -137,7 +137,7 @@ class Observer:
             tool_results_text = ""
             for tool_call in tool_calls:
                 tool_result = self._tool_gateway.call(
-                    tool_call.name, tool_call.input, None, task.id, toolcall_ctx
+                    tool_call.name, tool_call.input, agent.observer, task.id, toolcall_ctx
                 )
                 messages = self._prompt_builder.append_tool_result(
                     messages, tool_call.name, tool_result, tool_call_id=tool_call.id
@@ -194,7 +194,7 @@ class Observer:
 
         if result.success:
             detail = result.output or ""
-            summary = f"Completed this turn's task.\n{detail}" if detail else "Completed this turn's task."
+            summary = "Completed this turn's task."
             self._task_svc.finish(task.id, result=detail, session_id=task.session_id)
         else:
             detail = result.output or result.error or ""

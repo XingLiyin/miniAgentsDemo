@@ -47,7 +47,7 @@ class Actor:
         self._prompt_builder = prompt_builder or PromptBuilderFactory.for_actor()
 
     def act(self, task: Task, ctx: ReasoningContext, agent: Agent, session: Session) -> ActorResult:
-        """执行单个 task，plan 和 act 共用同一循环。"""
+        """执行单个 task"""
         if task.status == "PENDING":
             self._task_svc.transition(task.id, "ACTIVE", task.session_id)
 
@@ -61,7 +61,7 @@ class Actor:
             or getattr(agent, "settings", {}).get("working_dir")
             or get_settings().bash_exec_cwd
         )
-        toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, agent=agent, task=task, working_dir=_wd or "")
+        toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
         llm_client = self._resolve_llm_client(session)
         _sse = self._get_sse(session_id)
 
@@ -70,6 +70,7 @@ class Actor:
         last_text = ""
         max_context_tokens = 0
         last_prompt_tokens = ctx.token_estimate
+        exit_reason = "max_rounds"
 
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
             messages = self._prompt_builder.sanitize_messages(messages)
@@ -131,9 +132,10 @@ class Actor:
                 )
 
             if not tool_calls_from_stream or done or context_limit_hit:
+                exit_reason = "context_limit" if context_limit_hit else "normal"
                 break
 
-        return self._build_result(task, tool_calls_made, conversation_turns, last_text, max_context_tokens)
+        return self._build_result(task, tool_calls_made, conversation_turns, last_text, max_context_tokens, exit_reason)
 
     # ── 私有辅助方法 ──────────────────────────────────────────────────────────
 
@@ -249,7 +251,7 @@ class Actor:
                 result = self._tool_gateway.call(
                     tool_name=tool_call.name,
                     arguments=tool_call.input,
-                    agent=agent,
+                    capability=agent.actor,
                     task_id=task.id,
                     ctx=toolcall_ctx,
                 )
@@ -293,6 +295,7 @@ class Actor:
         conversation_turns: list[ConversationTurn],
         last_text: str,
         context_tokens: int = 0,
+        exit_reason: str = "normal",
     ) -> ActorResult:
         """plan 和 act 统一走文本路径；task 创建由 Observer 阶段负责。"""
         skill_used = task.settings.get("skill_name")
@@ -306,6 +309,7 @@ class Actor:
             actor_mode=actor_mode,
             skill_used=skill_used,
             context_tokens=context_tokens,
+            exit_reason=exit_reason,
         )
 
 

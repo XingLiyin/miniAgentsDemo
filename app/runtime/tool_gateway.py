@@ -16,7 +16,7 @@ from typing import Any
 
 from app.common.errors import AppError
 from app.common.utils import new_tool_call_id, now_iso
-from app.domain.models.agent import Agent
+from app.domain.models.agent import AgentCapability
 from app.domain.models.tool_call import ToolCall
 from app.runtime.policy_engine import PolicyEngine
 from app.storage.file.tool_call_store import ToolCallStore
@@ -43,20 +43,20 @@ class ToolGateway:
         self,
         tool_name: str,
         arguments: dict[str, Any],
-        agent: Agent | None,
+        capability: AgentCapability | None,
         task_id: str,
         ctx: CallContext | None = None,
     ) -> ToolResult:
         """统一入口：授权 → 审计 RUNNING → 执行 → 审计完成 → 返回结果。
 
-        agent 为 None 时跳过授权（Observer 内部调用场景）。
+        capability 为 None 时跳过授权。
         """
-        session_id = (agent.session_id if agent else None) or (ctx.session_id if ctx else "")
-        agent_id   = (agent.id        if agent else None) or (ctx.agent_id   if ctx else "")
+        session_id = ctx.session_id if ctx else ""
+        agent_id   = ctx.agent_id   if ctx else ""
 
-        # ① 授权（agent 存在时）
-        if agent is not None:
-            self._policy.authorize(agent, tool_name, arguments, ctx)
+        # ① 授权（capability 存在时）
+        if capability is not None:
+            self._policy.authorize(capability, tool_name, arguments, ctx)
 
         # ② 写 RUNNING 审计
         call_id    = new_tool_call_id()
@@ -75,10 +75,13 @@ class ToolGateway:
         # ③ 执行
         call_ctx = ctx if ctx is not None else CallContext(
             session_id=session_id, agent_id=agent_id,
-            agent=agent,
         )
         try:
-            tool_def = self._registry.get(tool_name)
+            tool_def = (
+                self._registry.get_from_capability(tool_name, capability)
+                if capability is not None
+                else self._registry.get(tool_name)
+            )
             result: ToolResult = tool_def.handler(arguments, call_ctx)
             status = "SUCCEEDED"
             error  = None

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from app.common.errors import AppError
 
 if TYPE_CHECKING:
-    from app.domain.models.agent import Agent
+    from app.domain.models.agent import AgentCapability
     from app.tools.types import CallContext
 
 
@@ -17,7 +17,7 @@ class PolicyRule(ABC):
     @abstractmethod
     def check(
         self,
-        agent: "Agent",
+        capability: "AgentCapability",
         tool_name: str,
         arguments: dict,
         ctx: "CallContext | None",
@@ -46,20 +46,18 @@ class WhitelistRule(GlobalRule):
     def __init__(self, tool_registry: "ToolRegistry") -> None:  # type: ignore[name-defined]
         self._registry = tool_registry
 
-    def check(self, agent: "Agent", tool_name: str, arguments: dict, ctx: "CallContext | None") -> None:
+    def check(self, capability: "AgentCapability", tool_name: str, arguments: dict, ctx: "CallContext | None") -> None:
         if not self._registry.is_registered(tool_name):
             raise AppError("TOOL_NOT_FOUND", f"Tool '{tool_name}' is not a registered tool")
 
-        if tool_name in agent.act_tool_list or tool_name in agent.observe_tool_list:
+        if tool_name in capability.tools:
             return
-        for server_name in (agent.mcp_act_servers or []):
-            if tool_name in self._registry.get_server_tool_names(server_name):
-                return
-        for server_name in (agent.mcp_observe_servers or []):
+        for server_name in (capability.mcp_servers or []):
             if tool_name in self._registry.get_server_tool_names(server_name):
                 return
 
-        raise AppError("TOOL_NOT_AUTHORIZED", f"Agent '{agent.id}' is not authorized to use tool '{tool_name}'")
+        agent_id = ctx.agent_id if ctx else "unknown"
+        raise AppError("TOOL_NOT_AUTHORIZED", f"Agent '{agent_id}' is not authorized to use tool '{tool_name}'")
 
 
 class BashExecGuardRule(ToolRule):
@@ -79,7 +77,7 @@ class BashExecGuardRule(ToolRule):
         super().__init__("bash_exec")
         self._session_svc = session_svc
 
-    def check(self, agent: "Agent", tool_name: str, arguments: dict, ctx: "CallContext | None") -> None:
+    def check(self, capability: "AgentCapability", tool_name: str, arguments: dict, ctx: "CallContext | None") -> None:
         command = arguments.get("command", "").strip()
 
         # Phase 1 — 命令白名单

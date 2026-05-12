@@ -30,6 +30,34 @@ class LoopGuard:
             context_tokens=d.get("context_tokens", 0),
             context_message_count=d.get("context_message_count", 0),
         )
+    
+@dataclass
+class AgentCapability:
+    """Agent 能力配置。"""
+    instruction_md: str = ""
+    tools: list[str] = field(default_factory=list)
+    mcp_servers: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    subagents: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "instruction_md": self.instruction_md,
+            "tools": self.tools,
+            "mcp_servers": self.mcp_servers,
+            "skills": self.skills,
+            "subagents": self.subagents,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "AgentCapability":
+        return cls(
+            instruction_md=d.get("instruction_md", ""),
+            tools=d.get("tools", []),
+            mcp_servers=d.get("mcp_servers", []),
+            skills=d.get("skills", []),
+            subagents=d.get("subagents", []),
+        )
 
 
 @dataclass
@@ -47,14 +75,8 @@ class Agent:
     name: str
     status: str                                 # IDLE | RUNNING | WAITING | FINISHED | FAILED
     # context engineering
-    soul_md: str = ""                           # 驱动 Actor 阶段 system prompt（执行人格）
-    role_md: str = ""                           # 驱动 Observer 阶段 system prompt（评判准则）
-    act_tool_list: list[str] = field(default_factory=list)      # Actor 阶段显式工具
-    observe_tool_list: list[str] = field(default_factory=list)  # Observer 阶段显式工具
-    mcp_act_servers: list[str] = field(default_factory=list)    # Actor 阶段订阅的 MCP server
-    mcp_observe_servers: list[str] = field(default_factory=list)  # Observer 阶段订阅的 MCP server
-    skill_list: list[str] = field(default_factory=list)
-    soul_path: str | None = None
+    actor: AgentCapability = field(default_factory=AgentCapability)
+    observer: AgentCapability = field(default_factory=AgentCapability)
     inherit_memory: bool = True                 # False = spawn 时跳过记忆复制
 
     loop_guard: LoopGuard = field(default_factory=LoopGuard)
@@ -74,14 +96,8 @@ class Agent:
             "template_id": self.template_id,
             "name": self.name,
             "status": self.status,
-            "soul_md": self.soul_md,
-            "role_md": self.role_md,
-            "act_tool_list": self.act_tool_list,
-            "observe_tool_list": self.observe_tool_list,
-            "mcp_act_servers": self.mcp_act_servers,
-            "mcp_observe_servers": self.mcp_observe_servers,
-            "skill_list": self.skill_list,
-            "soul_path": self.soul_path,
+            "actor": self.actor.to_dict(),
+            "observer": self.observer.to_dict(),
             "loop_guard": self.loop_guard.to_dict(),
             "inherit_memory": self.inherit_memory,
             "has_spawn_permission": self.has_spawn_permission,
@@ -96,17 +112,11 @@ class Agent:
         return cls(
             id=d["id"],
             session_id=d["session_id"],
-            template_id=d.get("template_id"),
+            template_id=d.get("template_id") or d.get("template_name") or "",
             name=d["name"],
             status=d["status"],
-            soul_md=d.get("soul_md", ""),
-            role_md=d.get("role_md", ""),
-            act_tool_list=d.get("act_tool_list", []),
-            observe_tool_list=d.get("observe_tool_list", []),
-            mcp_act_servers=d.get("mcp_act_servers", []),
-            mcp_observe_servers=d.get("mcp_observe_servers", []),
-            skill_list=d.get("skill_list", []),
-            soul_path=d.get("soul_path"),
+            actor=AgentCapability.from_dict(d.get("actor", {})),
+            observer=AgentCapability.from_dict(d.get("observer", {})),
             loop_guard=LoopGuard.from_dict(d.get("loop_guard", {})),
             inherit_memory=d.get("inherit_memory", True),
             has_spawn_permission=d.get("has_spawn_permission", False),

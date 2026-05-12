@@ -20,11 +20,10 @@ from typing import TYPE_CHECKING
 from app.common.utils import extract_text
 from app.domain.events.event_types import TASK_CREATED, TASK_EXECUTION_FAILED, TASK_EXECUTION_FINISHED
 from app.domain.models.task import Task
-from app.domain.services.agent_template_service import AgentTemplateService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
-from app.orchestrator.task_queue import TaskQueue
+from app.orchestrator.task_queue import TaskQueue  # noqa: F401 – kept for external callers
 
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
@@ -40,20 +39,16 @@ class TaskManager:
         self,
         task_svc: TaskService,
         session_svc: SessionService,
-        task_queue: TaskQueue,
         lifecycle_manager: "LifecycleManager | None" = None,
         event_bus: "EventBus | None" = None,
         max_task_retries: int = 3,
         memory_svc: MemoryService | None = None,
-        template_svc: AgentTemplateService | None = None,
     ) -> None:
         self._task_svc = task_svc
         self._session_svc = session_svc
-        self._task_queue = task_queue
         self._lm = lifecycle_manager
         self._max_task_retries = max_task_retries
         self._memory_svc = memory_svc
-        self._template_svc = template_svc
         self._session_locks: dict[str, threading.Lock] = {}
 
         if event_bus is not None:
@@ -64,11 +59,9 @@ class TaskManager:
     # ── Session lifecycle ─────────────────────────────────────────────────────
 
     def init_session(self, session_id: str) -> None:
-        """Initialize per-session queue. Must be called before any task is created."""
-        self._task_queue.init_session(session_id)
+        pass
 
     def cleanup_session(self, session_id: str) -> None:
-        self._task_queue.cleanup_session(session_id)
         self._session_locks.pop(session_id, None)
 
     # ── Session start ─────────────────────────────────────────────────────────
@@ -87,7 +80,7 @@ class TaskManager:
             logger.exception("TM: failed to activate session %s", session_id)
             return
 
-        next_task = self._task_queue.pop(session_id)
+        next_task = self._q_pop(session_id)
         if not next_task:
             logger.error("TM: no ready task for session %s", session_id)
             return
@@ -150,12 +143,12 @@ class TaskManager:
         except Exception:
             logger.exception("TM: cannot load daemon task %s", task_id)
             return
-        template_name = str(task.settings.get("subagent_template", ""))
+        template_id = str(task.settings.get("subagent_template", ""))
         self._lm.spawn_daemon_agent(
             session_id=session_id,
             parent_agent_id=parent_agent_id,
             task_id=task_id,
-            template_id=self._resolve_template_id(session_id, template_name),
+            template_id=template_id,
             inherit_memory=bool(task.settings.get("inherit_memory", False)),
         )
 
@@ -166,7 +159,7 @@ class TaskManager:
         task_id = payload.get("task_id", "")
         session_id = payload.get("session_id", "")
         if task_id and session_id:
-            self._task_queue.push(session_id, task_id)
+            self._q_push(session_id, task_id)
 
     def on_task_finished(self, event_type: str, payload: dict) -> None:
         session_id = payload.get("session_id", "")
@@ -184,6 +177,9 @@ class TaskManager:
                 if session.status not in ("RUNNING", "QUEUED"):
                     self._lm_recycle_finished(session_id, agent_id)
                     return
+                if finished_task_id and finished_task_id in session.active_tasks:
+                    session.active_tasks.remove(finished_task_id)
+                    self._session_svc.save(session)
             except Exception:
                 self._lm_recycle_finished(session_id, agent_id)
                 return
@@ -194,24 +190,31 @@ class TaskManager:
                 try:
                     _ft = self._task_svc.get(finished_task_id, session_id)
                     if _ft.status == "PENDING":
-                        self._task_queue.push(session_id, finished_task_id)
+                        self._q_push(session_id, finished_task_id)
                         logger.debug(
                             "TM: re-queued active task %s for session %s", finished_task_id, session_id
                         )
                 except Exception:
                     logger.exception("TM: failed to check active task %s", finished_task_id)
 
-            self._task_queue.notify_completed(session_id, finished_task_id)
+            self._q_notify(session_id, finished_task_id)
             self._try_resume_parent(session_id, finished_task_id)
 
-            next_task = self._task_queue.pop(session_id)
+            next_task = self._q_pop(session_id)
             if next_task is None:
-                if self._task_queue.is_empty(session_id):
-                    try:
-                        self._session_svc.transition(session_id, "SUCCEEDED")
-                    except Exception:
-                        logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
-                    _session_done = True
+                if self._q_is_empty(session_id):
+                    running = self._lm.running_agent_count(session_id) if self._lm else 0
+                    if running > 0:
+                        logger.debug(
+                            "TM: queue empty but %d agent(s) still running for session %s, deferring SUCCEEDED",
+                            running, session_id,
+                        )
+                    else:
+                        try:
+                            self._session_svc.transition(session_id, "SUCCEEDED")
+                        except Exception:
+                            logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
+                        _session_done = True
                 else:
                     # _blocked has tasks waiting on deps; they will be promoted
                     # when further active tasks complete
@@ -234,6 +237,14 @@ class TaskManager:
         with self._get_lock(session_id):
             if failed_task_id:
                 try:
+                    session = self._session_svc.get(session_id)
+                    if failed_task_id in session.active_tasks:
+                        session.active_tasks.remove(failed_task_id)
+                        self._session_svc.save(session)
+                except Exception:
+                    logger.exception("TM: failed to remove active_tasks for task %s", failed_task_id)
+            if failed_task_id:
+                try:
                     current_task = self._task_svc.get(failed_task_id, session_id)
                     if current_task.status != "FAILED":
                         self._task_svc.fail(failed_task_id, error=payload.get("error", ""), session_id=session_id)
@@ -248,7 +259,9 @@ class TaskManager:
             except Exception:
                 failed_task = None
 
-            if failed_task and failed_task.retry_count < self._max_task_retries:
+            can_retry = failed_task is not None and failed_task.retry_count < self._max_task_retries
+
+            if can_retry:
                 logger.info(
                     "TM: retrying task %s (attempt %d/%d) for session %s",
                     failed_task_id,
@@ -258,17 +271,28 @@ class TaskManager:
                 )
                 try:
                     self._task_svc.retry(failed_task_id, session_id)
-                    self._task_queue.push(session_id, failed_task_id)
+                    self._q_push(session_id, failed_task_id)
                 except Exception:
                     logger.exception("TM: failed to retry task %s", failed_task_id)
+                    self._cancel_remaining_and_fail(session_id)
+                    _session_done = True
+            elif failed_task is not None:
+                logger.warning(
+                    "TM: task %s exhausted retries (%d/%d), cancelling remaining tasks and failing session %s",
+                    failed_task_id,
+                    failed_task.retry_count,
+                    self._max_task_retries,
+                    session_id,
+                )
+                self._cancel_remaining_and_fail(session_id)
+                _session_done = True
+
+            if not _session_done:
+                self._q_notify(session_id, failed_task_id)
+                next_task = self._q_pop(session_id)
+                if next_task is None and self._q_is_empty(session_id):
                     self._fail_session(session_id)
                     _session_done = True
-
-            self._task_queue.notify_completed(session_id, failed_task_id)
-            next_task = self._task_queue.pop(session_id)
-            if next_task is None and self._task_queue.is_empty(session_id):
-                self._fail_session(session_id)
-                _session_done = True
 
         if _session_done:
             self.cleanup_session(session_id)
@@ -297,12 +321,12 @@ class TaskManager:
     # ── Queue interface ───────────────────────────────────────────────────────
 
     def next_task(self, session_id: str) -> Task | None:
-        return self._task_queue.pop(session_id)
+        return self._q_pop(session_id)
 
     def activate(self, task_id: str, session_id: str | None = None) -> Task:
         return self._task_svc.transition(task_id, "ACTIVE", session_id)
 
-    def complete(self, task_id: str, result: str | None = None, outputs: dict | None = None, session_id: str | None = None) -> Task:
+    def complete(self, task_id: str, result: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
         task = self._task_svc.finish(task_id, result=result, outputs=outputs, session_id=session_id)
         self._reset_failure_counter(task.session_id)
         return task
@@ -330,13 +354,13 @@ class TaskManager:
         except Exception:
             logger.exception("TM: failed to activate task %s", next_task.id)
 
-        template_name = str(next_task.settings.get("subagent_template", ""))
+        template_id = str(next_task.settings.get("subagent_template", ""))
         agent_id = self._lm.prepare_executor(
             session_id=session_id,
             finished_agent_id=finished_agent_id,
             task_id=next_task.id,
             use_subagent=bool(next_task.settings.get("use_subagent")),
-            template_id=self._resolve_template_id(session_id, template_name),
+            template_id=template_id,
             inherit_memory=bool(next_task.settings.get("inherit_memory", True)),
         )
         if agent_id:
@@ -346,19 +370,14 @@ class TaskManager:
                 self._task_svc.save(task)
             except Exception:
                 logger.exception("TM: failed to update assigned_agent_id for task %s", next_task.id)
+            try:
+                session = self._session_svc.get(session_id)
+                if next_task.id not in session.active_tasks:
+                    session.active_tasks.append(next_task.id)
+                    self._session_svc.save(session)
+            except Exception:
+                logger.exception("TM: failed to append active_tasks for task %s", next_task.id)
             self._lm.run_agent(session_id, agent_id, next_task.id)
-
-    def _resolve_template_id(self, session_id: str, template_name: str) -> str:
-        """将模板名解析为 UUID：优先 workspace 模板，再 global 模板。空名返回空串。"""
-        if not template_name or self._template_svc is None:
-            return ""
-        try:
-            working_dir = self._session_svc.get(session_id).working_dir
-            tpl = self._template_svc.get_by_name_for_workspace(template_name, working_dir)
-            return tpl.id if tpl else ""
-        except Exception:
-            logger.warning("TM: failed to resolve template name '%s' for session %s", template_name, session_id)
-            return ""
 
     def _lm_recycle_finished(self, session_id: str, finished_agent_id: str) -> None:
         if self._lm is not None:
@@ -371,8 +390,11 @@ class TaskManager:
         for child in children:
             try:
                 outcome = "completed" if child.status == "FINISHED" else "failed"
+                output_text = child.outputs or ""
                 result_text = child.result or child.error or ""
                 content = f"Sub-task「{child.title}」{outcome}."
+                if output_text:
+                    content += f"\nOutput: {output_text}"
                 if result_text:
                     content += f"\nResult: {result_text}"
                 self._memory_svc.append_message(
@@ -406,12 +428,12 @@ class TaskManager:
                 return
             if any(t.status == "FAILED" for t in children):
                 self._task_svc.fail(parent.id, error="cascade: child task failed", session_id=session_id)
-                self._task_queue.remove(session_id, parent.id)
+                self._q_remove(session_id, parent.id)
                 self._cascade_fail(session_id, parent.id)
             else:
                 self._write_children_results_to_parent_memory(session_id, parent, children)
                 self._task_svc.resume(parent.id, session_id)
-                self._task_queue.push(session_id, parent.id)
+                self._q_push(session_id, parent.id)
         except Exception:
             logger.exception("TM: failed to conclude parent for task %s", finished_task_id)
 
@@ -427,16 +449,55 @@ class TaskManager:
                 continue
             try:
                 self._task_svc.fail(task.id, error=f"cascade: dependency {failed_task_id} failed", session_id=task.session_id)
-                self._task_queue.remove(session_id, task.id)
+                self._q_remove(session_id, task.id)
                 self._cascade_fail(session_id, task.id)
             except Exception:
                 logger.exception("TM: _cascade_fail: failed to fail task %s", task.id)
+
+    def _cancel_remaining_and_fail(self, session_id: str) -> None:
+        try:
+            self._task_svc.cancel_pending(session_id)
+        except Exception:
+            logger.exception("TM: failed to cancel pending tasks for session %s", session_id)
+        self._q_clear(session_id)
+        self._fail_session(session_id)
 
     def _fail_session(self, session_id: str) -> None:
         try:
             self._session_svc.transition(session_id, "FAILED")
         except Exception:
             logger.exception("TM: failed to transition session %s to FAILED", session_id)
+
+    # ── Queue helpers (get + op + save) ──────────────────────────────────────
+
+    def _q_push(self, session_id: str, task_id: str) -> None:
+        session = self._session_svc.get(session_id)
+        session.task_queue.push(task_id)
+        self._session_svc.save(session)
+
+    def _q_pop(self, session_id: str) -> "Task | None":
+        session = self._session_svc.get(session_id)
+        task = session.task_queue.pop()
+        self._session_svc.save(session)
+        return task
+
+    def _q_notify(self, session_id: str, completed_id: str) -> None:
+        session = self._session_svc.get(session_id)
+        session.task_queue.notify_completed(completed_id)
+        self._session_svc.save(session)
+
+    def _q_remove(self, session_id: str, task_id: str) -> None:
+        session = self._session_svc.get(session_id)
+        session.task_queue.remove(task_id)
+        self._session_svc.save(session)
+
+    def _q_clear(self, session_id: str) -> None:
+        session = self._session_svc.get(session_id)
+        session.task_queue.clear()
+        self._session_svc.save(session)
+
+    def _q_is_empty(self, session_id: str) -> bool:
+        return self._session_svc.get(session_id).task_queue.is_empty()
 
     def _get_lock(self, session_id: str) -> threading.Lock:
         return self._session_locks.setdefault(session_id, threading.Lock())

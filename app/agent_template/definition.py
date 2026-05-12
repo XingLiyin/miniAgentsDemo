@@ -1,50 +1,34 @@
-"""Agent 定义文件数据模型。
-
-两层加载模型：
-  Level 1  AgentDefMetadata — SOUL.md + ROLE.md frontmatter，常驻内存
-  Level 2  AgentDefContent  — 四个文件正文内容，按需加载，用于拼装 system prompt
-"""
+"""Agent 定义文件数据模型。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
 
 
 @dataclass
-class ToolSpec:
-    """单阶段工具声明：必须有的（required）和不允许有的（forbidden）。"""
+class AgentCapabilityConfig:
+    """Agent Capability 配置。"""
+    required_tools: list[str] = field(default_factory=list)
+    forbidden_tools: list[str] = field(default_factory=list)
+    required_mcp_servers: list[str] = field(default_factory=list)
+    forbidden_mcp_servers: list[str] = field(default_factory=list)
+    subagents: list[str] = field(default_factory=list)
 
-    required: list[str] = field(default_factory=list)
-    forbidden: list[str] = field(default_factory=list)
-
-    def effective(self) -> list[str]:
-        """解析为最终可用工具列表：required 去掉 forbidden。"""
-        excluded = set(self.forbidden)
-        return [t for t in self.required if t not in excluded]
+    def effective_tools(self) -> list[str]:
+        excluded = set(self.forbidden_tools)
+        return [t for t in self.required_tools if t not in excluded]
 
 
 @dataclass
-class AgentDefMetadata:
-    """Level 1 — 常驻内存的元数据（从 SOUL.md / ROLE.md frontmatter 解析）。"""
+class AgentDefDetails:
+    """Agent 定义的完整细节。"""
 
     name: str
     version: str
     description: str
-    act_tool_spec: ToolSpec    # 来自 SOUL.md tools frontmatter（Actor 阶段）
-    observe_tool_spec: ToolSpec  # 来自 ROLE.md tools frontmatter（Observer 阶段）
-    agent_dir: Path            # 四个文件所在目录
-    mcp_act_servers: list[str] = field(default_factory=list)      # SOUL.md 声明订阅的 MCP server
-    mcp_observe_servers: list[str] = field(default_factory=list)  # ROLE.md 声明订阅的 MCP server
-    subagents: list[str] = field(default_factory=list)            # 可见 sub-agent template 列表；空 = 全部可见
 
-
-@dataclass
-class AgentDefContent:
-    """Level 2 — 四个文件的正文内容（按需加载，用于拼装 system prompt）。"""
-
-    metadata: AgentDefMetadata
-    soul_md: str
-    role_md: str
-    tools_md: str
-    style_md: str
+    source_dir: str = ""      # 文件所在目录（由 loader 填入，供 service 持久化用）
+    actor_soul: str = ""      # SOUL.md 正文
+    observer_role: str = ""   # ROLE.md 正文
+    actor_capability: AgentCapabilityConfig = field(default_factory=AgentCapabilityConfig)
+    observer_capability: AgentCapabilityConfig = field(default_factory=AgentCapabilityConfig)

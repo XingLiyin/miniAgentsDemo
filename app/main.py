@@ -27,9 +27,9 @@ async def _lifespan(app: FastAPI):
     # 恢复远端 skill 来源（须在 MCP restore 之后，依赖事件循环已就绪）
     from app.api.v1.deps import get_remote_skill_source_service
     get_remote_skill_source_service().restore_all()
-    # 扫描 agents_dir，自动加载 Agent 定义文件
-    from app.api.v1.deps import get_agent_template_registry
-    get_agent_template_registry()
+    # 同步 agents_dir 到 store 并启动文件监控
+    from app.api.v1.deps import get_agent_template_syncer
+    get_agent_template_syncer()
     yield
     # 应用关闭时停止所有 MCP Provider
     from app.api.v1.deps import get_tool_registry

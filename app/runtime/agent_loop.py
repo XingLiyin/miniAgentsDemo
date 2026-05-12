@@ -15,6 +15,7 @@ import logging
 
 from app.common.errors import AppError
 from app.domain.models.agent import Agent
+from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
 from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
@@ -22,7 +23,7 @@ from app.domain.services.task_service import TaskService
 from app.runtime.actor import Actor
 from app.runtime.observer import Observer
 from app.runtime.reasoner import Reasoner
-from app.runtime.types import ActorResult
+from app.runtime.types import ActorResult, ObserverVerdict
 from app.storage.file.agent_store import AgentStore
 
 logger = logging.getLogger(__name__)
@@ -73,95 +74,25 @@ class AgentLoop:
                 )
 
             task = self._task_svc.get(task_id, session_id)
-
             ctx = self._reasoner.reason(session, agent, task)
-            result = self._actor.act(task, ctx, agent, session)
 
-            if result.context_tokens:
-                agent.loop_guard.context_tokens = result.context_tokens
-                agent.loop_guard.context_message_count = self._memory_svc.count_messages(agent_id)
-                self._agent_store.save(agent.to_dict())
-
-            task = self._task_svc.get(task_id, session_id)
+            result, task = self._run_actor(session, agent, task, ctx, session_id, agent_id)
 
             if task.status == "SUSPENDED":
-                if task.user_prompt:
-                    self._memory_svc.append_message(
-                        agent_id=agent_id,
-                        role="user",
-                        content=task.user_prompt,
-                        session_id=session_id,
-                        task_id=task_id,
-                    )
-                spawn_note = _summarize_spawn(result)
-                self._memory_svc.append_message(
-                    agent_id=agent_id,
-                    role="assistant",
-                    content=spawn_note,
-                    session_id=session_id,
-                    task_id=task_id,
-                )
+                self._write_suspension_memory(agent_id, task, result, session_id, task_id)
                 return
 
-            if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
-                self._task_svc.to_be_observed(task_id, session_id)
-                task.status = "TO_BE_OBSERVED"
+            verdict, task = self._run_observer(session, agent, ctx, task, result, session_id, agent_id, task_id)
 
-            task_list = self._task_svc.list_by_agent(session_id, agent_id)
-            verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
-
-            if verdict.context_tokens:
-                agent = self._load_agent(session_id, agent_id)
-                agent.loop_guard.context_tokens = max(
-                    agent.loop_guard.context_tokens, verdict.context_tokens
-                )
-                self._agent_store.save(agent.to_dict())
-
-            # ── task 状态由 ControlToolProvider handler 写入，此处只检查结果 ──
-            task = self._task_svc.get(task_id, session_id)
-
-            # ── memory 写入在状态判断之前，确保 active 路径也写入 ─────────────
-            if task.user_prompt:
-                self._memory_svc.append_message(
-                    agent_id=agent_id,
-                    role="user",
-                    content=task.user_prompt,
-                    session_id=session_id,
-                    task_id=task_id,
-                )
-            if verdict.summary or (result.conversation_turns and result.conversation_turns[-1].images):
-                last_images = result.conversation_turns[-1].images if result.conversation_turns else []
-                if last_images:
-                    mem_content: str | list = [
-                        {"type": "image", "data": img.data, "media_type": img.media_type, "source_type": img.source_type}
-                        for img in last_images
-                    ]
-                    if verdict.summary:
-                        mem_content.append({"type": "text", "text": verdict.summary})
-                else:
-                    mem_content = verdict.summary
-                self._memory_svc.append_message(
-                    agent_id=agent_id,
-                    role="assistant",
-                    content=mem_content,
-                    session_id=session_id,
-                    task_id=task_id,
-                )
+            self._write_execution_memory(agent_id, task, result, verdict, session_id, task_id)
 
             if task.status == "FAILED":
                 raise AppError("TASK_FAILED_BY_OBSERVER", task.result or "")
 
             if task.status == "PENDING":
-                # observer 判定 active：任务重新入队，actor 获得新一轮机会
                 return
 
-            if task.status == "FINISHED" and task.result:
-                self._bb_svc.publish(session_id, task.id, agent_id, task.result)
-
-            for result_turn in result.conversation_turns:
-                self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, result_turn.llm_text)
-                for tool_call in result_turn.tool_calls:
-                    self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})")
+            self._publish_blackboard(session_id, agent_id, task, result)
 
         except AppError as e:
             logger.error(
@@ -179,6 +110,113 @@ class AgentLoop:
                 except Exception:
                     agent.status = "FINISHED"
                 self._agent_store.save(agent.to_dict())
+
+    # ── Phase helpers ─────────────────────────────────────────────────────────
+
+    def _run_actor(self, session, agent: Agent, task, ctx, session_id: str, agent_id: str):
+        """Run the actor, update context tokens, reload task from store."""
+        result = self._actor.act(task, ctx, agent, session)
+
+        if result.context_tokens:
+            agent.loop_guard.context_tokens = result.context_tokens
+            agent.loop_guard.context_message_count = self._memory_svc.count_messages(agent_id)
+            self._agent_store.save(agent.to_dict())
+
+        task = self._task_svc.get(task.id, session_id)
+
+        if result.exit_reason == "normal" and result.output:
+            task.outputs = result.output
+            self._task_svc.save(task)
+
+        return result, task
+
+    def _run_observer(self, session, agent: Agent, ctx, task, result: ActorResult, session_id: str, agent_id: str, task_id: str):
+        """Transition task to TO_BE_OBSERVED, run observer, update tokens, reload task."""
+        if task.status not in ("TO_BE_OBSERVED", "FINISHED", "FAILED", "CANCELED"):
+            self._task_svc.to_be_observed(task_id, session_id)
+            task.status = "TO_BE_OBSERVED"
+
+        task_list = self._task_svc.list_by_agent(session_id, agent_id)
+        verdict = self._observer.observe(session, result, ctx, task, task_list, agent)
+
+        if verdict.context_tokens:
+            agent = self._load_agent(session_id, agent_id)
+            agent.loop_guard.context_tokens = max(
+                agent.loop_guard.context_tokens, verdict.context_tokens
+            )
+            self._agent_store.save(agent.to_dict())
+
+        task = self._task_svc.get(task_id, session_id)
+        return verdict, task
+
+    def _write_suspension_memory(self, agent_id: str, task, result: ActorResult, session_id: str, task_id: str) -> None:
+        """Write user prompt + spawn summary to memory when task is suspended."""
+        if task.user_prompt and not task.user_prompt_in_memory:
+            self._memory_svc.append_message(
+                agent_id=agent_id,
+                role="user",
+                content=task.user_prompt,
+                session_id=session_id,
+                task_id=task_id,
+            )
+            task.user_prompt_in_memory = True
+            self._task_svc.save(task)
+        self._memory_svc.append_message(
+            agent_id=agent_id,
+            role="assistant",
+            content=_summarize_spawn(result),
+            session_id=session_id,
+            task_id=task_id,
+        )
+
+    def _write_execution_memory(self, agent_id: str, task: Task, result: ActorResult, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
+        """Write user prompt and observer verdict summary to memory."""
+        task_output = ""
+        if task.user_prompt and not task.user_prompt_in_memory:
+            self._memory_svc.append_message(
+                agent_id=agent_id,
+                role="user",
+                content=task.user_prompt,
+                session_id=session_id,
+                task_id=task_id,
+            )
+            task.user_prompt_in_memory = True
+            task_output = result.output or ""
+            self._task_svc.save(task)
+        if verdict.summary or (result.conversation_turns and result.conversation_turns[-1].images):
+            last_images = result.conversation_turns[-1].images if result.conversation_turns else []
+            if last_images:
+                mem_content: str | list = [
+                    {"type": "image", "data": img.data, "media_type": img.media_type, "source_type": img.source_type}
+                    for img in last_images
+                ]
+                if verdict.summary:
+                    mem_content.append({"type": "text", "text": task_output + verdict.summary})
+            else:
+                mem_content = task_output + verdict.summary
+            self._memory_svc.append_message(
+                agent_id=agent_id,
+                role="assistant",
+                content=mem_content,
+                session_id=session_id,
+                task_id=task_id,
+            )
+
+    def _publish_blackboard(self, session_id: str, agent_id: str, task: Task, result: ActorResult) -> None:
+        """Publish task result and conversation turns to the blackboard."""
+        if task.result:
+            self._bb_svc.publish(session_id, task.id, agent_id, task.result)
+        if task.outputs:
+            self._bb_svc.publish(session_id, task.id, agent_id, task.outputs)
+        for result_turn in result.conversation_turns:
+            self._bb_svc.publish(session_id, "_root", "agent_id_" + agent_id, result_turn.llm_text)
+            for tool_call in result_turn.tool_calls:
+                self._bb_svc.publish(
+                    session_id, "_root", "agent_id_" + agent_id,
+                    f"Tool call: {tool_call.tool_name}({tool_call.arguments}) -> {tool_call.result} (error={tool_call.is_error})",
+                )
+
+    # ── Internal ──────────────────────────────────────────────────────────────
 
     def _load_agent(self, session_id: str, agent_id: str) -> Agent:
         data = self._agent_store.get(session_id, agent_id)

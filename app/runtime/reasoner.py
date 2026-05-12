@@ -16,7 +16,7 @@ from app.runtime.types import ContextResource, ReasoningContext
 from app.tools.types import CallContext
 
 if TYPE_CHECKING:
-    from app.agent_template.registry import AgentTemplateRegistry
+    from app.agent_template.loader import AgentLoader
     from app.runtime.memory_compaction import MemoryCompactionAgent
     from app.skills.registry import SkillRegistry
     from app.storage.file.agent_store import AgentStore
@@ -42,7 +42,7 @@ class Reasoner:
         tool_registry: "ToolRegistry | None" = None,
         skill_registry: "SkillRegistry | None" = None,
         task_svc: TaskService | None = None,
-        agent_template_registry: "AgentTemplateRegistry | None" = None,
+        agent_template_loader: "AgentLoader | None" = None,
         compaction_agent: "MemoryCompactionAgent | None" = None,
         agent_store: "AgentStore | None" = None,
     ) -> None:
@@ -51,7 +51,7 @@ class Reasoner:
         self._tool_registry = tool_registry
         self._skill_registry = skill_registry
         self._task_svc = task_svc
-        self._agent_template_registry = agent_template_registry
+        self._agent_template_loader = agent_template_loader
         self._compaction_agent = compaction_agent
         self._agent_store = agent_store
 
@@ -155,8 +155,8 @@ class Reasoner:
         self, agent: Agent, task: Task, session_id: str = ""
     ) -> tuple[str, str, str]:
         """提取 soul、role、skill_instructions（plan/act 均适用）。"""
-        soul = agent.soul_md or ""
-        role = agent.role_md or ""
+        soul = agent.actor.instruction_md or ""
+        role = agent.observer.instruction_md or ""
         skill_instructions = ""
         skill_name = task.settings.get("skill_name") if task.settings else None
         if skill_name and self._skill_registry:
@@ -215,17 +215,17 @@ class Reasoner:
 
     def _resolve_act_tool_names(self, agent: Agent) -> set[str]:
         """展开 act 阶段的有效工具名集合：显式列表 + 订阅 MCP server 的全部工具。"""
-        tools = set(agent.act_tool_list or [])
-        if self._tool_registry and agent.mcp_act_servers:
-            for server_name in agent.mcp_act_servers:
+        tools = set(agent.actor.tools or [])
+        if self._tool_registry and agent.actor.mcp_servers:
+            for server_name in agent.actor.mcp_servers:
                 tools.update(self._tool_registry.get_server_tool_names(server_name))
         return tools
 
     def _resolve_observe_tool_names(self, agent: Agent) -> set[str]:
         """展开 observe 阶段的有效工具名集合：显式列表 + 订阅 MCP server 的全部工具。"""
-        tools = set(agent.observe_tool_list or [])
-        if self._tool_registry and agent.mcp_observe_servers:
-            for server_name in agent.mcp_observe_servers:
+        tools = set(agent.observer.tools or [])
+        if self._tool_registry and agent.observer.mcp_servers:
+            for server_name in agent.observer.mcp_servers:
                 tools.update(self._tool_registry.get_server_tool_names(server_name))
         return tools
 
@@ -257,14 +257,14 @@ class Reasoner:
         可见范围由当前 agent template 的 SOUL.md subagents 字段控制：
         空列表 = 全部可见，非空 = 仅列出的 template name 可见。
         """
-        if not agent.has_spawn_permission or not self._agent_template_registry:
+        if not agent.has_spawn_permission or not self._agent_template_loader:
             return []
         workspace_dir = (agent.settings or {}).get("working_dir", "")
-        own_meta = self._agent_template_registry.get_metadata_by_id(agent.template_id or "")
-        allowlist: set[str] | None = set(own_meta.subagents) if own_meta and own_meta.subagents else None
+        own_meta = self._agent_template_loader.get_details(agent.template_id, workspace_dir) if agent.template_id else None
+        allowlist: set[str] | None = set(own_meta.actor_capability.subagents) if own_meta and own_meta.actor_capability.subagents else None
         return [
             ContextResource(name=m.name, description=m.description, kind="agent")
-            for m in self._agent_template_registry.list_all(workspace_dir=workspace_dir)
+            for m in self._agent_template_loader.list_details(workspace_dir)
             if m.name != (agent.template_id or "")
             and (allowlist is None or m.name in allowlist)
         ]

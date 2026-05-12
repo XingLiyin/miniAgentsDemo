@@ -10,9 +10,8 @@ class AgentTemplateResponse(BaseModel):
     name: str
     version: str
     description: str
-    source_dir: str
-    has_spawn_permission: bool
     scope: str = "global"
+    source_dir: str
     workspace_dir: str = ""
     created_at: str
     updated_at: str

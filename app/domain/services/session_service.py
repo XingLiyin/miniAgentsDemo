@@ -7,7 +7,9 @@ from app.common.utils import new_session_id, now_iso
 from app.domain.events.event_bus import EventBus
 from app.domain.events.event_types import SESSION_CREATED, SESSION_STARTED, SESSION_SUCCEEDED, SESSION_FAILED, SESSION_CANCELED
 from app.domain.models.session import Session
+from app.domain.services.task_service import TaskService
 from app.domain.state_machine import SessionStateMachine
+from app.orchestrator.task_queue import TaskQueue
 from app.storage.file.session_store import SessionStore
 
 
@@ -19,10 +21,12 @@ class SessionService:
         store: SessionStore,
         state_machine: SessionStateMachine,
         event_bus: EventBus,
+        task_svc: TaskService,
     ) -> None:
         self._store = store
         self._sm = state_machine
         self._bus = event_bus
+        self._task_svc = task_svc
 
     def create(
         self,
@@ -51,6 +55,7 @@ class SessionService:
             created_at=now,
             updated_at=now,
         )
+        session.task_queue = TaskQueue(task_svc=self._task_svc, session_id=session.id)
         self._store.save(session.to_dict())
         self._bus.publish(SESSION_CREATED, {"session_id": session.id, "user_prompt": user_prompt})
         return session
@@ -59,7 +64,13 @@ class SessionService:
         data = self._store.get(session_id)
         if data is None:
             raise AppError("SESSION_NOT_FOUND", f"Session {session_id} not found")
-        return Session.from_dict(data)
+        session = Session.from_dict(data)
+        raw_queue = data.get("task_queue")
+        if raw_queue is not None:
+            session.task_queue = TaskQueue.from_dict(raw_queue, self._task_svc, session_id)
+        else:
+            session.task_queue = TaskQueue(task_svc=self._task_svc, session_id=session_id)
+        return session
 
     def save(self, session: Session) -> None:
         session.updated_at = now_iso()
@@ -117,6 +128,16 @@ class SessionService:
 
     def list_ids(self) -> list[str]:
         return self._store.list_ids()
+
+    def is_working_dir_in_use(self, working_dir: str, exclude_session_id: str) -> bool:
+        """检查除 exclude_session_id 外是否还有其他 session 使用同一 working_dir。"""
+        for sid in self._store.list_ids():
+            if sid == exclude_session_id:
+                continue
+            data = self._store.get(sid)
+            if data and data.get("working_dir") == working_dir:
+                return True
+        return False
 
     def delete(self, session_id: str) -> None:
         self._store.delete(session_id)

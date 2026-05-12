@@ -30,56 +30,35 @@ logger = logging.getLogger(__name__)
 _TERMINAL = {"FINISHED", "FAILED", "CANCELED"}
 
 
-class _SessionState:
-    __slots__ = ("ready", "blocked", "lock")
-
-    def __init__(self) -> None:
-        self.ready: list[str] = []      # stack, append/pop from end
-        self.blocked: set[str] = set()
-        self.lock = threading.Lock()
-
-
 class TaskQueue:
     """Per-session LIFO task stack with a blocked set for dag_deps."""
 
-    def __init__(self, task_svc: TaskService) -> None:
+    def __init__(self, task_svc: TaskService, session_id: str) -> None:
         self._task_svc = task_svc
-        self._sessions: dict[str, _SessionState] = {}
-
-    # ── Session lifecycle ─────────────────────────────────────────────────────
-
-    def init_session(self, session_id: str) -> None:
-        self._sessions[session_id] = _SessionState()
-
-    def cleanup_session(self, session_id: str) -> None:
-        self._sessions.pop(session_id, None)
+        self._session_id = session_id
+        self._ready: list[str] = []
+        self._blocked: set[str] = set()
+        self._lock = threading.Lock()
 
     # ── Stack operations ──────────────────────────────────────────────────────
 
-    def push(self, session_id: str, task_id: str) -> None:
+    def push(self, task_id: str) -> None:
         """Push a task onto the stack (or into blocked if deps unmet). Idempotent."""
-        st = self._sessions.get(session_id)
-        if st is None:
-            logger.warning("TaskQueue.push: no state for session %s", session_id)
-            return
-        with st.lock:
-            if task_id in st.ready or task_id in st.blocked:
+        with self._lock:
+            if task_id in self._ready or task_id in self._blocked:
                 return
-            if self._deps_satisfied(session_id, task_id):
-                st.ready.append(task_id)
-                logger.debug("TaskQueue: pushed %s to ready (session %s)", task_id, session_id)
+            if self._deps_satisfied(task_id):
+                self._ready.append(task_id)
+                logger.debug("TaskQueue: pushed %s to ready (session %s)", task_id, self._session_id)
             else:
-                st.blocked.add(task_id)
-                logger.debug("TaskQueue: pushed %s to blocked (session %s)", task_id, session_id)
+                self._blocked.add(task_id)
+                logger.debug("TaskQueue: pushed %s to blocked (session %s)", task_id, self._session_id)
 
-    def pop(self, session_id: str) -> "Task | None":
+    def pop(self) -> "Task | None":
         """Pop the top task from the ready stack. Returns None if stack is empty."""
-        st = self._sessions.get(session_id)
-        if st is None:
-            return None
-        with st.lock:
-            while st.ready:
-                task_id = st.ready.pop()
+        with self._lock:
+            while self._ready:
+                task_id = self._ready.pop()
                 try:
                     task = self._task_svc.get(task_id)
                 except Exception:
@@ -91,67 +70,78 @@ class TaskQueue:
                 return task
             return None
 
-    def notify_completed(self, session_id: str, completed_task_id: str) -> None:
+    def notify_completed(self, completed_task_id: str) -> None:
         """A task finished — promote any newly unblocked tasks from blocked to ready."""
-        st = self._sessions.get(session_id)
-        if st is None:
-            return
-        with st.lock:
-            if not st.blocked:
+        with self._lock:
+            if not self._blocked:
                 return
-            terminal_ids = self._terminal_ids(session_id)
+            terminal_ids = self._terminal_ids()
             promoted = {
-                tid for tid in st.blocked
-                if self._deps_satisfied_with(session_id, tid, terminal_ids)
+                tid for tid in self._blocked
+                if self._deps_satisfied_with(tid, terminal_ids)
             }
             for tid in promoted:
-                st.blocked.discard(tid)
-                st.ready.append(tid)
-                logger.debug("TaskQueue: promoted %s from blocked to ready (session %s)", tid, session_id)
+                self._blocked.discard(tid)
+                self._ready.append(tid)
+                logger.debug("TaskQueue: promoted %s from blocked to ready (session %s)", tid, self._session_id)
 
-    def remove(self, session_id: str, task_id: str) -> None:
+    def remove(self, task_id: str) -> None:
         """Remove a task from ready stack or blocked set (used on cascade failure)."""
-        st = self._sessions.get(session_id)
-        if st is None:
-            return
-        with st.lock:
-            st.blocked.discard(task_id)
+        with self._lock:
+            self._blocked.discard(task_id)
             try:
-                st.ready.remove(task_id)
+                self._ready.remove(task_id)
             except ValueError:
                 pass
 
-    def is_empty(self, session_id: str) -> bool:
-        """True when both ready stack and blocked set are empty."""
-        st = self._sessions.get(session_id)
-        if st is None:
-            return True
-        with st.lock:
-            return not st.ready and not st.blocked
+    def clear(self) -> None:
+        """Discard all ready and blocked entries (used when failing session)."""
+        with self._lock:
+            self._ready.clear()
+            self._blocked.clear()
 
-    def has_work(self, session_id: str) -> bool:
+    def is_empty(self) -> bool:
+        """True when both ready stack and blocked set are empty."""
+        with self._lock:
+            return not self._ready and not self._blocked
+
+    def has_work(self) -> bool:
         """True when any task is ready or blocked (session is not done yet)."""
-        return not self.is_empty(session_id)
+        return not self.is_empty()
+
+    # ── Serialization ─────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict:
+        with self._lock:
+            return {
+                "ready": list(self._ready),
+                "blocked": list(self._blocked),
+            }
+
+    @classmethod
+    def from_dict(cls, data: dict, task_svc: TaskService, session_id: str) -> "TaskQueue":
+        q = cls(task_svc=task_svc, session_id=session_id)
+        q._ready = data.get("ready", [])
+        q._blocked = set(data.get("blocked", []))
+        return q
 
     # ── Private ───────────────────────────────────────────────────────────────
 
-    def _deps_satisfied(self, session_id: str, task_id: str) -> bool:
-        terminal_ids = self._terminal_ids(session_id)
-        return self._deps_satisfied_with(session_id, task_id, terminal_ids)
+    def _deps_satisfied(self, task_id: str) -> bool:
+        terminal_ids = self._terminal_ids()
+        return self._deps_satisfied_with(task_id, terminal_ids)
 
-    def _deps_satisfied_with(
-        self, session_id: str, task_id: str, terminal_ids: set[str]
-    ) -> bool:
+    def _deps_satisfied_with(self, task_id: str, terminal_ids: set[str]) -> bool:
         try:
             task = self._task_svc.get(task_id)
             return all(dep in terminal_ids for dep in task.dag_deps)
         except Exception:
             return False
 
-    def _terminal_ids(self, session_id: str) -> set[str]:
+    def _terminal_ids(self) -> set[str]:
         try:
             return {
-                t.id for t in self._task_svc.list_by_session(session_id)
+                t.id for t in self._task_svc.list_by_session(self._session_id)
                 if t.status in _TERMINAL
             }
         except Exception:
