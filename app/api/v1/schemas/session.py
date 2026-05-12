@@ -20,7 +20,6 @@ class CreateSessionRequest(BaseModel):
     user_prompt: str
     template_id: Optional[str] = None
     token_budget: Optional[int] = None
-    root_max_turns: Optional[int] = None
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None
     working_dir: Optional[str] = None
@@ -55,7 +54,7 @@ class SessionResponse(BaseModel):
     token_budget: int
     input_tokens_used: int
     output_tokens_used: int
-    root_max_turns: int
+    context_tokens: int = 0
     failure_counter: int
     llm_provider: Optional[str] = None
     llm_model: Optional[str] = None

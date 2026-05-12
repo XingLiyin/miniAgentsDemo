@@ -120,6 +120,7 @@ class Observer:
                         session_id,
                         input_tokens=_usage.prompt_tokens or 0,
                         output_tokens=_usage.completion_tokens or 0,
+                        context_tokens=_usage.prompt_tokens or 0,
                     )
                 if _usage.prompt_tokens:
                     max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
@@ -164,7 +165,7 @@ class Observer:
             raise RuntimeError("Observer: no assessment submitted by LLM")
 
         return ObserverVerdict(
-            summary=task.actor_result or last_llm_text or "",
+            summary=task.actor_summary or last_llm_text or "",
             context_tokens=max_context_tokens,
         )
 

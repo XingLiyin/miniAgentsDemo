@@ -1,7 +1,8 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { XCircle, AlertTriangle } from 'lucide-react'
 import type { Session } from '@/types'
 import { sessionsApi } from '@/api/sessions'
+import { llmsApi } from '@/api/llms'
 import { SessionStatusBadge } from './StatusBadge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
@@ -13,8 +14,12 @@ interface Props {
 
 export function SessionStats({ session }: Props) {
   const queryClient = useQueryClient()
+  const { data: llms } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
+  const contextLimit = llms?.find(l => l.name === session.llm_provider)
+    ?.models.find(m => m.name === session.llm_model)?.context_limit ?? 0
+  const tokenUsed = session.output_tokens_used
   const tokenPct = session.token_budget > 0
-    ? (session.token_used / session.token_budget) * 100
+    ? (tokenUsed / session.token_budget) * 100
     : 0
 
   const cancelMutation = useMutation({
@@ -59,29 +64,27 @@ export function SessionStats({ session }: Props) {
       </div>
 
       {/* Stats */}
-      <div className="mt-3 grid grid-cols-2 gap-3">
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-gray-500">Token 用量</span>
-            {tokenPct >= 80 && (
-              <span className={`text-xs font-medium ${tokenPct >= 95 ? 'text-red-600' : 'text-yellow-600'}`}>
-                {tokenPct.toFixed(0)}%
-              </span>
-            )}
-          </div>
-          <Progress value={session.token_used} max={session.token_budget} showLabel />
-        </div>
-        <div>
-          <div className="flex items-center justify-between mb-1">
-            <span className="text-xs text-gray-500">轮次</span>
-            <span className="text-xs text-gray-400 tabular-nums">
-              {/* turns from agent loop_guard, approximated */}
-              max {session.root_max_turns}
+      <div className="mt-3">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs text-gray-500">Token 用量</span>
+          {session.token_budget > 0 && tokenPct >= 80 && (
+            <span className={`text-xs font-medium ${tokenPct >= 95 ? 'text-red-600' : 'text-yellow-600'}`}>
+              {tokenPct.toFixed(0)}%
             </span>
-          </div>
-          <div className="h-1.5 bg-gray-200 rounded-full overflow-hidden">
-            <div className="h-full bg-purple-400 rounded-full" style={{ width: '0%' }} />
-          </div>
+          )}
+        </div>
+        {session.token_budget > 0
+          ? <Progress value={tokenUsed} max={session.token_budget} showLabel />
+          : <div className="text-[10px] text-gray-400">无限制</div>
+        }
+        <div className="flex gap-2 mt-1 flex-wrap">
+          <span className="text-[10px] text-gray-400 tabular-nums">↑ 输入 {(session.input_tokens_used / 1000).toFixed(1)}k</span>
+          <span className="text-[10px] text-gray-400 tabular-nums">↓ 输出 {(session.output_tokens_used / 1000).toFixed(1)}k</span>
+          {session.context_tokens > 0 && (
+            <span className="text-[10px] text-blue-400 tabular-nums">
+              窗口 {(session.context_tokens / 1000).toFixed(1)}k{contextLimit > 0 ? ` / ${(contextLimit / 1000).toFixed(0)}k` : ''}
+            </span>
+          )}
         </div>
       </div>
     </div>

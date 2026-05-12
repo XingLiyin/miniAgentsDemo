@@ -329,11 +329,21 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         return
       }
 
+      if (type === 'token_update') {
+        setState(s => ({
+          ...s,
+          session: s.session
+            ? { ...s.session, input_tokens_used: (data.input_tokens_used as number) ?? s.session.input_tokens_used, output_tokens_used: (data.output_tokens_used as number) ?? s.session.output_tokens_used, context_tokens: (data.context_tokens as number) ?? s.session.context_tokens }
+            : s.session,
+        }))
+        return
+      }
+
       if (type === 'session_update') {
         setState(s => ({
           ...s,
           session: s.session
-            ? { ...s.session, status: data.status as Session['status'], token_used: (data.token_used as number) ?? s.session.token_used }
+            ? { ...s.session, status: data.status as Session['status'], input_tokens_used: (data.input_tokens_used as number) ?? s.session.input_tokens_used, output_tokens_used: (data.output_tokens_used as number) ?? s.session.output_tokens_used }
             : s.session,
           // clear waiting input & streaming when session resumes
           waitingInput: data.status === 'RUNNING' ? null : s.waitingInput,

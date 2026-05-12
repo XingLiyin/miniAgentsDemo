@@ -258,7 +258,11 @@ class LifecycleManager:
 
     def run_agent(self, session_id: str, agent_id: str, task_id: str) -> None:
         """Start a daemon thread to run agent_loop for (agent, task)."""
-        with self._locks[session_id]:
+        lock = self._locks.get(session_id)
+        if lock is None:
+            logger.warning("LM: run_agent called after session %s cleanup, ignoring", session_id)
+            return
+        with lock:
             state = self._states.get(session_id)
             if state and agent_id in state.agent_registry:
                 state.agent_registry[agent_id].task_id = task_id
@@ -439,7 +443,7 @@ class LifecycleManager:
             status="IDLE",
             actor=actor,
             observer=observer,
-            loop_guard=LoopGuard(actor_max_tool_rounds=50),
+            loop_guard=LoopGuard(actor_max_tool_rounds=settings.default_actor_max_tool_rounds),
             inherit_memory=inherit_memory,
             has_spawn_permission=(spawn_depth < self._max_spawn_depth),
             spawn_depth=spawn_depth,

@@ -16,8 +16,7 @@ interface Props {
 
 const DEFAULT_CONFIG: SessionConfig = {
   template_id: null,
-  token_budget: 200000,
-  root_max_turns: 20,
+  token_budget: 0,
   llm_provider: null,
   llm_model: null,
   working_dir: null,
@@ -136,22 +135,17 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
         })()}
 
         <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Token 预算"
-            type="number"
-            value={config.token_budget}
-            onChange={(e) =>
-              setConfig((c) => ({ ...c, token_budget: Number(e.target.value) }))
-            }
-          />
-          <Input
-            label="最大轮次"
-            type="number"
-            value={config.root_max_turns}
-            onChange={(e) =>
-              setConfig((c) => ({ ...c, root_max_turns: Number(e.target.value) }))
-            }
-          />
+          <div>
+            <Input
+              label="Token 预算"
+              type="number"
+              value={config.token_budget}
+              onChange={(e) =>
+                setConfig((c) => ({ ...c, token_budget: Number(e.target.value) }))
+              }
+            />
+            <p className="mt-1 text-[11px] text-gray-400">0 表示不限制输出 token；超出预算后 session 将自动终止</p>
+          </div>
         </div>
 
         <div className="rounded-lg border border-gray-200 p-3 flex flex-col gap-3">

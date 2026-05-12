@@ -230,8 +230,7 @@ def update_task_metadata(
     if task is not None:
         task.actor_done    = True
         task.actor_outcome = "success"
-        task.actor_result  = "metadata updated"
-        task.actor_summary = ""
+        task.actor_summary = "metadata updated"
     return ToolResult(content="ok")
 
 
@@ -260,7 +259,7 @@ def replan(
     )
     if task is not None:
         task.actor_outcome     = "success"
-        task.actor_result      = reason
+        task.actor_summary     = reason
         task.proceed_to_review = False
         task_svc.finish(task.id, result=reason, session_id=task.session_id)
         task.status = "FINISHED"
@@ -303,7 +302,7 @@ def submit_task_assessment(
 
     if task is not None:
         task.actor_outcome = task_status
-        task.actor_result  = task_result
+        task.actor_summary = task_result
         task.proceed_to_review = True
 
         if task_status == "success":
@@ -320,7 +319,7 @@ def submit_task_assessment(
                 task, task_result, task_svc=task_svc, session_svc=session_svc,
             )
             task.actor_outcome = task_status
-            task.actor_result  = task_result
+            task.actor_summary = task_result
             task.status = "FINISHED" if task_status == "success" else "FAILED"
 
     review_msg = ""

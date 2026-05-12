@@ -43,7 +43,6 @@ class Task:
     # ── 运行时临时字段（不持久化，handler 直接写，loop 直接读）──────────────────
     actor_done: bool = field(default=False, compare=False)
     actor_outcome: str = field(default="", compare=False)
-    actor_result: str = field(default="", compare=False)
     actor_summary: str = field(default="", compare=False)
     proceed_to_review: bool = field(default=False, compare=False)
 

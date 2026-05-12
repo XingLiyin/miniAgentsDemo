@@ -15,8 +15,9 @@ interface SessionCardProps {
 
 export function SessionCard({ session, selected, onClick, onDeleted }: SessionCardProps) {
   const queryClient = useQueryClient()
+  const tokenUsed = session.output_tokens_used
   const tokenPct = session.token_budget > 0
-    ? Math.min((session.token_used / session.token_budget) * 100, 100)
+    ? Math.min((tokenUsed / session.token_budget) * 100, 100)
     : 0
 
   const deleteMutation = useMutation({

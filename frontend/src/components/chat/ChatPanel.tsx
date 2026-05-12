@@ -782,6 +782,10 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [items.length])
 
+  const { data: llms } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
+  const sessionContextLimit = llms?.find(l => l.name === session?.llm_provider)
+    ?.models.find(m => m.name === session?.llm_model)?.context_limit ?? 0
+
   const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
   const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(session.status)
   const activeTaskCount = tasks.filter(t => t.status === 'ACTIVE').length
@@ -794,9 +798,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
           <p className="text-sm font-medium text-gray-900 truncate">{session?.goal || '加载中…'}</p>
           <div className="flex items-center gap-2 mt-0.5">
             {session && <SessionStatusBadge status={session.status} />}
-            {session && session.token_used > 0 && (
+            {session && session.output_tokens_used > 0 && (
               <span className="text-xs text-gray-400">
-                {(session.token_used / 1000).toFixed(1)}k / {(session.token_budget / 1000).toFixed(0)}k tokens
+                ↓ {(session.output_tokens_used / 1000).toFixed(1)}k{session.token_budget > 0 && ` / ${(session.token_budget / 1000).toFixed(0)}k`}
+                {session.input_tokens_used > 0 && (
+                  <span className="ml-1 text-gray-300">· ↑ {(session.input_tokens_used / 1000).toFixed(1)}k</span>
+                )}
+                {session.context_tokens > 0 && (
+                  <span className="ml-1 text-blue-400">
+                    · 窗口 {(session.context_tokens / 1000).toFixed(1)}k{sessionContextLimit > 0 ? ` / ${(sessionContextLimit / 1000).toFixed(0)}k` : ''}
+                  </span>
+                )}
               </span>
             )}
             {session?.llm_provider && (

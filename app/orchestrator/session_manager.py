@@ -88,7 +88,6 @@ class SessionManager:
         user_prompt: str,
         template_id: str | None = None,
         token_budget: int | None = None,
-        root_max_turns: int | None = None,
         llm_provider: str | None = None,
         llm_model: str | None = None,
         working_dir: str | None = None,
@@ -105,7 +104,6 @@ class SessionManager:
             user_prompt=user_prompt,
             template_id=template_id,
             token_budget=token_budget or settings.default_token_budget,
-            root_max_turns=root_max_turns or settings.default_root_max_turns,
             llm_provider=resolved_llm_name,
             llm_model=llm_model or "",
             working_dir=wd,
@@ -364,7 +362,7 @@ class SessionManager:
 
     def check_token_budget(self, session: Session) -> None:
         """Guard 硬检查：输出超出 token_budget 立即抛出 AppError。"""
-        if session.output_tokens_used >= session.token_budget:
+        if session.token_budget > 0 and session.output_tokens_used >= session.token_budget:
             raise AppError(
                 "TOKEN_BUDGET_EXCEEDED",
                 f"Session {session.id} output token budget exhausted ({session.output_tokens_used}/{session.token_budget})",

@@ -19,8 +19,9 @@ export interface Session {
   template_id: string | null
   root_agent_id: string | null
   token_budget: number
-  token_used: number
-  root_max_turns: number
+  input_tokens_used: number
+  output_tokens_used: number
+  context_tokens: number
   failure_counter: number
   llm_provider: string | null
   llm_model: string | null
@@ -38,7 +39,6 @@ export interface CreateSessionRequest {
   user_prompt: string
   template_id?: string | null
   token_budget?: number
-  root_max_turns?: number
   llm_provider?: string | null
   llm_model?: string | null
   working_dir?: string | null

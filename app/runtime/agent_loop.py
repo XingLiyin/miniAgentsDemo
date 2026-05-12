@@ -66,7 +66,7 @@ class AgentLoop:
         try:
             session = self._session_svc.get(session_id)
 
-            if session.output_tokens_used >= session.token_budget:
+            if session.token_budget > 0 and session.output_tokens_used >= session.token_budget:
                 raise AppError(
                     "TOKEN_BUDGET_EXCEEDED",
                     f"Session {session_id} output token budget exhausted "
@@ -191,9 +191,9 @@ class AgentLoop:
                     for img in last_images
                 ]
                 if verdict.summary:
-                    mem_content.append({"type": "text", "text": task_output + verdict.summary})
+                    mem_content.append({"type": "text", "text": "\n\n".join(filter(None, [task_output, verdict.summary, task.result]))})
             else:
-                mem_content = task_output + verdict.summary
+                mem_content = "\n\n".join(filter(None, [task_output, verdict.summary, task.result]))
             self._memory_svc.append_message(
                 agent_id=agent_id,
                 role="assistant",

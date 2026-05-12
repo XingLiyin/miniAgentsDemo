@@ -14,6 +14,16 @@ from app.api.v1.deps import get_session_manager, get_session_service, get_task_s
 from app.api.v1.schemas.session import CreateSessionRequest, InitialTaskConfig, SessionResponse
 from app.api.v1.schemas.task import TaskResponse
 from app.common.errors import AppError
+from app.storage.file.agent_store import AgentStore
+
+
+def _session_response(session) -> SessionResponse:
+    d = session.to_dict()
+    if session.root_agent_id:
+        agent_data = AgentStore().get(session.id, session.root_agent_id)
+        if agent_data:
+            d["context_tokens"] = agent_data.get("loop_guard", {}).get("context_tokens", 0)
+    return SessionResponse(**d)
 
 
 class SendMessageRequest(BaseModel):
@@ -35,7 +45,7 @@ def list_sessions() -> list[SessionResponse]:
     svc = get_session_service()
     sessions = [svc.get(sid) for sid in svc.list_ids()]
     sessions.sort(key=lambda s: s.created_at, reverse=True)
-    return [SessionResponse(**s.to_dict()) for s in sessions]
+    return [_session_response(s) for s in sessions]
 
 
 @router.post("", response_model=SessionResponse, status_code=202)
@@ -47,7 +57,6 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
             user_prompt=req.user_prompt,
             template_id=req.template_id,
             token_budget=req.token_budget,
-            root_max_turns=req.root_max_turns,
             llm_provider=req.llm_provider,
             llm_model=req.llm_model,
             working_dir=req.working_dir,
@@ -55,7 +64,7 @@ async def create_session(req: CreateSessionRequest) -> SessionResponse:
         )
         # 异步启动 AgentLoop（在当前 asyncio event loop 中）
         mgr.schedule_loop(session.id, agent_id)
-        return SessionResponse(**session.to_dict())
+        return _session_response(session)
     except AppError as e:
         raise HTTPException(status_code=400, detail={"code": e.code, "message": e.message})
 
@@ -66,7 +75,7 @@ def get_session(session_id: str) -> SessionResponse:
     try:
         svc = get_session_service()
         session = svc.get(session_id)
-        return SessionResponse(**session.to_dict())
+        return _session_response(session)
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
@@ -90,7 +99,7 @@ def cancel_session(session_id: str) -> SessionResponse:
     try:
         mgr = get_session_manager()
         session = mgr.cancel_session(session_id)
-        return SessionResponse(**session.to_dict())
+        return _session_response(session)
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
@@ -107,7 +116,7 @@ async def send_message(session_id: str, req: SendMessageRequest) -> SessionRespo
             llm_provider=req.llm_provider,
             llm_model=req.llm_model,
         )
-        return SessionResponse(**session.to_dict())
+        return _session_response(session)
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
@@ -119,7 +128,7 @@ async def answer_input(session_id: str, req: AnswerInputRequest) -> SessionRespo
     try:
         mgr = get_session_manager()
         session = mgr.answer_input(session_id, req.content)
-        return SessionResponse(**session.to_dict())
+        return _session_response(session)
     except AppError as e:
         status = 404 if e.code == "SESSION_NOT_FOUND" else 400
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
@@ -156,7 +165,7 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
 
             init_event = {
                 "type": "init",
-                "session": SessionResponse(**session.to_dict()).model_dump(),
+                "session": _session_response(session).model_dump(),
                 "tasks": task_data,
                 "messages": messages,
             }

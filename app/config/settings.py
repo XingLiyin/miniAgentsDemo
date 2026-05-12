@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     default_planner_template_name: str = "planner"
 
     # Agent Loop 默认参数
-    default_token_budget: int = 200_000
-    default_root_max_turns: int = 20
+    default_token_budget: int = 0
+    default_actor_max_tool_rounds: int = 50
     default_summary_threshold: int = 20
     default_context_limit: int = 200_000
     default_short_window_size: int = 20

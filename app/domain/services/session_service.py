@@ -33,7 +33,6 @@ class SessionService:
         user_prompt: str,
         template_id: str | None = None,
         token_budget: int = 200_000,
-        root_max_turns: int = 20,
         llm_provider: str = "",
         llm_model: str = "",
         working_dir: str = "",
@@ -48,7 +47,6 @@ class SessionService:
             template_id=template_id,
             root_agent_id=None,
             token_budget=token_budget,
-            root_max_turns=root_max_turns,
             llm_provider=llm_provider,
             llm_model=llm_model,
             working_dir=working_dir,
@@ -112,13 +110,24 @@ class SessionService:
         session.root_agent_id = agent_id
         self.save(session)
 
-    def add_tokens(self, session_id: str, input_tokens: int = 0, output_tokens: int = 0) -> Session:
+    def add_tokens(self, session_id: str, input_tokens: int = 0, output_tokens: int = 0, context_tokens: int = 0) -> Session:
         """累加 token 消耗，输出超出 budget 立即抛出 AppError（硬终止）。"""
         session = self.get(session_id)
         session.input_tokens_used += input_tokens
         session.output_tokens_used += output_tokens
         self.save(session)
-        if session.output_tokens_used >= session.token_budget:
+        try:
+            from app.common.sse_bus import get_sse_bus
+            get_sse_bus().push(session_id, {
+                "type": "token_update",
+                "session_id": session_id,
+                "input_tokens_used": session.input_tokens_used,
+                "output_tokens_used": session.output_tokens_used,
+                "context_tokens": context_tokens,
+            })
+        except Exception:
+            pass
+        if session.token_budget > 0 and session.output_tokens_used >= session.token_budget:
             raise AppError(
                 "TOKEN_BUDGET_EXCEEDED",
                 f"Session {session_id} output token budget exhausted "

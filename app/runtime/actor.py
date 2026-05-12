@@ -87,6 +87,7 @@ class Actor:
                         session_id,
                         input_tokens=_usage.prompt_tokens or 0,
                         output_tokens=_usage.completion_tokens or 0,
+                        context_tokens=_usage.prompt_tokens or 0,
                     )
                 if _usage.prompt_tokens:
                     max_context_tokens = max(max_context_tokens, _usage.prompt_tokens)
