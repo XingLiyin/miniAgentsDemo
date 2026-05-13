@@ -179,14 +179,11 @@ class LifecycleManager:
                 return None
 
             # WAITING agent: has a suspended task waiting for its children to finish.
+            # Inline tasks (use_subagent=False) run directly; sub-agent tasks spawn a child.
             if base_meta.status == "WAITING":
-                if base_meta.task_id == task_id:
-                    # The suspended task is being resumed — agent runs it directly.
+                if not use_subagent:
                     base_meta.status = "RUNNING"
                     return base_executor
-                else:
-                    # Child task dispatched to this waiting agent — must spawn a child.
-                    use_subagent = True
 
             if not use_subagent:
                 return base_executor
