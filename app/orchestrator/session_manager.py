@@ -116,7 +116,7 @@ class SessionManager:
 
         # 查找模板：按 id > 默认模板
         details = self._template_loader.get_details_by_id(template_id) if self._template_loader else None
-        if details is None and template_id:
+        if details is None:
             details, template_id = self._template_loader.get_details(settings.default_agent_template_name, wd) if self._template_loader else None
         if details is None:
             logger.warning("No template found for '%s', creating agent with empty config", template_id)

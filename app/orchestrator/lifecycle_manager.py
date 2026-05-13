@@ -405,6 +405,7 @@ class LifecycleManager:
         workspace_dir = (parent_data.get("settings") or {}).get("working_dir", "")
 
         _details = None
+        template_id = None
         if template_name and self._template_loader is not None:
             try:
                 _details, template_id = self._template_loader.get_details(template_name, workspace_dir)
@@ -424,6 +425,7 @@ class LifecycleManager:
             )
             agent_name = f"sub-agent-{template_name}"
         else:
+            template_id = parent_data.get("template_id", "")
             actor = AgentCapability.from_dict(parent_data.get("actor", {}))
             observer = AgentCapability.from_dict(parent_data.get("observer", {}))
             template_name = parent_data.get("template_name") or ""
