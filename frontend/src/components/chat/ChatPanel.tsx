@@ -203,6 +203,16 @@ function LLMPromptCard({ item }: { item: ChatLLMPrompt }) {
         </button>
         {open && (
           <div className="mt-1.5 bg-slate-900 rounded-lg overflow-hidden text-xs font-mono">
+            {(item.task_id || item.agent_id) && (
+              <div className="px-3 py-2 border-b border-slate-700 flex flex-col gap-0.5">
+                {item.task_id && (
+                  <p className="text-slate-400">task_id: <span className="text-slate-200 select-all">{item.task_id}</span></p>
+                )}
+                {item.agent_id && (
+                  <p className="text-slate-400">agent_id: <span className="text-slate-200 select-all">{item.agent_id}</span></p>
+                )}
+              </div>
+            )}
             {item.system_prompt && (
               <div className="px-3 py-2 border-b border-slate-700">
                 <p className="text-slate-400 mb-1">system</p>

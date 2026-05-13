@@ -62,6 +62,8 @@ export interface ChatLLMPrompt {
   kind: 'llm_prompt'
   source: string        // 'actor' | 'observer'
   round_label: string
+  task_id: string
+  agent_id: string
   system_prompt: string
   messages: Array<{ role: string; content: string | object[] }>
   tool_names: string[]
@@ -233,6 +235,8 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           kind: 'llm_prompt',
           source: (evt.source as string) || 'actor',
           round_label: (evt.round_label as string) || '',
+          task_id: (evt.task_id as string) || '',
+          agent_id: (evt.agent_id as string) || '',
           system_prompt: (evt.system_prompt as string) || '',
           messages: (evt.messages as Array<{ role: string; content: string | object[] }>) || [],
           tool_names: (evt.tool_names as string[]) || [],
@@ -490,6 +494,8 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           kind: 'llm_prompt',
           source: (data.source as string) || 'actor',
           round_label: (data.round_label as string) || '',
+          task_id: (data.task_id as string) || '',
+          agent_id: (data.agent_id as string) || '',
           system_prompt: (data.system_prompt as string) || '',
           messages: (data.messages as Array<{ role: string; content: string }>) || [],
           tool_names: (data.tool_names as string[]) || [],

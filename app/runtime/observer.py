@@ -110,7 +110,7 @@ class Observer:
         for _round in range(max_rounds):
             from app.runtime.actor import _compute_max_tokens
             round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens) if last_prompt_tokens else None
-            _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools)
+            _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools, task)
             full_text, tool_call_acc, image_acc, _usage = _stream_observer(
                 llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}", round_max_tokens
             )
@@ -210,6 +210,7 @@ def _push_llm_event(
     system_prompt: str,
     messages: list,
     tools: list,
+    task: "Task | None" = None,
 ) -> None:
     """向前端推送 llm_prompt 调试事件（含 system_prompt / messages / tool 名列表）。"""
     if not session_id:
@@ -220,6 +221,8 @@ def _push_llm_event(
             "type": "llm_prompt",
             "source": "observer",
             "round_label": round_label,
+            "task_id": task.id if task else "",
+            "agent_id": task.assigned_agent_id if task else "",
             "system_prompt": system_prompt,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "tool_names": [getattr(t, "name", str(t)) for t in tools],

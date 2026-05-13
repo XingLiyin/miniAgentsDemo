@@ -167,6 +167,8 @@ class Actor:
             "type": "llm_prompt",
             "source": "actor",
             "round_label": f"actor_round_{_round}",
+            "task_id": ctx.current_task.id if ctx.current_task else "",
+            "agent_id": ctx.current_task.assigned_agent_id if ctx.current_task else "",
             "system_prompt": system_prompt,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
