@@ -192,6 +192,7 @@ export interface MCPServer {
   status: MCPServerStatus
   tool_count: number
   tools?: MCPTool[]
+  connect_timeout?: number
   created_at?: string
 }
 
@@ -205,12 +206,14 @@ export interface RegisterMCPStdioRequest {
   command: string
   args?: string[]
   env?: Record<string, string>
+  connect_timeout?: number
 }
 
 export interface RegisterMCPHttpRequest {
   name: string
   url: string
   timeout?: number
+  connect_timeout?: number
 }
 
 // ─── Remote Skill Source ─────────────────────────────────────────────────────

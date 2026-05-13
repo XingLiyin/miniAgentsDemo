@@ -35,8 +35,9 @@ class MCPStdioProvider(_MCPProviderBase):
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        connect_timeout: int = 5,
     ) -> None:
-        super().__init__(thread_name="mcp-stdio-loop")
+        super().__init__(thread_name="mcp-stdio-loop", connect_timeout=connect_timeout)
         self._name = name
         self._command = command
         self._args = args or []
@@ -53,7 +54,7 @@ class MCPStdioProvider(_MCPProviderBase):
 
     def start(self) -> None:
         self._start_loop()
-        self._run_sync(self._connect())
+        self._start_connect()
         self._finish_start()
         logger.info(
             "MCPStdioProvider '%s' started, %d tools loaded",

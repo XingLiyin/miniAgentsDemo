@@ -24,6 +24,7 @@ def _to_response(info: MCPServerInfo) -> MCPServerResponse:
         args=info.args,
         url=info.url,
         timeout=info.timeout,
+        connect_timeout=info.connect_timeout,
     )
 
 
@@ -36,6 +37,7 @@ def register_stdio(req: MCPStdioRegisterRequest) -> MCPServerResponse:
             command=req.command,
             args=req.args or [],
             env=req.env or None,
+            connect_timeout=req.connect_timeout,
         )
     except AppError as e:
         status = 409 if e.code == "MCP_ALREADY_EXISTS" else 500
@@ -51,6 +53,7 @@ def register_http(req: MCPHttpRegisterRequest) -> MCPServerResponse:
             name=req.name,
             url=req.url,
             timeout=req.timeout,
+            connect_timeout=req.connect_timeout,
         )
     except AppError as e:
         status = {

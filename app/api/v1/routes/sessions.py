@@ -171,12 +171,15 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             }
             yield f"data: {json.dumps(init_event, default=str)}\n\n"
 
-            # 发送历史事件快照（用于断线重连后恢复完整聊天记录）
+            # 发送历史事件快照（分页：只补发 cursor 之后的部分）
+            # 首次连接 cursor=0 发全量；断线重连时浏览器自动携带 Last-Event-ID
             from app.storage.file.event_store import get_event_store
-            history = get_event_store().load(session_id)
+            cursor = int(request.headers.get("last-event-id", "0") or "0")
+            history = get_event_store().load_since(session_id, cursor)
             if history:
+                new_cursor = cursor + len(history)
                 history_event = {"type": "history", "events": history}
-                yield f"data: {json.dumps(history_event, default=str)}\n\n"
+                yield f"id: {new_cursor}\ndata: {json.dumps(history_event, default=str)}\n\n"
 
             # 若 session 正在等待用户输入，重放 waiting_input 事件（断线重连恢复输入框）
             if session.status == "WAITING_INPUT":

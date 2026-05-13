@@ -111,29 +111,37 @@ class SessionService:
         self.save(session)
 
     def add_tokens(self, session_id: str, input_tokens: int = 0, output_tokens: int = 0, context_tokens: int = 0) -> Session:
-        """累加 token 消耗，输出超出 budget 立即抛出 AppError（硬终止）。"""
-        session = self.get(session_id)
-        session.input_tokens_used += input_tokens
-        session.output_tokens_used += output_tokens
-        self.save(session)
+        """累加 token 消耗，输出超出 budget 立即抛出 AppError（硬终止）。
+
+        直接操作 raw dict 而非 Session 对象，避免将 task_queue 的旧状态覆盖回磁盘
+        （daemon 线程与 main agent 并发时，daemon 的 session 快照里 task_queue 可能是旧的）。
+        """
+        data = self._store.get(session_id)
+        if data is None:
+            raise AppError("SESSION_NOT_FOUND", f"Session {session_id} not found")
+        data["input_tokens_used"] = data.get("input_tokens_used", 0) + input_tokens
+        data["output_tokens_used"] = data.get("output_tokens_used", 0) + output_tokens
+        data["updated_at"] = now_iso()
+        self._store.save(data)
         try:
             from app.common.sse_bus import get_sse_bus
             get_sse_bus().push(session_id, {
                 "type": "token_update",
                 "session_id": session_id,
-                "input_tokens_used": session.input_tokens_used,
-                "output_tokens_used": session.output_tokens_used,
+                "input_tokens_used": data["input_tokens_used"],
+                "output_tokens_used": data["output_tokens_used"],
                 "context_tokens": context_tokens,
             })
         except Exception:
             pass
-        if session.token_budget > 0 and session.output_tokens_used >= session.token_budget:
+        token_budget = data.get("token_budget", 0)
+        if token_budget > 0 and data["output_tokens_used"] >= token_budget:
             raise AppError(
                 "TOKEN_BUDGET_EXCEEDED",
                 f"Session {session_id} output token budget exhausted "
-                f"({session.output_tokens_used}/{session.token_budget})",
+                f"({data['output_tokens_used']}/{token_budget})",
             )
-        return session
+        return Session.from_dict(data)
 
     def list_ids(self) -> list[str]:
         return self._store.list_ids()

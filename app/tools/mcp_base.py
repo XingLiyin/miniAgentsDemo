@@ -35,12 +35,13 @@ class _MCPProviderBase(ABC):
     start() 启动后台事件循环线程，完成连接握手并加载工具列表。
     """
 
-    def __init__(self, thread_name: str, request_timeout: int = 30) -> None:
+    def __init__(self, thread_name: str, request_timeout: int = 30, connect_timeout: int = 5) -> None:
         self._session: ClientSession | None = None
         self._exit_stack: AsyncExitStack | None = None
         self._tools: list[types.Tool] = []
         self._thread_name = thread_name
         self._request_timeout = request_timeout
+        self._connect_timeout = connect_timeout
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._initialized = False
@@ -165,13 +166,13 @@ class _MCPProviderBase(ABC):
         )
         self._thread.start()
 
-    def _run_sync(self, coro: Any) -> Any:
+    def _run_sync(self, coro: Any, timeout: int | None = None) -> Any:
         if self._loop is None:
             raise AppError("MCP_NOT_STARTED", "Event loop not initialized")
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
-        timeout = self._request_timeout or 30
+        t = timeout if timeout is not None else (self._request_timeout or 30)
         try:
-            return future.result(timeout=timeout)
+            return future.result(timeout=t)
         except concurrent.futures.CancelledError as exc:
             raise AppError(
                 "MCP_CONNECT_CANCELLED",
@@ -181,8 +182,12 @@ class _MCPProviderBase(ABC):
             future.cancel()
             raise AppError(
                 "MCP_CONNECT_TIMEOUT",
-                f"MCP connection timed out after {timeout} s",
+                f"MCP connection timed out after {t} s",
             ) from exc
+
+    def _start_connect(self) -> None:
+        """用 connect_timeout 完成握手，与工具调用的 request_timeout 分开。"""
+        self._run_sync(self._connect(), timeout=self._connect_timeout)
 
     async def _connect(self) -> None:
         """连接 MCP Server，建立 session，加载工具列表。"""

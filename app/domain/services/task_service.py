@@ -122,7 +122,9 @@ class TaskService:
         task.result = None
         task.outputs = ""
         self.save(task)
-        return self.transition(task_id, "PENDING", task.session_id)
+        result = self.transition(task_id, "PENDING", task.session_id)
+        self._bus.publish(TASK_CREATED, {"task_id": task_id, "session_id": result.session_id})
+        return result
 
     def retry(self, task_id: str, session_id: str | None = None) -> Task:
         """将 FAILED 任务打回 PENDING，并递增重试计数。"""

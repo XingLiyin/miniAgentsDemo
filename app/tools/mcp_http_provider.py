@@ -35,8 +35,9 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
         url: str,
         *,
         timeout: int = 30,
+        connect_timeout: int = 5,
     ) -> None:
-        super().__init__(thread_name="mcp-http-loop", request_timeout=timeout)
+        super().__init__(thread_name="mcp-http-loop", request_timeout=timeout, connect_timeout=connect_timeout)
         self._name = name
         self._url = url
 
@@ -46,7 +47,7 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
 
     def start(self) -> None:
         self._start_loop()
-        self._run_sync(self._connect())
+        self._start_connect()
         self._finish_start()
         logger.info(
             "MCPStreamableHTTPProvider '%s' started, %d tools loaded",

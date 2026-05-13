@@ -38,6 +38,8 @@ class MCPServerInfo:
     # http 字段
     url: str | None = None
     timeout: int | None = None
+    # 通用
+    connect_timeout: int = 5
 
 
 class MCPService:
@@ -55,12 +57,13 @@ class MCPService:
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        connect_timeout: int = 5,
     ) -> MCPServerInfo:
         """注册 stdio MCP Server，并持久化配置。"""
         if self._store.get(name) is not None:
             raise AppError("MCP_ALREADY_EXISTS", f"MCP server '{name}' already registered")
 
-        self._registry.register_mcp_stdio(name=name, command=command, args=args, env=env)
+        self._registry.register_mcp_stdio(name=name, command=command, args=args, env=env, connect_timeout=connect_timeout)
 
         self._store.save({
             "name": name,
@@ -68,6 +71,7 @@ class MCPService:
             "command": command,
             "args": args or [],
             "env": env or {},
+            "connect_timeout": connect_timeout,
         })
 
         return MCPServerInfo(
@@ -75,6 +79,7 @@ class MCPService:
             status=self._registry.get_server_status(name),
             tools=self._tool_infos(name),
             command=command, args=args or [],
+            connect_timeout=connect_timeout,
         )
 
     def register_http(
@@ -82,18 +87,20 @@ class MCPService:
         name: str,
         url: str,
         timeout: int = 30,
+        connect_timeout: int = 5,
     ) -> MCPServerInfo:
         """注册 HTTP MCP Server，并持久化配置。"""
         if self._store.get(name) is not None:
             raise AppError("MCP_ALREADY_EXISTS", f"MCP server '{name}' already registered")
 
-        self._registry.register_mcp_http(name=name, url=url, timeout=timeout)
+        self._registry.register_mcp_http(name=name, url=url, timeout=timeout, connect_timeout=connect_timeout)
 
         self._store.save({
             "name": name,
             "type": "http",
             "url": url,
             "timeout": timeout,
+            "connect_timeout": connect_timeout,
         })
 
         return MCPServerInfo(
@@ -101,6 +108,7 @@ class MCPService:
             status=self._registry.get_server_status(name),
             tools=self._tool_infos(name),
             url=url, timeout=timeout,
+            connect_timeout=connect_timeout,
         )
 
     # ── 查询 ──────────────────────────────────────────────────────────────
@@ -187,12 +195,14 @@ class MCPService:
                 command=cfg["command"],
                 args=cfg.get("args") or [],
                 env=cfg.get("env") or None,
+                connect_timeout=cfg.get("connect_timeout", 5),
             )
         elif server_type == "http":
             self._registry.register_mcp_http(
                 name=name,
                 url=cfg["url"],
                 timeout=cfg.get("timeout", 30),
+                connect_timeout=cfg.get("connect_timeout", 5),
             )
         else:
             raise AppError("MCP_INVALID_CONFIG", f"Unknown MCP server type: '{server_type}'")
@@ -212,12 +222,14 @@ class MCPService:
                 name=name, type="stdio",
                 command=cfg.get("command"),
                 args=cfg.get("args") or [],
+                connect_timeout=cfg.get("connect_timeout", 5),
             )
         if server_type == "http":
             return MCPServerInfo(
                 name=name, type="http",
                 url=cfg.get("url"),
                 timeout=cfg.get("timeout", 30),
+                connect_timeout=cfg.get("connect_timeout", 5),
             )
         return None
 

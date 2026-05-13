@@ -20,11 +20,13 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
     command: '',
     args: [],
     env: {},
+    connect_timeout: 5,
   })
   const [httpForm, setHttpForm] = useState<RegisterMCPHttpRequest>({
     name: '',
     url: '',
     timeout: 30,
+    connect_timeout: 5,
   })
   const [argsStr, setArgsStr] = useState('')
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -105,6 +107,13 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
               onChange={(e) => setArgsStr(e.target.value)}
               hint="空格分隔"
             />
+            <Input
+              label="连接超时（秒）"
+              type="number"
+              value={stdioForm.connect_timeout}
+              onChange={(e) => setStdioForm((f) => ({ ...f, connect_timeout: Number(e.target.value) }))}
+              hint="连接握手超时，建议 3-10 秒"
+            />
           </>
         ) : (
           <>
@@ -123,10 +132,18 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
               error={errors.url}
             />
             <Input
-              label="超时（秒）"
+              label="调用超时（秒）"
               type="number"
               value={httpForm.timeout}
               onChange={(e) => setHttpForm((f) => ({ ...f, timeout: Number(e.target.value) }))}
+              hint="工具调用最长等待时间"
+            />
+            <Input
+              label="连接超时（秒）"
+              type="number"
+              value={httpForm.connect_timeout}
+              onChange={(e) => setHttpForm((f) => ({ ...f, connect_timeout: Number(e.target.value) }))}
+              hint="连接握手超时，建议 3-10 秒"
             />
           </>
         )}
@@ -177,6 +194,9 @@ function MCPServerRow({ server }: { server: MCPServer }) {
           </div>
           <p className="text-xs text-gray-400 mt-0.5">
             {server.tool_count} 个工具
+            {server.connect_timeout != null && (
+              <span className="ml-2">· 连接超时 {server.connect_timeout}s</span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
