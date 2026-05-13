@@ -22,7 +22,6 @@ class AgentCapabilityConfig:
 @dataclass
 class AgentDefDetails:
     """Agent 定义的完整细节。"""
-
     name: str
     version: str
     description: str

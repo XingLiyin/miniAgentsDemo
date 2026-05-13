@@ -434,9 +434,9 @@ def submit_task(
         inputs=inputs,
         parent_task_id=task.id if task else None,
     )
-    if task is not None:
-        task_svc.transition(task.id, "SUSPENDED", task.session_id)
-        task.status = "SUSPENDED"
+    if task is not None:                                                                                        
+        task_svc.transition(task.id, "SUSPENDED", task.session_id)                                              
+        task.status = "SUSPENDED"                                                                               
         task.actor_done = True
     return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
 

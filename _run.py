@@ -16,10 +16,16 @@ if getattr(sys, "frozen", False):
     from dotenv import load_dotenv
     load_dotenv(os.path.join(_exe_dir, ".env"))
 
-    # 将路径环境变量设置为绝对路径（允许用户 .env 覆盖）
-    os.environ.setdefault("MINIAGENTS_DATA_DIR",   os.path.join(_exe_dir, "data"))
-    os.environ.setdefault("MINIAGENTS_SKILLS_DIR", os.path.join(_meipass, "resources", "skills"))
-    os.environ.setdefault("MINIAGENTS_AGENTS_DIR", os.path.join(_meipass, "resources", "agents"))
+    # 冻结模式下强制用绝对路径——.env 里的相对路径无法正确解析，直接覆盖
+    # 用户若需自定义，必须填绝对路径（绝对路径会通过下面的逻辑保留）
+    def _resolve(key: str, frozen_abs: str) -> None:
+        val = os.environ.get(key, "")
+        if not val or not os.path.isabs(val):
+            os.environ[key] = frozen_abs
+
+    _resolve("MINIAGENTS_DATA_DIR",   os.path.join(_exe_dir, "data"))
+    _resolve("MINIAGENTS_SKILLS_DIR", os.path.join(_exe_dir, "resources", "skills"))
+    _resolve("MINIAGENTS_AGENTS_DIR", os.path.join(_exe_dir, "resources", "agents"))
 else:
     from dotenv import load_dotenv
     load_dotenv()

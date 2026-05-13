@@ -260,13 +260,12 @@ class Reasoner:
         if not agent.has_spawn_permission or not self._agent_template_loader:
             return []
         workspace_dir = (agent.settings or {}).get("working_dir", "")
-        own_meta = self._agent_template_loader.get_details(agent.template_id, workspace_dir) if agent.template_id else None
+        own_meta = self._agent_template_loader.get_details_by_id(agent.template_id) if agent.template_id else None
         allowlist: set[str] | None = set(own_meta.actor_capability.subagents) if own_meta and own_meta.actor_capability.subagents else None
         return [
             ContextResource(name=m.name, description=m.description, kind="agent")
             for m in self._agent_template_loader.list_details(workspace_dir)
-            if m.name != (agent.template_id or "")
-            and (allowlist is None or m.name in allowlist)
+            if (allowlist is None or m.name in allowlist)
         ]
 
     def _build_observer_resources(self, agent: Agent, task: Task) -> list[ContextResource]:

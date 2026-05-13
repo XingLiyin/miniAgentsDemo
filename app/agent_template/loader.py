@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.agent_template.definition import AgentCapabilityConfig, AgentDefDetails
+from app.config.settings import get_settings
 
 if TYPE_CHECKING:
     from app.storage.file.agent_template_store import AgentTemplateStore
@@ -91,16 +92,39 @@ class AgentLoader:
 
     # ── store-backed 查询（需注入 store）─────────────────────────────────────
 
-    def get_details(self, name: str, workspace_dir: str = "") -> AgentDefDetails | None:
+    def _resolve_dir(self, source_dir: str, workspace_dir: str) -> Path:
+        """将 store 中存储的 source_dir 名称解析为绝对路径。
+        workspace_dir 为空 → global 模板，从 settings.agents_dir 查找；
+        否则 → workspace 模板，从 {workspace_dir}/.agents/ 查找。
+        """
+        if workspace_dir:
+            return Path(workspace_dir) / ".agents" / source_dir
+        return get_settings().agents_dir / source_dir
+
+    def get_details(self, name: str, workspace_dir: str = "") -> tuple[AgentDefDetails | None, str | None]:
         """从 store 查 source_dir，再读文件返回完整 AgentDefDetails。"""
         assert self._store is not None, "AgentLoader.get_details requires store"
         d = self._store.find_by_name(name, workspace_dir)
         if not d or not d.get("source_dir"):
-            return None
+            return None, None
         try:
-            return self.load(Path(d["source_dir"]))
+            agent_dir = self._resolve_dir(d["source_dir"], d.get("workspace_dir", ""))
+            return self.load(agent_dir), d.get("id", "")
         except Exception as e:
             logger.warning("AgentLoader.get_details: failed to load '%s': %s", name, e)
+            return None, None
+
+    def get_details_by_id(self, template_id: str) -> AgentDefDetails | None:
+        """从 store 查 source_dir，再读文件返回完整 AgentDefDetails。"""
+        assert self._store is not None, "AgentLoader.get_details_by_id requires store"
+        d = self._store.get(template_id)
+        if not d or not d.get("source_dir"):
+            return None
+        try:
+            agent_dir = self._resolve_dir(d["source_dir"], d.get("workspace_dir", ""))
+            return self.load(agent_dir)
+        except Exception as e:
+            logger.warning("AgentLoader.get_details_by_id: failed to load '%s': %s", template_id, e)
             return None
 
     def list_details(self, workspace_dir: str = "") -> list[AgentDefDetails]:
@@ -112,7 +136,7 @@ class AgentLoader:
             if not source_dir:
                 continue
             try:
-                result.append(self.load(Path(source_dir)))
+                result.append(self.load(self._resolve_dir(source_dir, d.get("workspace_dir", ""))))
             except Exception as e:
                 logger.warning("AgentLoader.list_details: failed to load '%s': %s", d.get("name"), e)
         return result

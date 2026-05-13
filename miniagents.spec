@@ -21,11 +21,9 @@ a = Analysis(
     pathex=["."],
     binaries=gtk3_binaries,
     datas=[
-        # 只读资源（agent/skill 模板）
-        ("resources/agents",  "resources/agents"),
-        ("resources/skills",  "resources/skills"),
         # 已构建的前端（需先 npm run build）
-        ("frontend/dist",     "frontend_dist"),
+        ("frontend/dist", "frontend_dist"),
+        # resources/ 不打进 _internal，由 build_exe.ps1 复制到 exe 同级目录
     ],
     hiddenimports=[
         # uvicorn 内部动态导入

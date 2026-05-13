@@ -147,7 +147,7 @@ class LifecycleManager:
         finished_agent_id: str,
         task_id: str,
         use_subagent: bool,
-        template_id: str,
+        template_name: str,
         inherit_memory: bool,
     ) -> str | None:
         """Return a fully assembled agent_id ready to execute the next task.
@@ -209,7 +209,7 @@ class LifecycleManager:
                     parent_agent_id=base_executor,
                     spawn_depth=spawn_depth,
                     inherit_memory=inherit_memory,
-                    template_id=template_id,
+                    template_name=template_name,
                 )
             except Exception:
                 logger.exception("LM: prepare_executor: failed to instantiate sub-agent")
@@ -279,7 +279,7 @@ class LifecycleManager:
         session_id: str,
         parent_agent_id: str,
         task_id: str,
-        template_id: str,
+        template_name: str,
         inherit_memory: bool,
     ) -> None:
         """Spawn a daemon sub-agent. Not registered in registry — completion is ignored."""
@@ -290,7 +290,7 @@ class LifecycleManager:
                 parent_agent_id=parent_agent_id,
                 spawn_depth=1,
                 inherit_memory=inherit_memory,
-                template_id=template_id,
+                template_name=template_name,
             )
         except Exception:
             logger.exception("LM: spawn_daemon_agent: failed to create agent for task %s", task_id)
@@ -386,7 +386,7 @@ class LifecycleManager:
             return f"concurrent_agents limit ({state.max_concurrent_agents}) would be exceeded"
         try:
             session = self._session_svc.get(state.session_id)
-            if session.output_tokens_used > session.token_budget * 0.9:
+            if session.token_budget > 0 and session.output_tokens_used > session.token_budget * 0.9:
                 return "Token budget nearly exhausted (>90%)"
         except Exception:
             pass
@@ -399,7 +399,7 @@ class LifecycleManager:
         parent_agent_id: str,
         spawn_depth: int,
         inherit_memory: bool = True,
-        template_id: str = "",
+        template_name: str = "",
     ) -> str:
         from app.config.settings import get_settings
 
@@ -408,11 +408,11 @@ class LifecycleManager:
         workspace_dir = (parent_data.get("settings") or {}).get("working_dir", "")
 
         _details = None
-        if template_id and self._template_loader is not None:
+        if template_name and self._template_loader is not None:
             try:
-                _details = self._template_loader.get_details(template_id, workspace_dir)
+                _details, template_id = self._template_loader.get_details(template_name, workspace_dir)
             except Exception:
-                logger.warning("LM: failed to load template '%s', falling back to parent config", template_id)
+                logger.warning("LM: failed to load template '%s', falling back to parent config", template_name)
 
         if _details is not None:
             actor = AgentCapability(
@@ -425,12 +425,12 @@ class LifecycleManager:
                 tools=_details.observer_capability.effective_tools(),
                 mcp_servers=_details.observer_capability.required_mcp_servers,
             )
-            agent_name = f"sub-agent-{template_id}"
+            agent_name = f"sub-agent-{template_name}"
         else:
             actor = AgentCapability.from_dict(parent_data.get("actor", {}))
             observer = AgentCapability.from_dict(parent_data.get("observer", {}))
-            template_id = parent_data.get("template_id") or ""
-            agent_name = f"sub-agent-d{spawn_depth}"
+            template_name = parent_data.get("template_name") or ""
+            agent_name = f"sub-agent-{template_name}"
 
         now = now_iso()
         agent_id = new_agent_id()

@@ -68,9 +68,14 @@ Set-Location $Root
 uv run pyinstaller miniagents.spec --noconfirm
 if ($LASTEXITCODE -ne 0) { Write-Err "PyInstaller 打包失败"; exit 1 }
 
-# ── 5. 复制运行时配置示例 ─────────────────────────────────────────────────────
-Write-Step "拷贝配置示例"
+# ── 5. 复制运行时文件到 exe 同级目录 ─────────────────────────────────────────
+Write-Step "拷贝 resources/ 和配置示例"
 $distDir = Join-Path $Root "dist\miniagents"
+
+# resources/ 与 exe 同级，方便用户查看和修改模板
+Copy-Item (Join-Path $Root "resources") $distDir -Recurse -Force
+Write-OK "已将 resources/ 复制到 dist\miniagents\"
+
 Copy-Item (Join-Path $Root ".env.example") (Join-Path $distDir ".env.example") -Force
 Write-OK "已将 .env.example 复制到 dist\miniagents\"
 

@@ -114,19 +114,18 @@ class SessionManager:
             self._template_syncer.sync_workspace(wd)
             self._template_syncer.register_workspace(wd)
 
-        # 查找模板：按名称（workspace > global） > 默认模板
-        resolved_name = template_id or settings.default_agent_template_name
-        details = self._template_loader.get_details(resolved_name, wd) if self._template_loader else None
+        # 查找模板：按 id > 默认模板
+        details = self._template_loader.get_details_by_id(template_id) if self._template_loader else None
         if details is None and template_id:
-            details = self._template_loader.get_details(settings.default_agent_template_name, wd) if self._template_loader else None
+            details, template_id = self._template_loader.get_details(settings.default_agent_template_name, wd) if self._template_loader else None
         if details is None:
-            logger.warning("No template found for '%s', creating agent with empty config", resolved_name)
+            logger.warning("No template found for '%s', creating agent with empty config", template_id)
 
         now = now_iso()
         agent = Agent(
             id=new_agent_id(),
             session_id=session.id,
-            template_id=resolved_name if details else "",
+            template_id=template_id if details else "",
             name="root",
             status="IDLE",
             loop_guard=LoopGuard(),

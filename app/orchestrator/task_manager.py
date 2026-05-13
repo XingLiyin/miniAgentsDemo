@@ -143,12 +143,12 @@ class TaskManager:
         except Exception:
             logger.exception("TM: cannot load daemon task %s", task_id)
             return
-        template_id = str(task.settings.get("subagent_template", ""))
+        template_name = str(task.settings.get("subagent_template", ""))
         self._lm.spawn_daemon_agent(
             session_id=session_id,
             parent_agent_id=parent_agent_id,
             task_id=task_id,
-            template_id=template_id,
+            template_name=template_name,
             inherit_memory=bool(task.settings.get("inherit_memory", False)),
         )
 
@@ -354,13 +354,13 @@ class TaskManager:
         except Exception:
             logger.exception("TM: failed to activate task %s", next_task.id)
 
-        template_id = str(next_task.settings.get("subagent_template", ""))
+        template_name = str(next_task.settings.get("subagent_template", ""))
         agent_id = self._lm.prepare_executor(
             session_id=session_id,
             finished_agent_id=finished_agent_id,
             task_id=next_task.id,
             use_subagent=bool(next_task.settings.get("use_subagent")),
-            template_id=template_id,
+            template_name=template_name,
             inherit_memory=bool(next_task.settings.get("inherit_memory", True)),
         )
         if agent_id:
