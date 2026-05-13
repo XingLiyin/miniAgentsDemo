@@ -173,6 +173,20 @@ class Reasoner:
                 skill_instructions = skill_def.instructions or ""
             if skill_instructions:
                 skill_instructions = f"Instructions for skill '{skill_name}':\n{skill_instructions}"
+                cached = task.settings.get("_skill_instructions_cache")
+                if cached != skill_instructions and self._task_svc:
+                    task.settings["_skill_instructions_cache"] = skill_instructions
+                    try:
+                        self._task_svc.save(task)
+                    except Exception:
+                        logger.warning("Reasoner: failed to cache skill instructions for task %s", task.id)
+            elif task.settings:
+                skill_instructions = task.settings.get("_skill_instructions_cache", "")
+                if skill_instructions:
+                    logger.warning(
+                        "Reasoner: skill '%s' unavailable, using cached instructions for task %s",
+                        skill_name, task.id,
+                    )
         return soul, role, skill_instructions
 
     # ── 私有：共享数据获取 ──────────────────────────────────────────────────
