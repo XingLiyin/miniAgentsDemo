@@ -37,6 +37,7 @@ def register_stdio(req: MCPStdioRegisterRequest) -> MCPServerResponse:
             command=req.command,
             args=req.args or [],
             env=req.env or None,
+            timeout=req.timeout,
             connect_timeout=req.connect_timeout,
         )
     except AppError as e:

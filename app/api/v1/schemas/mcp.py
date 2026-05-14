@@ -11,6 +11,7 @@ class MCPStdioRegisterRequest(BaseModel):
     command: str = Field(..., description="可执行文件，如 'npx' 或 'python'")
     args: list[str] = Field(default_factory=list, description="命令参数列表")
     env: dict[str, str] = Field(default_factory=dict, description="额外环境变量")
+    timeout: int = Field(default=30, ge=1, description="工具调用超时秒数")
     connect_timeout: int = Field(default=5, ge=1, description="连接握手超时秒数")
 
 

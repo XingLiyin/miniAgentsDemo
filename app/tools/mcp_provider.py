@@ -35,9 +35,10 @@ class MCPStdioProvider(_MCPProviderBase):
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        timeout: int = 30,
         connect_timeout: int = 5,
     ) -> None:
-        super().__init__(thread_name="mcp-stdio-loop", connect_timeout=connect_timeout)
+        super().__init__(thread_name="mcp-stdio-loop", request_timeout=timeout, connect_timeout=connect_timeout)
         self._name = name
         self._command = command
         self._args = args or []

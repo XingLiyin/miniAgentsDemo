@@ -57,13 +57,14 @@ class MCPService:
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        timeout: int = 30,
         connect_timeout: int = 5,
     ) -> MCPServerInfo:
         """注册 stdio MCP Server，并持久化配置。"""
         if self._store.get(name) is not None:
             raise AppError("MCP_ALREADY_EXISTS", f"MCP server '{name}' already registered")
 
-        self._registry.register_mcp_stdio(name=name, command=command, args=args, env=env, connect_timeout=connect_timeout)
+        self._registry.register_mcp_stdio(name=name, command=command, args=args, env=env, timeout=timeout, connect_timeout=connect_timeout)
 
         self._store.save({
             "name": name,
@@ -71,6 +72,7 @@ class MCPService:
             "command": command,
             "args": args or [],
             "env": env or {},
+            "timeout": timeout,
             "connect_timeout": connect_timeout,
         })
 
@@ -79,6 +81,7 @@ class MCPService:
             status=self._registry.get_server_status(name),
             tools=self._tool_infos(name),
             command=command, args=args or [],
+            timeout=timeout,
             connect_timeout=connect_timeout,
         )
 
@@ -195,6 +198,7 @@ class MCPService:
                 command=cfg["command"],
                 args=cfg.get("args") or [],
                 env=cfg.get("env") or None,
+                timeout=cfg.get("timeout", 30),
                 connect_timeout=cfg.get("connect_timeout", 5),
             )
         elif server_type == "http":

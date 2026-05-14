@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Trash2, RefreshCw, Server, ChevronDown, ChevronRight } from 'lucide-react'
+import { Plus, Trash2, RefreshCw, Server, ChevronDown, ChevronRight, X } from 'lucide-react'
 import { mcpApi } from '@/api/mcp'
 import type { MCPServer, RegisterMCPStdioRequest, RegisterMCPHttpRequest } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -20,6 +20,7 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
     command: '',
     args: [],
     env: {},
+    timeout: 30,
     connect_timeout: 5,
   })
   const [httpForm, setHttpForm] = useState<RegisterMCPHttpRequest>({
@@ -29,14 +30,19 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
     connect_timeout: 5,
   })
   const [argsStr, setArgsStr] = useState('')
+  const [envPairs, setEnvPairs] = useState<{ key: string; value: string }[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const mutation = useMutation({
     mutationFn: () => {
       if (type === 'stdio') {
+        const env = Object.fromEntries(
+          envPairs.filter((p) => p.key.trim()).map((p) => [p.key.trim(), p.value])
+        )
         return mcpApi.registerStdio({
           ...stdioForm,
           args: argsStr.trim() ? argsStr.split(' ') : [],
+          env,
         })
       }
       return mcpApi.registerHttp(httpForm)
@@ -108,12 +114,57 @@ function RegisterMCPDialog({ open, onClose }: { open: boolean; onClose: () => vo
               hint="空格分隔"
             />
             <Input
+              label="调用超时（秒）"
+              type="number"
+              value={stdioForm.timeout}
+              onChange={(e) => setStdioForm((f) => ({ ...f, timeout: Number(e.target.value) }))}
+              hint="工具调用最长等待时间"
+            />
+            <Input
               label="连接超时（秒）"
               type="number"
               value={stdioForm.connect_timeout}
               onChange={(e) => setStdioForm((f) => ({ ...f, connect_timeout: Number(e.target.value) }))}
               hint="连接握手超时，建议 3-10 秒"
             />
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-gray-700">环境变量</span>
+                <button
+                  type="button"
+                  onClick={() => setEnvPairs((ps) => [...ps, { key: '', value: '' }])}
+                  className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
+                >
+                  <Plus size={12} /> 添加
+                </button>
+              </div>
+              {envPairs.length === 0 && (
+                <p className="text-xs text-gray-400">无环境变量</p>
+              )}
+              {envPairs.map((pair, i) => (
+                <div key={i} className="flex gap-2 items-center">
+                  <input
+                    className="flex-1 min-w-0 border border-gray-200 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="KEY"
+                    value={pair.key}
+                    onChange={(e) => setEnvPairs((ps) => ps.map((p, j) => j === i ? { ...p, key: e.target.value } : p))}
+                  />
+                  <input
+                    className="flex-[2] min-w-0 border border-gray-200 rounded-md px-2.5 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-500"
+                    placeholder="value"
+                    value={pair.value}
+                    onChange={(e) => setEnvPairs((ps) => ps.map((p, j) => j === i ? { ...p, value: e.target.value } : p))}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setEnvPairs((ps) => ps.filter((_, j) => j !== i))}
+                    className="text-gray-400 hover:text-red-500 flex-shrink-0"
+                  >
+                    <X size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
           </>
         ) : (
           <>

@@ -206,6 +206,7 @@ export interface RegisterMCPStdioRequest {
   command: string
   args?: string[]
   env?: Record<string, string>
+  timeout?: number
   connect_timeout?: number
 }
 

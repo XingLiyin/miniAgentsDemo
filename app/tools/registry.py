@@ -62,11 +62,12 @@ class ToolRegistry:
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        timeout: int = 30,
         connect_timeout: int = 5,
     ) -> None:
         """注册 MCP stdio Server（懒连接：首次使用时才建立连接）。"""
         from app.tools.mcp_provider import MCPStdioProvider
-        provider = MCPStdioProvider(name=name, command=command, args=args, env=env, connect_timeout=connect_timeout)
+        provider = MCPStdioProvider(name=name, command=command, args=args, env=env, timeout=timeout, connect_timeout=connect_timeout)
         self._mcp_providers[name] = provider
         self._connect_locks[name] = threading.Lock()
         provider._reconnect_fn = lambda gen, n=name, p=provider: self._reconnect_provider(n, p, gen)
