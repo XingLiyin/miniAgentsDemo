@@ -254,10 +254,12 @@ class Reasoner:
         )
         ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
         allowed = self._resolve_act_tool_names(agent)
-        skill_resources = [
-            ContextResource(name=name, description=desc, kind="skill")
-            for name, desc in self._retrieve_skills(goal, agent, ctx)
-        ]
+        skill_resources = []
+        if task.settings and not task.settings.get("skill_name"):
+            skill_resources = [
+                ContextResource(name=name, description=desc, kind="skill")
+                for name, desc in self._retrieve_skills(goal, agent, ctx)
+            ]
         tool_resources = [
             ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
             for t in self._tool_registry.to_llm_tools(list(allowed))
