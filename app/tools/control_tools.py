@@ -374,7 +374,7 @@ def submit_task_assessment(
             task_svc.fail(task.id, process_report=task_process_report, error=task_failure_reason, session_id=task.session_id)
             task.status = "FAILED"
         elif task_status == "active":
-            task_svc.transition(task.id, "PENDING", process_report=task_process_report, session_id=task.session_id)
+            task_svc.transition(task.id, "PENDING", session_id=task.session_id)
             task.status = "PENDING"
         else:  # needs_user_input
             task_status, task_process_report = _confirm_with_user(
