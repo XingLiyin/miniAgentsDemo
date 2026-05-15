@@ -48,6 +48,7 @@ class ToolDefinition:
     description: str
     input_schema: InputSchema
     handler: ToolHandler
+    is_control: bool = False
 
     def to_llm_tool(self) -> LLMTool:
         """转换为可传给 LLMRequest.tools 的 LLMTool 对象。"""

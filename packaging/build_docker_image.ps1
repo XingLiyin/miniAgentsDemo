@@ -59,7 +59,9 @@ Write-Host @"
       --name miniagents \
       -p 15926:15926 \
       --env-file .env \
-      -v ./data:/app/data \
+      -v ./data:/miniagents/data \
+      -v ./resources:/miniagents/resources \
+      -v ./logs:/miniagents/logs \
       --restart unless-stopped \
       miniagents:latest
 

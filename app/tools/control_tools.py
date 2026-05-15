@@ -126,6 +126,7 @@ def control_tool(fn):
         description=(fn.__doc__ or "").strip(),
         input_schema=extract_input_schema(fn, exclude=_SKIP),
         handler=make_tool_handler(_fn),
+        is_control=True,
     )
     _CONTROL_SCHEMAS.append(tool_def)
     return tool_def
@@ -303,7 +304,9 @@ def update_task_metadata(
             task_svc.save(target)
             try:
                 from app.common.sse_bus import get_sse_bus
-                get_sse_bus().push(session_id, {"type": "task_updated", "task": target.to_dict()})
+                is_daemon = bool(target.settings.get("_daemon") if target.settings else False)
+                event_type = "daemon_task_updated" if is_daemon else "task_updated"
+                get_sse_bus().push(session_id, {"type": event_type, "task": target.to_dict()})
             except Exception:
                 pass
         except Exception:

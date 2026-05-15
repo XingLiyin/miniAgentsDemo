@@ -76,12 +76,14 @@ class ToolGateway:
         call_ctx = ctx if ctx is not None else CallContext(
             session_id=session_id, agent_id=agent_id,
         )
+        is_control = False
         try:
             tool_def = (
                 self._registry.get_from_capability(tool_name, capability)
                 if capability is not None
                 else self._registry.get(tool_name)
             )
+            is_control = tool_def.is_control
             result: ToolResult = tool_def.handler(arguments, call_ctx)
             status = "SUCCEEDED"
             error  = None
@@ -96,6 +98,7 @@ class ToolGateway:
             logger.exception("ToolGateway unexpected error: tool=%s", tool_name)
 
         # ④ 写完成审计
+        finished_at = now_iso()
         self._store.append(session_id, ToolCall(
             id=call_id,
             session_id=session_id,
@@ -107,8 +110,33 @@ class ToolGateway:
             result=result.content[:200] if result.content else None,
             error=error,
             started_at=started_at,
-            finished_at=now_iso(),
+            finished_at=finished_at,
         ).to_dict())
+
+        # ⑤ 推送 SSE 事件
+        if session_id:
+            try:
+                from app.common.sse_bus import get_sse_bus
+                from app.llm.types import content_to_text
+                result_text = (
+                    content_to_text(result.content)
+                    if isinstance(result.content, list)
+                    else (result.content or "")
+                )
+                is_daemon = bool(ctx.task.settings.get("_daemon")) if ctx and ctx.task and ctx.task.settings else False
+                event_type = "control_tool_call" if is_control else "tool_call"
+                if is_daemon:
+                    event_type = f"daemon_{event_type}"
+                get_sse_bus().push(session_id, {
+                    "type": event_type,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                    "result": result_text,
+                    "is_error": result.is_error,
+                    "created_at": finished_at,
+                })
+            except Exception:
+                pass
 
         return result
 

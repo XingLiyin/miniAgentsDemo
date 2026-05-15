@@ -1,0 +1,13 @@
+services:
+  miniagents:
+    image: miniagents:latest
+    container_name: miniagents
+    restart: unless-stopped
+    ports:
+      - "15926:15926"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/miniagents/data
+      - ./resources:/miniagents/resources
+      - ./logs:/miniagents/logs

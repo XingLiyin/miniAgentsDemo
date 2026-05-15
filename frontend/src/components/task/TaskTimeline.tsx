@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { clsx } from 'clsx'
-import { CheckCircle2, XCircle, Circle, Loader2, MinusCircle, ChevronDown, ChevronRight } from 'lucide-react'
+import { CheckCircle2, XCircle, Circle, Loader2, MinusCircle, ChevronDown, ChevronRight, Bot } from 'lucide-react'
 import type { Task } from '@/types'
 import { TaskStatusBadge } from '@/components/session/StatusBadge'
 import { Spinner } from '@/components/ui/spinner'
@@ -97,12 +97,53 @@ function TaskCard({ task }: { task: Task }) {
   )
 }
 
+function DaemonTaskCard({ task }: { task: Task }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 px-3 py-2 opacity-60">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 w-full text-left"
+      >
+        {open ? <ChevronDown size={11} className="text-gray-400 flex-shrink-0" /> : <ChevronRight size={11} className="text-gray-400 flex-shrink-0" />}
+        <Bot size={11} className="text-gray-400 flex-shrink-0" />
+        <span className="text-xs text-gray-500 truncate flex-1">{task.title || task.id}</span>
+        <span className={clsx(
+          'text-xs font-mono flex-shrink-0',
+          task.status === 'FINISHED' ? 'text-green-500' :
+          task.status === 'FAILED' ? 'text-red-400' :
+          task.status === 'ACTIVE' ? 'text-blue-400' : 'text-gray-400'
+        )}>{task.status}</span>
+      </button>
+      {open && (
+        <div className="mt-1.5 pl-5 flex flex-col gap-1">
+          {task.description && (
+            <p className="text-xs text-gray-400 leading-relaxed">{task.description}</p>
+          )}
+          {task.result && (
+            <pre className="text-xs text-gray-500 bg-white border border-gray-100 rounded px-2 py-1 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">{task.result}</pre>
+          )}
+          {task.error && (
+            <pre className="text-xs text-red-400 bg-red-50 border border-red-100 rounded px-2 py-1 whitespace-pre-wrap break-words max-h-32 overflow-y-auto">{task.error}</pre>
+          )}
+          {!task.description && !task.result && !task.error && (
+            <p className="text-xs text-gray-300 italic">执行中…</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 interface TaskTimelineProps {
   tasks: Task[]
+  daemonTasks?: Task[]
   isLoading: boolean
 }
 
-export function TaskTimeline({ tasks, isLoading }: TaskTimelineProps) {
+export function TaskTimeline({ tasks, daemonTasks = [], isLoading }: TaskTimelineProps) {
+  const [showDaemon, setShowDaemon] = useState(true)
+
   if (isLoading) {
     return (
       <div className="flex justify-center py-8">
@@ -111,7 +152,7 @@ export function TaskTimeline({ tasks, isLoading }: TaskTimelineProps) {
     )
   }
 
-  if (tasks.length === 0) {
+  if (tasks.length === 0 && daemonTasks.length === 0) {
     return (
       <div className="text-center py-8 text-sm text-gray-400">
         暂无任务，Agent 尚未开始工作
@@ -119,7 +160,6 @@ export function TaskTimeline({ tasks, isLoading }: TaskTimelineProps) {
     )
   }
 
-  // Show newest first with active tasks at top
   const sorted = [...tasks].sort((a, b) => {
     if (a.status === 'ACTIVE') return -1
     if (b.status === 'ACTIVE') return 1
@@ -131,6 +171,26 @@ export function TaskTimeline({ tasks, isLoading }: TaskTimelineProps) {
       {sorted.map((task) => (
         <TaskCard key={task.id} task={task} />
       ))}
+
+      {daemonTasks.length > 0 && (
+        <div className="mt-1">
+          <button
+            onClick={() => setShowDaemon(v => !v)}
+            className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-500 transition-colors w-full px-1 py-0.5"
+          >
+            {showDaemon ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+            <Bot size={11} />
+            <span>daemon tasks ({daemonTasks.length})</span>
+          </button>
+          {showDaemon && (
+            <div className="flex flex-col gap-1.5 mt-1.5">
+              {daemonTasks.map(task => (
+                <DaemonTaskCard key={task.id} task={task} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

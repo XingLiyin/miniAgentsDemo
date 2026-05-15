@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-WORKDIR /app
+WORKDIR /miniagents
 
 # 先装依赖（利用 Docker 层缓存，代码变了不用重新装包）
 COPY pyproject.toml uv.lock ./
@@ -33,15 +33,20 @@ RUN uv sync --frozen
 
 # 复制应用代码
 COPY app/ ./app/
-COPY resources/ ./resources/
+COPY resources/ ./resources.default/
 COPY _run.py ./
 
 # 从 Stage 1 拷入编译好的前端
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
+
+# entrypoint：首次启动时将默认 resources 填充到挂载目录
+COPY packaging/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 15926
 
 HEALTHCHECK --interval=30s --timeout=5s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:15926/health')"
 
+ENTRYPOINT ["/entrypoint.sh"]
 CMD ["uv", "run", "python", "_run.py"]

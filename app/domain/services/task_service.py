@@ -60,7 +60,9 @@ class TaskService:
         self._bus.publish(TASK_CREATED, {"task_id": task.id, "session_id": session_id})
         try:
             from app.common.sse_bus import get_sse_bus
-            get_sse_bus().push(session_id, {"type": "task_created", "task": task.to_dict()})
+            is_daemon = bool((inputs or {}).get("_daemon"))
+            event_type = "daemon_task_created" if is_daemon else "task_created"
+            get_sse_bus().push(session_id, {"type": event_type, "task": task.to_dict()})
         except Exception:
             pass
         return task
@@ -91,7 +93,9 @@ class TaskService:
             self._bus.publish(event_map[to_status], {"task_id": task_id, "session_id": task.session_id})
         try:
             from app.common.sse_bus import get_sse_bus
-            get_sse_bus().push(task.session_id, {"type": "task_updated", "task": task.to_dict()})
+            is_daemon = bool(task.settings.get("_daemon") if task.settings else False)
+            event_type = "daemon_task_updated" if is_daemon else "task_updated"
+            get_sse_bus().push(task.session_id, {"type": event_type, "task": task.to_dict()})
         except Exception:
             pass
         return task

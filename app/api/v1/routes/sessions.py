@@ -155,8 +155,9 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             task_svc = get_task_service()
             mem_svc = get_memory_service()
 
-            tasks = [t for t in task_svc.list_by_session(session_id) if not t.settings.get("_daemon")]
-            task_data = [TaskResponse(**t.to_dict()).model_dump() for t in tasks]
+            all_tasks = task_svc.list_by_session(session_id)
+            normal_tasks = [t for t in all_tasks if not t.settings.get("_daemon")]
+            daemon_tasks = [t for t in all_tasks if t.settings.get("_daemon")]
 
             agent_id = session.root_agent_id or ""
             messages: list = []
@@ -166,20 +167,18 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             init_event = {
                 "type": "init",
                 "session": _session_response(session).model_dump(),
-                "tasks": task_data,
+                "tasks": [TaskResponse(**t.to_dict()).model_dump() for t in normal_tasks],
+                "daemon_tasks": [TaskResponse(**t.to_dict()).model_dump() for t in daemon_tasks],
                 "messages": messages,
             }
             yield f"data: {json.dumps(init_event, default=str)}\n\n"
 
-            # 发送历史事件快照（分页：只补发 cursor 之后的部分）
-            # 首次连接 cursor=0 发全量；断线重连时浏览器自动携带 Last-Event-ID
+            # 每次连接都发全量历史快照，确保重连后 items 状态正确
             from app.storage.file.event_store import get_event_store
-            cursor = int(request.headers.get("last-event-id", "0") or "0")
-            history = get_event_store().load_since(session_id, cursor)
+            history = get_event_store().load(session_id)
             if history:
-                new_cursor = cursor + len(history)
                 history_event = {"type": "history", "events": history}
-                yield f"id: {new_cursor}\ndata: {json.dumps(history_event, default=str)}\n\n"
+                yield f"data: {json.dumps(history_event, default=str)}\n\n"
 
             # 若 session 正在等待用户输入，重放 waiting_input 事件（断线重连恢复输入框）
             if session.status == "WAITING_INPUT":
@@ -210,8 +209,6 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
                 try:
                     event = await asyncio.wait_for(q.get(), timeout=15.0)
                     yield f"data: {json.dumps(event, default=str)}\n\n"
-                    if event.get("type") == "done":
-                        break
                 except asyncio.TimeoutError:
                     yield 'data: {"type":"ping"}\n\n'
         finally:

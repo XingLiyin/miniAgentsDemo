@@ -107,13 +107,14 @@ class Observer:
         last_llm_text       = ""
         max_context_tokens  = 0
         last_prompt_tokens  = result.context_tokens or 0
+        is_daemon           = bool(task.settings.get("_daemon") if task.settings else False)
 
         for _round in range(max_rounds):
             from app.runtime.actor import _compute_max_tokens
             round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens) if last_prompt_tokens else None
-            _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools, task)
+            _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools, task, is_daemon)
             full_text, tool_call_acc, image_acc, _usage = _stream_observer(
-                llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}", round_max_tokens
+                llm_client, messages, system_prompt, tools, session_id, f"observer_round_{_round}", round_max_tokens, is_daemon
             )
             if _usage:
                 if self._session_svc and session_id:
@@ -150,12 +151,6 @@ class Observer:
             if _usage and _usage.prompt_tokens:
                 from app.common.utils import estimate_tokens
                 last_prompt_tokens = _usage.prompt_tokens + estimate_tokens(tool_results_text)
-                _push_observer_tool_call(
-                    session_id, f"observer_round_{_round}",
-                    tool_call.name, tool_call.input,
-                    tool_result.content if hasattr(tool_result, "content") else str(tool_result),
-                    bool(getattr(tool_result, "is_error", False)),
-                )
                 if task.status != "TO_BE_OBSERVED":
                     break
 
@@ -212,14 +207,15 @@ def _push_llm_event(
     messages: list,
     tools: list,
     task: "Task | None" = None,
+    is_daemon: bool = False,
 ) -> None:
-    """向前端推送 llm_prompt 调试事件（含 system_prompt / messages / tool 名列表）。"""
+    """向前端推送 llm_prompt / daemon_prompt 调试事件。"""
     if not session_id:
         return
     try:
         from app.common.sse_bus import get_sse_bus
         get_sse_bus().push(session_id, {
-            "type": "llm_prompt",
+            "type": "daemon_prompt" if is_daemon else "llm_prompt",
             "source": "observer",
             "round_label": round_label,
             "task_id": task.id if task else "",
@@ -240,8 +236,9 @@ def _stream_observer(
     session_id: str,
     round_label: str,
     max_tokens: int | None = None,
+    is_daemon: bool = False,
 ) -> tuple[str, dict, list]:
-    """流式调用 LLM，推送 observer_text_delta / observer_text_done，返回 (full_text, tool_call_acc, image_acc)。"""
+    """流式调用 LLM，推送 observer_text_delta / observer_text_done（daemon 时推送 daemon_message）。"""
     full_text = ""
     reasoning_text = ""
     tool_call_acc: dict[int, dict] = {}
@@ -258,7 +255,7 @@ def _stream_observer(
     for chunk in client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
         if chunk.text_delta:
             full_text += chunk.text_delta
-            if _sse:
+            if _sse and not is_daemon:
                 try:
                     _sse.push(session_id, {
                         "type": "observer_text_delta",
@@ -269,7 +266,7 @@ def _stream_observer(
                     pass
         if chunk.reasoning_delta:
             reasoning_text += chunk.reasoning_delta
-            if _sse:
+            if _sse and not is_daemon:
                 try:
                     _sse.push(session_id, {
                         "type": "observer_reasoning_delta",
@@ -291,14 +288,14 @@ def _stream_observer(
 
     if _sse:
         try:
-            if reasoning_text:
+            if reasoning_text and not is_daemon:
                 _sse.push(session_id, {
                     "type": "observer_reasoning_done",
                     "text": reasoning_text,
                     "round_label": round_label,
                 })
             _sse.push(session_id, {
-                "type": "observer_text_done",
+                "type": "daemon_message" if is_daemon else "observer_text_done",
                 "text": full_text,
                 "round_label": round_label,
                 "context_tokens": final_usage.prompt_tokens if final_usage else None,
@@ -320,29 +317,3 @@ def _stream_observer(
     return full_text, tool_call_acc, image_acc, final_usage
 
 
-def _push_observer_tool_call(
-    session_id: str,
-    round_label: str,
-    tool_name: str,
-    arguments: dict,
-    result,
-    is_error: bool,
-) -> None:
-    if not session_id:
-        return
-    from app.common.utils import now_iso
-    from app.llm.types import content_to_text
-    result_text = content_to_text(result) if isinstance(result, list) else str(result or "")
-    try:
-        from app.common.sse_bus import get_sse_bus
-        get_sse_bus().push(session_id, {
-            "type": "observer_tool_call",
-            "round_label": round_label,
-            "tool_name": tool_name,
-            "arguments": arguments,
-            "result": result_text,
-            "is_error": is_error,
-            "created_at": now_iso(),
-        })
-    except Exception:
-        pass

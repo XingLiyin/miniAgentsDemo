@@ -7,12 +7,16 @@ import { now } from '@/lib/time'
 export type ChatItemKind =
   | 'message'
   | 'tool_call'
+  | 'control_tool_call'
   | 'task_event'
   | 'session_event'
   | 'waiting_input'
   | 'llm_prompt'
   | 'observer_message'
-  | 'observer_tool_call'
+  | 'daemon_message'
+  | 'daemon_prompt'
+  | 'daemon_tool_call'
+  | 'daemon_control_tool_call'
 
 export interface ChatImageData {
   media_type: string
@@ -79,10 +83,9 @@ export interface ChatObserverMessage {
   created_at: string
 }
 
-export interface ChatObserverToolCall {
+export interface ChatControlToolCall {
   id: string
-  kind: 'observer_tool_call'
-  round_label: string
+  kind: 'control_tool_call'
   tool_name: string
   arguments: Record<string, unknown>
   result: string
@@ -90,11 +93,64 @@ export interface ChatObserverToolCall {
   created_at: string
 }
 
-export type ChatItem = ChatMessage | ChatToolCall | ChatTaskEvent | ChatWaitingInput | ChatLLMPrompt | ChatObserverMessage | ChatObserverToolCall
+export interface ChatDaemonMessage {
+  id: string
+  kind: 'daemon_message'
+  text: string
+  round_label?: string
+  created_at: string
+}
+
+export interface ChatDaemonPrompt {
+  id: string
+  kind: 'daemon_prompt'
+  source: string
+  round_label: string
+  task_id: string
+  agent_id: string
+  system_prompt: string
+  messages: Array<{ role: string; content: string | object[] }>
+  tool_names: string[]
+  created_at: string
+}
+
+export interface ChatDaemonToolCall {
+  id: string
+  kind: 'daemon_tool_call'
+  tool_name: string
+  arguments: Record<string, unknown>
+  result: string
+  is_error: boolean
+  created_at: string
+}
+
+export interface ChatDaemonControlToolCall {
+  id: string
+  kind: 'daemon_control_tool_call'
+  tool_name: string
+  arguments: Record<string, unknown>
+  result: string
+  is_error: boolean
+  created_at: string
+}
+
+export type ChatItem =
+  | ChatMessage
+  | ChatToolCall
+  | ChatControlToolCall
+  | ChatTaskEvent
+  | ChatWaitingInput
+  | ChatLLMPrompt
+  | ChatObserverMessage
+  | ChatDaemonMessage
+  | ChatDaemonPrompt
+  | ChatDaemonToolCall
+  | ChatDaemonControlToolCall
 
 export interface SSEState {
   session: Session | null
   tasks: Task[]
+  daemonTasks: Task[]
   items: ChatItem[]
   waitingInput: ChatWaitingInput | null
   streamingText: string | null
@@ -117,6 +173,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
   const [state, setState] = useState<SSEState>({
     session: null,
     tasks: [],
+    daemonTasks: [],
     items: [],
     waitingInput: null,
     streamingText: null,
@@ -141,7 +198,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
   useEffect(() => {
     if (!sessionId) {
       close()
-      setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
+      setState({ session: null, tasks: [], daemonTasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
       return
     }
 
@@ -150,7 +207,7 @@ export function useSessionSSE(sessionId: string | null): SSEState {
     // Close previous connection
     close()
     sessionIdRef.current = sessionId
-    setState({ session: null, tasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
+    setState({ session: null, tasks: [], daemonTasks: [], items: [], waitingInput: null, streamingText: null, streamingReasoning: null, streamingImages: [], observerStreamingText: null, observerStreamingReasoning: null, connected: false, error: null })
 
     const es = new EventSource(`/api/v1/sessions/${sessionId}/stream`)
     esRef.current = es
@@ -255,11 +312,57 @@ export function useSessionSSE(sessionId: string | null): SSEState {
           created_at: (evt.created_at as string) || '',
         }
       }
-      if (t === 'observer_tool_call') {
+      if (t === 'control_tool_call') {
         return {
           id: uid(),
-          kind: 'observer_tool_call',
+          kind: 'control_tool_call',
+          tool_name: (evt.tool_name as string) || '',
+          arguments: (evt.arguments as Record<string, unknown>) || {},
+          result: (evt.result as string) || '',
+          is_error: (evt.is_error as boolean) || false,
+          created_at: (evt.created_at as string) || '',
+        }
+      }
+      if (t === 'daemon_message') {
+        const text = (evt.text as string) || ''
+        if (!text) return null
+        return {
+          id: uid(),
+          kind: 'daemon_message' as const,
+          text,
+          round_label: (evt.round_label as string) || undefined,
+          created_at: (evt.created_at as string) || '',
+        }
+      }
+      if (t === 'daemon_prompt') {
+        return {
+          id: uid(),
+          kind: 'daemon_prompt' as const,
+          source: (evt.source as string) || 'actor',
           round_label: (evt.round_label as string) || '',
+          task_id: (evt.task_id as string) || '',
+          agent_id: (evt.agent_id as string) || '',
+          system_prompt: (evt.system_prompt as string) || '',
+          messages: (evt.messages as Array<{ role: string; content: string | object[] }>) || [],
+          tool_names: (evt.tool_names as string[]) || [],
+          created_at: (evt.created_at as string) || '',
+        }
+      }
+      if (t === 'daemon_tool_call') {
+        return {
+          id: uid(),
+          kind: 'daemon_tool_call' as const,
+          tool_name: (evt.tool_name as string) || '',
+          arguments: (evt.arguments as Record<string, unknown>) || {},
+          result: (evt.result as string) || '',
+          is_error: (evt.is_error as boolean) || false,
+          created_at: (evt.created_at as string) || '',
+        }
+      }
+      if (t === 'daemon_control_tool_call') {
+        return {
+          id: uid(),
+          kind: 'daemon_control_tool_call' as const,
           tool_name: (evt.tool_name as string) || '',
           arguments: (evt.arguments as Record<string, unknown>) || {},
           result: (evt.result as string) || '',
@@ -302,33 +405,54 @@ export function useSessionSSE(sessionId: string | null): SSEState {
       if (type === 'init') {
         const session = data.session as Session
         const tasks = (data.tasks as Task[]) || []
+        const daemonTasks = (data.daemon_tasks as Task[]) || []
         const messages = (data.messages as Array<Record<string, unknown>>) || []
 
-        // Build initial chat items from history messages
-        const items: ChatItem[] = messages.map((m) => {
-          const { text, images } = parseContent(m.content)
-          return {
-            id: uid(),
-            kind: 'message' as const,
-            role: (m.role as 'user' | 'assistant') || 'assistant',
-            content: text,
-            images,
-            created_at: (m.created_at as string) || '',
+        setState(s => {
+          const isReconnect = s.items.length > 0
+          if (isReconnect) {
+            // 重连：保留已有聊天记录，只更新元数据和清除流式状态
+            return {
+              ...s,
+              session,
+              tasks,
+              daemonTasks,
+              waitingInput: null,
+              streamingText: null,
+              streamingReasoning: null,
+              streamingImages: [],
+              observerStreamingText: null,
+              observerStreamingReasoning: null,
+              connected: true,
+              error: null,
+            }
           }
-        })
-
-        setState({
-          session,
-          tasks,
-          items,
-          waitingInput: null,
-          streamingText: null,
-          streamingReasoning: null,
-          streamingImages: [],
-          observerStreamingText: null,
-          observerStreamingReasoning: null,
-          connected: true,
-          error: null,
+          // 首次连接：用内存消息初始化
+          const items: ChatItem[] = messages.map((m) => {
+            const { text, images } = parseContent(m.content)
+            return {
+              id: uid(),
+              kind: 'message' as const,
+              role: (m.role as 'user' | 'assistant') || 'assistant',
+              content: text,
+              images,
+              created_at: (m.created_at as string) || '',
+            }
+          })
+          return {
+            session,
+            tasks,
+            daemonTasks,
+            items,
+            waitingInput: null,
+            streamingText: null,
+            streamingReasoning: null,
+            streamingImages: [],
+            observerStreamingText: null,
+            observerStreamingReasoning: null,
+            connected: true,
+            error: null,
+          }
         })
         return
       }
@@ -389,6 +513,21 @@ export function useSessionSSE(sessionId: string | null): SSEState {
             created_at: task.updated_at,
           }],
         }))
+        return
+      }
+
+      if (type === 'daemon_task_created') {
+        const task = data.task as Task
+        setState(s => {
+          const exists = s.daemonTasks.some(t => t.id === task.id)
+          return { ...s, daemonTasks: exists ? s.daemonTasks : [...s.daemonTasks, task] }
+        })
+        return
+      }
+
+      if (type === 'daemon_task_updated') {
+        const task = data.task as Task
+        setState(s => ({ ...s, daemonTasks: s.daemonTasks.map(t => t.id === task.id ? task : t) }))
         return
       }
 
@@ -549,11 +688,69 @@ export function useSessionSSE(sessionId: string | null): SSEState {
         return
       }
 
-      if (type === 'observer_tool_call') {
-        const item: ChatObserverToolCall = {
+      if (type === 'control_tool_call') {
+        const item: ChatControlToolCall = {
           id: uid(),
-          kind: 'observer_tool_call',
+          kind: 'control_tool_call',
+          tool_name: (data.tool_name as string) || '',
+          arguments: (data.arguments as Record<string, unknown>) || {},
+          result: (data.result as string) || '',
+          is_error: (data.is_error as boolean) || false,
+          created_at: (data.created_at as string) || now(),
+        }
+        setState(s => ({ ...s, items: [...s.items, item] }))
+        return
+      }
+
+      if (type === 'daemon_message') {
+        const text = (data.text as string) || ''
+        if (!text) return
+        const item: ChatDaemonMessage = {
+          id: uid(),
+          kind: 'daemon_message',
+          text,
+          round_label: (data.round_label as string) || undefined,
+          created_at: (data.created_at as string) || now(),
+        }
+        setState(s => ({ ...s, items: [...s.items, item] }))
+        return
+      }
+
+      if (type === 'daemon_prompt') {
+        const item: ChatDaemonPrompt = {
+          id: uid(),
+          kind: 'daemon_prompt',
+          source: (data.source as string) || 'actor',
           round_label: (data.round_label as string) || '',
+          task_id: (data.task_id as string) || '',
+          agent_id: (data.agent_id as string) || '',
+          system_prompt: (data.system_prompt as string) || '',
+          messages: (data.messages as Array<{ role: string; content: string | object[] }>) || [],
+          tool_names: (data.tool_names as string[]) || [],
+          created_at: now(),
+        }
+        setState(s => ({ ...s, items: [...s.items, item] }))
+        return
+      }
+
+      if (type === 'daemon_tool_call') {
+        const item: ChatDaemonToolCall = {
+          id: uid(),
+          kind: 'daemon_tool_call',
+          tool_name: (data.tool_name as string) || '',
+          arguments: (data.arguments as Record<string, unknown>) || {},
+          result: (data.result as string) || '',
+          is_error: (data.is_error as boolean) || false,
+          created_at: (data.created_at as string) || now(),
+        }
+        setState(s => ({ ...s, items: [...s.items, item] }))
+        return
+      }
+
+      if (type === 'daemon_control_tool_call') {
+        const item: ChatDaemonControlToolCall = {
+          id: uid(),
+          kind: 'daemon_control_tool_call',
           tool_name: (data.tool_name as string) || '',
           arguments: (data.arguments as Record<string, unknown>) || {},
           result: (data.result as string) || '',

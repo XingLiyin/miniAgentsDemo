@@ -175,9 +175,6 @@ class ToolRegistry:
             return "DISCONNECTED"
         return "CONNECTED" if provider._initialized else "DISCONNECTED"
 
-    def get_control_tool_names(self) -> frozenset[str]:
-        return frozenset(self._control_tool_names)
-
     def list_names(self) -> list[str]:
         mcp_names = [td.name for td in self._live_mcp_definitions()]
         return list(self._tools.keys()) + [n for n in mcp_names if n not in self._tools]

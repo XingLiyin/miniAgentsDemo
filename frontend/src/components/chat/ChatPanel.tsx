@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks, Settings } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
@@ -8,7 +8,7 @@ import { MarkdownContent } from './MarkdownContent'
 import { llmsApi } from '@/api/llms'
 import type { Session } from '@/types'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
-import type { ChatItem, ChatMessage, ChatToolCall, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatObserverToolCall, ChatImageData } from '@/hooks/useSessionSSE'
+import type { ChatItem, ChatMessage, ChatToolCall, ChatControlToolCall, ChatWaitingInput, ChatLLMPrompt, ChatObserverMessage, ChatDaemonMessage, ChatDaemonPrompt, ChatDaemonToolCall, ChatDaemonControlToolCall, ChatImageData } from '@/hooks/useSessionSSE'
 import { formatTime } from '@/lib/status'
 import { SessionStatusBadge } from '@/components/session/StatusBadge'
 import { Spinner } from '@/components/ui/spinner'
@@ -261,7 +261,7 @@ function ObserverBubble({ item }: { item: ChatObserverMessage }) {
   )
 }
 
-function ObserverToolCallCard({ item }: { item: ChatObserverToolCall }) {
+function ControlToolCallCard({ item }: { item: ChatControlToolCall }) {
   const [open, setOpen] = useState(false)
   const argStr = (() => {
     try { return JSON.stringify(item.arguments, null, 2) } catch { return String(item.arguments) }
@@ -269,39 +269,39 @@ function ObserverToolCallCard({ item }: { item: ChatObserverToolCall }) {
 
   return (
     <div className="flex items-start gap-2 px-1">
-      <div className="w-6 h-6 rounded bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-        <Wrench size={11} className="text-purple-500" />
+      <div className="w-6 h-6 rounded bg-indigo-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Settings size={11} className="text-indigo-500" />
       </div>
       <div className="flex-1 min-w-0">
         <button
           onClick={() => setOpen(o => !o)}
-          className="flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-600 transition-colors w-full text-left"
+          className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-600 transition-colors w-full text-left"
         >
           {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          <span className="font-mono font-medium text-purple-700">{item.tool_name}</span>
+          <span className="font-mono font-medium text-indigo-700">{item.tool_name}</span>
           {item.is_error
             ? <XCircle size={11} className="text-red-400 ml-auto flex-shrink-0" />
-            : <CheckCircle2 size={11} className="text-purple-400 ml-auto flex-shrink-0" />}
+            : <CheckCircle2 size={11} className="text-indigo-400 ml-auto flex-shrink-0" />}
         </button>
         {open && (
-          <div className="mt-1.5 bg-purple-950 rounded-lg overflow-hidden text-xs">
+          <div className="mt-1.5 bg-indigo-950 rounded-lg overflow-hidden text-xs">
             {argStr !== '{}' && (
-              <div className="px-3 py-2 border-b border-purple-800">
-                <p className="text-purple-400 mb-1">参数</p>
+              <div className="px-3 py-2 border-b border-indigo-800">
+                <p className="text-indigo-400 mb-1">参数</p>
                 <pre className="text-yellow-300 overflow-x-auto whitespace-pre-wrap break-words">{argStr}</pre>
               </div>
             )}
             <div className="px-3 py-2">
-              <p className="text-purple-400 mb-1">{item.is_error ? '错误' : '结果'}</p>
+              <p className="text-indigo-400 mb-1">{item.is_error ? '错误' : '结果'}</p>
               <pre className={clsx(
                 'overflow-x-auto whitespace-pre-wrap break-words',
-                item.is_error ? 'text-red-400' : 'text-purple-200'
+                item.is_error ? 'text-red-400' : 'text-indigo-200'
               )}>{item.result || '(空)'}</pre>
             </div>
           </div>
         )}
         {item.created_at && (
-          <p className="text-xs text-purple-300 mt-1">{formatTime(item.created_at)}</p>
+          <p className="text-xs text-indigo-300 mt-1">{formatTime(item.created_at)}</p>
         )}
       </div>
     </div>
@@ -327,15 +327,128 @@ function ObserverStreamingBubble({ text, reasoning }: { text: string; reasoning?
   )
 }
 
+function DaemonMessageCard({ item }: { item: ChatDaemonMessage }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="flex items-start gap-2 px-1 opacity-60">
+      <div className="w-6 h-6 rounded-full border border-dashed border-gray-300 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Bot size={11} className="text-gray-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors w-full text-left"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="italic">daemon{item.round_label ? ` · ${item.round_label}` : ''}</span>
+        </button>
+        {open && (
+          <div className="mt-1 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-xs text-gray-500 bg-gray-50">
+            <MarkdownContent content={item.text} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DaemonPromptCard({ item }: { item: ChatDaemonPrompt }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="flex items-start gap-2 px-1 opacity-50">
+      <div className="w-6 h-6 rounded border border-dashed border-gray-300 flex items-center justify-center flex-shrink-0 mt-0.5">
+        <Code2 size={11} className="text-gray-400" />
+      </div>
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-500 transition-colors w-full text-left"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="font-mono italic">daemon prompt — {item.round_label}</span>
+        </button>
+        {open && (
+          <div className="mt-1.5 bg-gray-800 rounded-lg overflow-hidden text-xs font-mono">
+            {item.system_prompt && (
+              <div className="px-3 py-2 border-b border-gray-700">
+                <p className="text-gray-500 mb-1">system</p>
+                <pre className="text-gray-300 whitespace-pre-wrap break-words">{item.system_prompt}</pre>
+              </div>
+            )}
+            {item.messages.map((m, i) => (
+              <div key={i} className="px-3 py-2 border-b border-gray-800 last:border-b-0">
+                <p className="text-gray-500 mb-1">{m.role}</p>
+                <pre className="text-gray-300 whitespace-pre-wrap break-words">
+                  {typeof m.content === 'string' ? m.content : JSON.stringify(m.content, null, 2)}
+                </pre>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function DaemonToolCallCard({ item }: { item: ChatDaemonToolCall | ChatDaemonControlToolCall }) {
+  const [open, setOpen] = useState(false)
+  const argStr = (() => {
+    try { return JSON.stringify(item.arguments, null, 2) } catch { return String(item.arguments) }
+  })()
+  const isControl = item.kind === 'daemon_control_tool_call'
+  return (
+    <div className="flex items-start gap-2 px-1 opacity-50">
+      <div className="w-6 h-6 rounded border border-dashed border-gray-300 flex items-center justify-center flex-shrink-0 mt-0.5">
+        {isControl
+          ? <Settings size={11} className="text-gray-400" />
+          : <Wrench size={11} className="text-gray-400" />}
+      </div>
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-500 transition-colors w-full text-left"
+        >
+          {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          <span className="font-mono italic">{item.tool_name}</span>
+          {item.is_error
+            ? <XCircle size={11} className="text-red-300 ml-auto flex-shrink-0" />
+            : <CheckCircle2 size={11} className="text-gray-300 ml-auto flex-shrink-0" />}
+        </button>
+        {open && (
+          <div className="mt-1.5 bg-gray-800 rounded-lg overflow-hidden text-xs">
+            {argStr !== '{}' && (
+              <div className="px-3 py-2 border-b border-gray-700">
+                <p className="text-gray-500 mb-1">参数</p>
+                <pre className="text-yellow-400/70 overflow-x-auto whitespace-pre-wrap break-words">{argStr}</pre>
+              </div>
+            )}
+            <div className="px-3 py-2">
+              <p className="text-gray-500 mb-1">{item.is_error ? '错误' : '结果'}</p>
+              <pre className={clsx(
+                'overflow-x-auto whitespace-pre-wrap break-words',
+                item.is_error ? 'text-red-400/70' : 'text-gray-400'
+              )}>{item.result || '(空)'}</pre>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 function ChatItemView({ item }: { item: ChatItem }) {
   switch (item.kind) {
     case 'message': return <MessageBubble item={item} />
     case 'tool_call': return <ToolCallCard item={item} />
+    case 'control_tool_call': return <ControlToolCallCard item={item} />
     case 'task_event': return null
     case 'waiting_input': return null // handled by input area
     case 'llm_prompt': return <LLMPromptCard item={item} />
     case 'observer_message': return <ObserverBubble item={item} />
-    case 'observer_tool_call': return <ObserverToolCallCard item={item} />
+    case 'daemon_message': return <DaemonMessageCard item={item} />
+    case 'daemon_prompt': return <DaemonPromptCard item={item} />
+    case 'daemon_tool_call': return <DaemonToolCallCard item={item} />
+    case 'daemon_control_tool_call': return <DaemonToolCallCard item={item} />
   }
 }
 
@@ -759,6 +872,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
   const {
     session,
     tasks,
+    daemonTasks,
     items,
     waitingInput,
     streamingText,
@@ -841,7 +955,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
               <span>运行中</span>
             </div>
           )}
-          {tasks.length > 0 && (
+          {(tasks.length > 0 || daemonTasks.length > 0) && (
             <button
               onClick={() => setShowTasks(v => !v)}
               className={clsx(
@@ -854,6 +968,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             >
               <ListChecks size={14} />
               <span>{tasks.length}</span>
+              {daemonTasks.length > 0 && (
+                <span className="opacity-50">· d{daemonTasks.length}</span>
+              )}
               {activeTaskCount > 0 && (
                 <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
               )}
@@ -931,7 +1048,9 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             <div className="flex items-center gap-2">
               <ListChecks size={14} className="text-gray-500" />
               <span className="text-sm font-medium text-gray-900">Tasks</span>
-              <span className="text-xs text-gray-400">({tasks.length})</span>
+              <span className="text-xs text-gray-400">
+                ({tasks.length}{daemonTasks.length > 0 ? ` · d${daemonTasks.length}` : ''})
+              </span>
             </div>
             <button
               onClick={() => setShowTasks(false)}
@@ -941,7 +1060,7 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
             </button>
           </div>
           <div className="flex-1 overflow-y-auto p-3">
-            <TaskTimeline tasks={tasks} isLoading={false} />
+            <TaskTimeline tasks={tasks} daemonTasks={daemonTasks} isLoading={false} />
           </div>
         </div>
       )}

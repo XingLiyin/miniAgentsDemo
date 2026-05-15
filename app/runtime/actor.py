@@ -65,6 +65,7 @@ class Actor:
         toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=resolve_working_dir(_wd or ""))
         llm_client = self._resolve_llm_client(session)
         _sse = self._get_sse(session_id)
+        is_daemon = bool(task.settings.get("_daemon") if task.settings else False)
 
         tool_calls_made: list[ToolCallRecord] = []
         conversation_turns: list[ConversationTurn] = []
@@ -76,11 +77,11 @@ class Actor:
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
             messages = self._prompt_builder.sanitize_messages(messages)
             messages_sent = list(messages)
-            self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx)
+            self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx, is_daemon)
 
             round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens)
             full_text, reasoning_text, tool_call_acc, image_acc, _usage = self._stream_llm(
-                llm_client, messages, system_prompt, tools, _round, _sse, session_id, round_max_tokens
+                llm_client, messages, system_prompt, tools, _round, _sse, session_id, round_max_tokens, is_daemon
             )
             if _usage:
                 if self._session_svc and session_id:
@@ -104,7 +105,7 @@ class Actor:
                     messages, full_text, tool_calls_from_stream, reasoning_text or None
                 )
                 round_tool_calls, messages, done = self._execute_tools(
-                    tool_calls_from_stream, agent, task, toolcall_ctx, messages, _sse, session_id
+                    tool_calls_from_stream, agent, task, toolcall_ctx, messages
                 )
                 tool_calls_made.extend(round_tool_calls)
 
@@ -163,9 +164,9 @@ class Actor:
             except Exception:
                 pass
 
-    def _push_prompt_event(self, _sse, session_id: str, _round: int, system_prompt: str, messages, ctx: ReasoningContext) -> None:
+    def _push_prompt_event(self, _sse, session_id: str, _round: int, system_prompt: str, messages, ctx: ReasoningContext, is_daemon: bool = False) -> None:
         self._sse_push(_sse, session_id, {
-            "type": "llm_prompt",
+            "type": "daemon_prompt" if is_daemon else "llm_prompt",
             "source": "actor",
             "round_label": f"actor_round_{_round}",
             "task_id": ctx.current_task.id if ctx.current_task else "",
@@ -175,7 +176,7 @@ class Actor:
             "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
         })
 
-    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str, max_tokens: int | None = None):
+    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str, max_tokens: int | None = None, is_daemon: bool = False):
         full_text = ""
         reasoning_text = ""
         tool_call_acc: dict[int, dict] = {}
@@ -188,25 +189,28 @@ class Actor:
             for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
                 if chunk.text_delta:
                     full_text += chunk.text_delta
-                    self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
+                    if not is_daemon:
+                        self._sse_push(_sse, session_id, {"type": "text_delta", "delta": chunk.text_delta, "round": _round})
                 if chunk.reasoning_delta:
                     reasoning_text += chunk.reasoning_delta
-                    self._sse_push(_sse, session_id, {
-                        "type": "reasoning_delta",
-                        "delta": chunk.reasoning_delta,
-                        "round": _round,
-                    })
+                    if not is_daemon:
+                        self._sse_push(_sse, session_id, {
+                            "type": "reasoning_delta",
+                            "delta": chunk.reasoning_delta,
+                            "round": _round,
+                        })
                 if chunk.tool_call_delta:
                     tool_call_acc[chunk.tool_call_delta["index"]] = chunk.tool_call_delta
                 if chunk.image:
                     image_acc.append(chunk.image)
-                    self._sse_push(_sse, session_id, {
-                        "type": "image",
-                        "media_type": chunk.image.media_type,
-                        "source_type": chunk.image.source_type,
-                        "data": chunk.image.data,
-                        "round": _round,
-                    })
+                    if not is_daemon:
+                        self._sse_push(_sse, session_id, {
+                            "type": "image",
+                            "media_type": chunk.image.media_type,
+                            "source_type": chunk.image.source_type,
+                            "data": chunk.image.data,
+                            "round": _round,
+                        })
                 if chunk.is_done:
                     finish_reason = chunk.finish_reason
                     final_usage = chunk.usage
@@ -220,14 +224,14 @@ class Actor:
         if final_usage is None and not full_text and not tool_call_acc:
             raise AppError("LLM_API_ERROR", "LLM stream ended without completion")
 
-        if reasoning_text:
+        if not is_daemon and reasoning_text:
             self._sse_push(_sse, session_id, {
                 "type": "reasoning_done",
                 "text": reasoning_text,
                 "round": _round,
             })
         self._sse_push(_sse, session_id, {
-            "type": "text_done",
+            "type": "daemon_message" if is_daemon else "text_done",
             "text": full_text,
             "round": _round,
             "context_tokens": final_usage.prompt_tokens if final_usage else None,
@@ -244,9 +248,7 @@ class Actor:
         )
         return full_text, reasoning_text, tool_call_acc, image_acc, final_usage
 
-    def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages, _sse, session_id: str):
-        from app.common.utils import now_iso
-
+    def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages):
         round_tool_calls: list[ToolCallRecord] = []
         done = False
 
@@ -279,14 +281,6 @@ class Actor:
             messages = self._prompt_builder.append_tool_result(
                 messages, tool_call.name, result, tool_call_id=tool_call.id
             )
-            self._sse_push(_sse, session_id, {
-                "type": "tool_call",
-                "tool_name": record.tool_name,
-                "arguments": record.arguments,
-                "result": record.result,
-                "is_error": record.is_error,
-                "created_at": now_iso(),
-            })
 
         return round_tool_calls, messages, done
 

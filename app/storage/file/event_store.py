@@ -22,14 +22,20 @@ logger = logging.getLogger(__name__)
 _PERSIST_TYPES: frozenset[str] = frozenset({
     "message",
     "tool_call",
+    "control_tool_call",
     "task_created",
     "task_updated",
+    "daemon_task_created",
+    "daemon_task_updated",
+    "daemon_message",
+    "daemon_prompt",
+    "daemon_tool_call",
+    "daemon_control_tool_call",
     "reasoning_done",
     "text_done",
     "llm_prompt",
     "observer_reasoning_done",
     "observer_text_done",
-    "observer_tool_call",
 })
 
 _DATA_DIR = Path("data/event_logs")
