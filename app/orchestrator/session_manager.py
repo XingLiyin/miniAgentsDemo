@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 from app.api.v1.schemas.session import InitialTaskConfig
 from app.common.errors import AppError
 from app.common.utils import extract_text, new_agent_id, now_iso
-from app.config.settings import get_settings
+from app.config.settings import get_settings, resolve_working_dir
 from app.domain.events.event_bus import EventBus
 from app.domain.models.agent import Agent, LoopGuard
 from app.domain.models.session import Session
@@ -98,7 +98,7 @@ class SessionManager:
         """
         settings = get_settings()
         resolved_llm_name = llm_provider or settings.default_llm_provider
-        wd = working_dir or ""
+        wd = resolve_working_dir(working_dir or "")
 
         session = self._session_svc.create(
             user_prompt=user_prompt,
@@ -166,6 +166,7 @@ class SessionManager:
                 creator_agent_id=agent.id,
                 user_prompt=user_prompt,
                 cfg=initial_task,
+                working_dir=wd,
             )
 
         return session, agent.id
@@ -183,6 +184,7 @@ class SessionManager:
         creator_agent_id: str,
         user_prompt: str | list,
         cfg: InitialTaskConfig | None,
+        working_dir: str = "",
     ) -> None:
         """根据 InitialTaskConfig 创建第一个 task。
         cfg=None 时默认 use_subagent=False，由 root agent 直接执行。
@@ -192,6 +194,8 @@ class SessionManager:
         title = (cfg.title if cfg else None) or ""
         description = (cfg.description if cfg else None) or ""
         inputs: dict = {"use_subagent": use_subagent, "inherit_memory": True}
+        if working_dir:
+            inputs["working_dir"] = working_dir
         if use_subagent:
             settings = get_settings()
             subagent_tpl = (cfg.subagent_template if cfg else None) or settings.default_planner_template_name
@@ -268,6 +272,7 @@ class SessionManager:
                 creator_agent_id=agent.id,
                 user_prompt=user_message,
                 cfg=initial_task,
+                working_dir=session.working_dir,
             )
         self.schedule_loop(session_id, agent.id)
 

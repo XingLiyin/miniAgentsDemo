@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from app.agent_template.definition import AgentCapabilityConfig, AgentDefDetails
-from app.config.settings import get_settings
+from app.config.settings import get_settings, resolve_working_dir
 
 if TYPE_CHECKING:
     from app.storage.file.agent_template_store import AgentTemplateStore
@@ -35,7 +35,7 @@ class AgentLoader:
     def scan(self, agents_dir: Path) -> list[AgentDefDetails]:
         """扫描 agents_dir，每个子目录至少有 SOUL.md 才加载。"""
         if not agents_dir.exists():
-            logger.warning("AgentLoader: agents_dir '%s' not found, no agents loaded", agents_dir)
+            logger.warning("AgentLoader: agents_dir '%s' not found, no agents loaded", agents_dir.resolve())
             return []
         result = []
         for agent_dir in sorted(agents_dir.iterdir()):
@@ -104,6 +104,7 @@ class AgentLoader:
     def get_details(self, name: str, workspace_dir: str = "") -> tuple[AgentDefDetails | None, str | None]:
         """从 store 查 source_dir，再读文件返回完整 AgentDefDetails。"""
         assert self._store is not None, "AgentLoader.get_details requires store"
+        workspace_dir = resolve_working_dir(workspace_dir) if workspace_dir else workspace_dir
         d = self._store.find_by_name(name, workspace_dir)
         if not d or not d.get("source_dir"):
             return None, None
@@ -130,6 +131,7 @@ class AgentLoader:
     def list_details(self, workspace_dir: str = "") -> list[AgentDefDetails]:
         """从 store 列出可见模板，逐条读文件返回 AgentDefDetails 列表。"""
         assert self._store is not None, "AgentLoader.list_details requires store"
+        workspace_dir = resolve_working_dir(workspace_dir) if workspace_dir else workspace_dir
         result = []
         for d in self._store.list_for_workspace(workspace_dir):
             source_dir = d.get("source_dir", "")

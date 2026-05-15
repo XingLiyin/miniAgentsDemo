@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from app.common.errors import AppError
+from app.config.settings import resolve_working_dir
 from app.domain.models.agent_template import AgentTemplate
 from app.storage.file.agent_template_store import AgentTemplateStore
 
@@ -14,7 +15,7 @@ class AgentTemplateService:
         self._store = store
 
     def get_by_name(self, name: str, workspace_dir: str = "") -> AgentTemplate | None:
-        d = self._store.find_by_name(name, workspace_dir)
+        d = self._store.find_by_name(name, resolve_working_dir(workspace_dir))
         return AgentTemplate.from_dict(d) if d else None
 
     def get(self, name: str, workspace_dir: str = "") -> AgentTemplate:
@@ -27,4 +28,4 @@ class AgentTemplateService:
         return [AgentTemplate.from_dict(d) for d in self._store.list_global()]
 
     def list_for_workspace(self, workspace_dir: str) -> list[AgentTemplate]:
-        return [AgentTemplate.from_dict(d) for d in self._store.list_for_workspace(workspace_dir)]
+        return [AgentTemplate.from_dict(d) for d in self._store.list_for_workspace(resolve_working_dir(workspace_dir))]

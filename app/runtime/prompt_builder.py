@@ -228,7 +228,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 f"Task description: {task.description or task.title}"
             ),
             f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
-            f"User requirements: {session.user_prompt}",
+            f"User requirements: {task.user_prompt if task.user_prompt else session.user_prompt}",
             f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}",
         ]
         if reviewable:

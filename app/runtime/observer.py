@@ -100,7 +100,8 @@ class Observer:
             or agent.settings.get("working_dir")
             or ""
         )
-        toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task, working_dir=_wd)
+        from app.config.settings import resolve_working_dir
+        toolcall_ctx  = CallContext(session_id=session_id, agent_id=task.assigned_agent_id, task=task, working_dir=resolve_working_dir(_wd))
         max_rounds    = agent.loop_guard.observer_max_tool_rounds if agent else 5
 
         last_llm_text       = ""

@@ -61,7 +61,8 @@ class Actor:
             or getattr(agent, "settings", {}).get("working_dir")
             or get_settings().bash_exec_cwd
         )
-        toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
+        from app.config.settings import resolve_working_dir
+        toolcall_ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=resolve_working_dir(_wd or ""))
         llm_client = self._resolve_llm_client(session)
         _sse = self._get_sse(session_id)
 

@@ -8,6 +8,7 @@ tools:
     - load_skill_reference
     - exec_skill_script
     - submit_task
+    - get_tracked_task_output
   forbidden: []
 mcp_servers:
   - web-search

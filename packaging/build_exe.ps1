@@ -1,5 +1,5 @@
 # miniAgents — 一键打包 exe 脚本
-# 用法: .\build_exe.ps1 [-GTK3Bin "C:\...\GTK3-Runtime Win64\bin"] [-SkipFrontend] [-SkipInstall]
+# 用法: .\packaging\build_exe.ps1 [-GTK3Bin "C:\...\GTK3-Runtime Win64\bin"] [-SkipFrontend] [-SkipInstall]
 param(
     [string]$GTK3Bin  = "C:\Program Files\GTK3-Runtime Win64\bin",
     [switch]$SkipFrontend,
@@ -7,11 +7,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Root = $PSScriptRoot
+$Root     = Split-Path $PSScriptRoot -Parent   # 项目根目录
+$BuildDir = Join-Path $Root "build"
+$DistDir  = Join-Path $BuildDir "dist\miniagents"
+$WorkDir  = Join-Path $BuildDir "work"
 
-function Write-Step([string]$msg) {
-    Write-Host "`n==> $msg" -ForegroundColor Cyan
-}
+function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Write-OK([string]$msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Err([string]$msg)  { Write-Host "  [ERROR] $msg" -ForegroundColor Red }
 
@@ -64,31 +65,31 @@ if (-not $SkipInstall) {
 
 # ── 4. 运行 PyInstaller ───────────────────────────────────────────────────────
 Write-Step "PyInstaller 打包"
+New-Item -ItemType Directory -Force $BuildDir | Out-Null
 Set-Location $Root
-uv run pyinstaller miniagents.spec --noconfirm
+uv run pyinstaller "$PSScriptRoot\miniagents.spec" --noconfirm `
+    --distpath "$BuildDir\dist" `
+    --workpath "$BuildDir\work"
 if ($LASTEXITCODE -ne 0) { Write-Err "PyInstaller 打包失败"; exit 1 }
 
 # ── 5. 复制运行时文件到 exe 同级目录 ─────────────────────────────────────────
 Write-Step "拷贝 resources/ 和配置示例"
-$distDir = Join-Path $Root "dist\miniagents"
+Copy-Item (Join-Path $Root "resources") $DistDir -Recurse -Force
+Write-OK "已将 resources/ 复制到 build\dist\miniagents\"
 
-# resources/ 与 exe 同级，方便用户查看和修改模板
-Copy-Item (Join-Path $Root "resources") $distDir -Recurse -Force
-Write-OK "已将 resources/ 复制到 dist\miniagents\"
-
-Copy-Item (Join-Path $Root ".env.example") (Join-Path $distDir ".env.example") -Force
-Write-OK "已将 .env.example 复制到 dist\miniagents\"
+Copy-Item (Join-Path $Root ".env.example") (Join-Path $DistDir ".env.example") -Force
+Write-OK "已将 .env.example 复制到 build\dist\miniagents\"
 
 # ── 完成 ──────────────────────────────────────────────────────────────────────
 Write-Host @"
 
 ==========================================
   打包完成！
-  可执行目录: dist\miniagents\
+  可执行目录: build\dist\miniagents\
   启动方式:
-    1. 将 .env.example 复制为 dist\miniagents\.env 并填写配置
-    2. 双击 dist\miniagents\miniagents.exe
-       或: .\dist\miniagents\miniagents.exe
+    1. 将 .env.example 复制为 build\dist\miniagents\.env 并填写配置
+    2. 双击 build\dist\miniagents\miniagents.exe
+       或: .\build\dist\miniagents\miniagents.exe
   默认地址: http://localhost:15926
 ==========================================
 "@ -ForegroundColor Green

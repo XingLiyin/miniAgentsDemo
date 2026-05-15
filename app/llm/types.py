@@ -120,6 +120,22 @@ class LLMResponse:
     usage: Optional[LLMUsage] = None
 
 
+def _ptype_str(pinfo: dict) -> str:
+    """Convert a JSON schema property dict to a compact human-readable type string."""
+    t = pinfo.get("type", "any")
+    if t == "array":
+        items = pinfo.get("items", {})
+        if items.get("type") == "object" and items.get("properties"):
+            req = set(items.get("required") or [])
+            fields = ", ".join(
+                f if f in req else f"{f}?"
+                for f in items["properties"]
+            )
+            return f"[{{{fields}}}]"
+        return "array"
+    return t
+
+
 @dataclass
 class LLMTool:
     """统一的工具定义结构（function-calling）。"""
@@ -134,11 +150,12 @@ class LLMTool:
         """生成带参数签名的单行描述，用于 system prompt 的工具感知段。
 
         格式：name(param: type, optional?: type, with_default: type = val) — description
+        array of object 类型展开为 [{field, optional?}]
         """
         params = []
         required = set(self.input_schema.require or [])
         for pname, pinfo in (self.input_schema.properties or {}).items():
-            ptype   = pinfo.get("type", "any")
+            ptype   = _ptype_str(pinfo)
             default = pinfo.get("default")
             if pname in required:
                 params.append(f"{pname}: {ptype}")

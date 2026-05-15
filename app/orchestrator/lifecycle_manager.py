@@ -149,12 +149,16 @@ class LifecycleManager:
         use_subagent: bool,
         template_name: str,
         inherit_memory: bool,
+        task_assigned_agent_id: str = "",
+        task_creator_agent_id: str = "",
     ) -> str | None:
         """Return a fully assembled agent_id ready to execute the next task.
 
         Settle the finished agent, then determine the executor:
-        - WAITING base: if next task is the agent's own suspended task → resume directly;
-          otherwise → force-spawn a child (the WAITING agent is the tree parent).
+        - Resume: task.assigned_agent_id != task.creator_agent_id means the task was
+          previously dispatched to a specific agent; return that agent directly.
+        - WAITING base: inline tasks (use_subagent=False) run directly; sub-agent tasks
+          spawn a child.
         - Normal base: reuse inline (use_subagent=False) or spawn child (use_subagent=True).
         Falls back to inline execution if spawn is denied.
         Returns None if the agent tree is in an unexpected state.
@@ -169,6 +173,16 @@ class LifecycleManager:
             state = self._states.get(session_id)
             if state is None:
                 return None
+
+            # Resume path: task was previously dispatched to a specific agent (not its
+            # creator). Return that agent directly — bypass settle/spawn logic entirely.
+            if (task_assigned_agent_id
+                    and task_creator_agent_id
+                    and task_assigned_agent_id != task_creator_agent_id):
+                assigned_meta = state.agent_registry.get(task_assigned_agent_id)
+                if assigned_meta is not None:
+                    assigned_meta.status = "RUNNING"
+                    return task_assigned_agent_id
 
             base_executor = self._settle_executor(state, session_id, finished_agent_id)
             if base_executor is None:
@@ -230,7 +244,15 @@ class LifecycleManager:
         return sub_agent_id
 
     def running_agent_count(self, session_id: str) -> int:
-        """Return number of agents currently in RUNNING status for the session."""
+        """Return the number of agents actively executing a task for the session.
+
+        Only counts agents that are both RUNNING and have a task assigned.
+        Excludes:
+        - Root agent with no task (task_id=None) — present when initial task is
+          delegated to a sub-agent and root never directly runs anything.
+        - WAITING agents — their suspended task is either being handled by a child
+          sub-agent (which is RUNNING and counted) or already completed.
+        """
         lock = self._locks.get(session_id)
         if lock is None:
             return 0
@@ -238,7 +260,17 @@ class LifecycleManager:
             state = self._states.get(session_id)
             if state is None:
                 return 0
-            return sum(1 for meta in state.agent_registry.values() if meta.status == "RUNNING")
+            result = sum(
+                1 for meta in state.agent_registry.values()
+                if meta.task_id is not None and meta.status == "RUNNING"
+            )
+            logger.warning(
+                "LM: running_agent_count for %s = %d, registry: %s",
+                session_id, result,
+                [(m.agent_id[:8], m.task_id[:8] if m.task_id else None, m.status)
+                 for m in state.agent_registry.values()],
+            )
+            return result
 
     def release(self, session_id: str, finished_agent_id: str) -> None:
         """Session has no more tasks. Recycle all remaining agents in the tree."""

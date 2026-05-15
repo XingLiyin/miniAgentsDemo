@@ -78,7 +78,7 @@ class SkillRegistry:
 
     def load_from_dir(self, skills_dir: Path) -> None:
         newly_registered: list[SkillMetadata] = []
-        for metadata in self._loader.scan(skills_dir):
+        for metadata in self._loader.scan(skills_dir.resolve()):
             self._skills[metadata.name] = metadata
             newly_registered.append(metadata)
         if newly_registered:

@@ -86,6 +86,7 @@ class Agent:
     spawn_depth: int = 0                        # 嵌套深度（root=0）
 
     settings: dict[str, Any] = field(default_factory=dict)  # 运行时配置，如 working_dir
+    tracking_tasks: list[str] = field(default_factory=list)  # 需要拉取 blackboard 的 task id 列表
     created_at: str = ""
     updated_at: str = ""
 
@@ -103,6 +104,7 @@ class Agent:
             "has_spawn_permission": self.has_spawn_permission,
             "spawn_depth": self.spawn_depth,
             "settings": self.settings,
+            "tracking_tasks": self.tracking_tasks,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -122,6 +124,7 @@ class Agent:
             has_spawn_permission=d.get("has_spawn_permission", False),
             spawn_depth=d.get("spawn_depth", 0),
             settings=d.get("settings", {}),
+            tracking_tasks=d.get("tracking_tasks", []),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )

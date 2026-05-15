@@ -7,10 +7,18 @@ if getattr(sys, "frozen", False):
     _meipass = sys._MEIPASS  # 只读资源目录
     _exe_dir = os.path.dirname(sys.executable)  # exe 所在目录（可写）
 
-    # 将 GTK3 DLL 加入 PATH，供 cairosvg 使用
+    # Windows: 将 GTK3 DLL 加入 PATH，供 cairosvg 使用
     _gtk3_bin = os.path.join(_meipass, "gtk3_bin")
     if os.path.isdir(_gtk3_bin):
         os.environ["PATH"] = _gtk3_bin + os.pathsep + os.environ.get("PATH", "")
+
+    # Linux: 确保打包进来的 .so 文件可被 cffi/cairosvg 的 dlopen() 找到。
+    # PyInstaller bootloader 已在 C 层设置过 LD_LIBRARY_PATH，这里再显式追加
+    # 一次，保证在任何 shell 环境下都生效（对已加载的库无副作用）。
+    if sys.platform == "linux":
+        os.environ["LD_LIBRARY_PATH"] = (
+            _meipass + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
+        )
 
     # 从 exe 同级目录加载 .env
     from dotenv import load_dotenv
@@ -29,6 +37,11 @@ if getattr(sys, "frozen", False):
 else:
     from dotenv import load_dotenv
     load_dotenv()
+    # 本地开发：读 GTK3_BIN 并加入 PATH，供 cairosvg 在 Windows 上找到 libcairo-2.dll
+    if sys.platform == "win32":
+        _gtk3_bin = os.environ.get("GTK3_BIN", "")
+        if _gtk3_bin and os.path.isdir(_gtk3_bin):
+            os.environ["PATH"] = _gtk3_bin + os.pathsep + os.environ.get("PATH", "")
 
 # ── 延迟导入（确保 PATH / 环境变量已就绪再导入 cairosvg 等）───────────────────
 from app.main import create_app  # noqa: E402

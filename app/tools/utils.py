@@ -3,13 +3,90 @@
 from __future__ import annotations
 
 import inspect
+import logging
+import os
+import subprocess
+import sys
 import types as _types
 import typing
+from pathlib import Path
+from typing import TYPE_CHECKING
 
+from app.common.errors import AppError
 from app.llm.types import InputSchema
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from app.tools.types import CallContext
+
+
+def _resolve_cwd(ctx: "CallContext | None") -> str | None:
+    wd = ctx.working_dir if ctx else ""
+    return wd or None
+
+
+def _resolve_path(path: str, ctx: "CallContext | None") -> Path:
+    p = Path(path)
+    if p.is_absolute():
+        return p
+    cwd = _resolve_cwd(ctx)
+    return (Path(cwd) / p) if cwd else p
+
+
+BASH_BLACKLIST = [
+    r"\brm\s+-rf\b",
+    r"\bmkfs\b",
+    r"\bdd\b.*\bof=/dev/",
+    r"\bshutdown\b",
+    r"\breboot\b",
+    r"\bsudo\b",
+    r"\bsu\b\s",
+    r"\bchmod\s+777\b",
+    r"\bcurl\b.*\|\s*bash",
+    r"\bwget\b.*\|\s*bash",
+]
+
+
+def build_venv_env(cwd: str | None) -> dict[str, str] | None:
+    """Return a copy of os.environ with .venv activated, creating it first if absent."""
+    if not cwd:
+        return None
+    venv_dir = Path(cwd) / ".venv"
+    if sys.platform == "win32":
+        python_exe = venv_dir / "Scripts" / "python.exe"
+        scripts_dir = str(venv_dir / "Scripts")
+    else:
+        python_exe = venv_dir / "bin" / "python"
+        scripts_dir = str(venv_dir / "bin")
+
+    if not python_exe.exists():
+        logger.info("build_venv_env: creating venv at '%s'", venv_dir)
+        result = subprocess.run(
+            [sys.executable, "-m", "venv", str(venv_dir)],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+        )
+        if result.returncode != 0:
+            raise AppError(
+                "VENV_CREATE_FAILED",
+                f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
+            )
+
+    env = os.environ.copy()
+    env["VIRTUAL_ENV"] = str(venv_dir)
+    env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
+    env.pop("PYTHONHOME", None)
+    return env
 
 
 def _py_type_to_json_schema(py_type) -> dict:
+    if hasattr(py_type, "__metadata__"):
+        args = typing.get_args(py_type)
+        schema = _py_type_to_json_schema(args[0])
+        if len(args) > 1 and isinstance(args[1], str):
+            schema["description"] = args[1]
+        return schema
+
     origin = typing.get_origin(py_type)
 
     # Union[X, None] or X | None
@@ -48,15 +125,44 @@ def _py_type_to_json_schema(py_type) -> dict:
         return {"type": "object"}
     if hasattr(py_type, "model_json_schema"):
         return py_type.model_json_schema()
+    if (isinstance(py_type, type) and issubclass(py_type, dict)
+            and hasattr(py_type, "__required_keys__") and hasattr(py_type, "__optional_keys__")):
+        try:
+            field_hints = typing.get_type_hints(py_type, include_extras=True)
+        except Exception:
+            field_hints = getattr(py_type, "__annotations__", {})
+        required = list(py_type.__required_keys__)
+        props = {k: _py_type_to_json_schema(v) for k, v in field_hints.items()}
+        schema: dict = {"type": "object", "properties": props}
+        if required:
+            schema["required"] = required
+        return schema
     return {"type": "string"}
+
+
+def _resolve_hints(fn) -> dict:
+    """Resolve annotations individually so TYPE_CHECKING-only names don't block everything."""
+    try:
+        return typing.get_type_hints(fn, include_extras=True)
+    except Exception:
+        pass
+    globs = getattr(fn, "__globals__", {})
+    hints: dict = {}
+    for name, raw in getattr(fn, "__annotations__", {}).items():
+        ann = raw if not isinstance(raw, str) else None
+        if isinstance(raw, str):
+            try:
+                ann = eval(raw, globs)  # noqa: S307
+            except Exception:
+                pass
+        if ann is not None:
+            hints[name] = ann
+    return hints
 
 
 def extract_input_schema(fn, *, exclude: set[str] | None = None) -> InputSchema:
     """从函数签名的 Annotated 类型注解中提取 InputSchema。"""
-    try:
-        hints = typing.get_type_hints(fn, include_extras=True)
-    except Exception:
-        hints = {}
+    hints = _resolve_hints(fn)
 
     properties: dict = {}
     required: list[str] = []
@@ -68,7 +174,7 @@ def extract_input_schema(fn, *, exclude: set[str] | None = None) -> InputSchema:
         description = ""
         py_type = ann if ann is not inspect.Parameter.empty else str
 
-        if typing.get_origin(ann) is typing.Annotated:
+        if hasattr(ann, "__metadata__"):  # Annotated types have __metadata__; get_origin behavior differs across Python versions
             args = typing.get_args(ann)
             py_type = args[0]
             if len(args) > 1 and isinstance(args[1], str):

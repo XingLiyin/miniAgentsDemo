@@ -1,0 +1,15 @@
+.git
+.venv
+.uv-cache
+.pytest_cache
+__pycache__
+*.pyc
+*.pyo
+.env
+build
+frontend/node_modules
+frontend/dist
+co-workspace
+workspace
+data
+packaging

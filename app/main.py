@@ -39,7 +39,7 @@ async def _lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用实例。"""
     settings = get_settings()
-    init_logging(settings.log_level)
+    init_logging(settings.log_level, settings.log_dir)
 
     app = FastAPI(
         title=settings.app_name,

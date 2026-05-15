@@ -6,6 +6,24 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def resolve_working_dir(raw: str) -> str:
+    """Resolve working_dir to an absolute path.
+
+    Absolute paths pass through unchanged.
+    Relative paths are joined with workspace_base_dir (if set) then resolved to absolute,
+    ensuring the result is always absolute and this function is idempotent.
+    """
+    if not raw:
+        return ""
+    p = Path(raw)
+    if p.is_absolute():
+        return raw
+    base = get_settings().workspace_base_dir
+    if base:
+        return str((Path(base) / p).resolve())
+    return str(p.resolve())
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="MINIAGENTS_",
@@ -22,11 +40,18 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     skills_dir: Path = Path("resources/skills")
     agents_dir: Path = Path("resources/agents")
+    workspace_base_dir: str = ""  # 相对 working_dir 的解析根目录，Docker 下设为挂载点如 /workspace
 
-    # LLM 配置
-    default_llm_model: str = "Qwen/Qwen3.5-27B"
-    default_llm_provider: str = "ms-openai"
+    # LLM 默认配置 — provider 名称
+    default_llm_provider: str = ""
+    default_llm_model: str = ""
     default_llm_timeout_sec: int = 3600
+    # LLM 完整客户端配置 — 填写后无需提前在数据库注册 provider
+    default_llm_style: str = "openai"          # openai 或 anthropic
+    default_llm_api_key: str = ""
+    default_llm_base_url: str = ""
+    default_llm_context_limit: int = 200_000
+    default_llm_max_output_tokens: int = 8192
 
     # Agent 默认配置
     default_agent_template_name: str = "default"
@@ -52,13 +77,15 @@ class Settings(BaseSettings):
     bash_exec_output_limit_bytes: int = 65_536
     http_request_timeout_ms: int = 10_000
     http_response_limit_bytes: int = 524_288
+    enable_builtin_tools: bool = True  # 是否注册内置工具（skill_executor 和 control tools 始终注册）
 
     # 外部存储
     store_base_url: str = ""
     store_timeout_sec: int = 10
 
     # 日志
-    log_level: str = "INFO"
+    log_level: str = "DEBUG"
+    log_dir: str = ""  # 日志文件目录，为空则不写文件；每天生成新文件
 
 
 @lru_cache

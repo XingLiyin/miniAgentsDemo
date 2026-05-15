@@ -107,7 +107,8 @@ class Reasoner:
         if self._compaction_agent is not None:
             try:
                 agent_data = (self._agent_store.get(session.id, agent.id) if self._agent_store else None) or {}
-                working_dir = (agent_data.get("settings") or {}).get("working_dir", "")
+                from app.config.settings import resolve_working_dir
+                working_dir = resolve_working_dir((agent_data.get("settings") or {}).get("working_dir", ""))
                 kept, compacted_summary = self._compaction_agent.compact(
                     messages=messages,
                     session_goal=session.goal,
@@ -137,10 +138,12 @@ class Reasoner:
 
     def _load_background(self, agent: Agent, task: Task) -> str:
         from app.config.settings import get_settings
-        wd = (
+        from app.config.settings import resolve_working_dir
+        wd = resolve_working_dir(
             (task.settings.get("working_dir") if task.settings else None)
             or (agent.settings or {}).get("working_dir")
             or get_settings().bash_exec_cwd
+            or ""
         )
         if not wd:
             return ""
@@ -162,12 +165,14 @@ class Reasoner:
         if skill_name and self._skill_registry:
             from app.config.settings import get_settings
             from app.tools.types import CallContext
-            _wd = (
+            from app.config.settings import resolve_working_dir
+            _wd = resolve_working_dir(
                 (task.settings.get("working_dir") if task.settings else None)
                 or agent.settings.get("working_dir")
                 or get_settings().bash_exec_cwd
+                or ""
             )
-            ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
+            ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd)
             skill_def = self._skill_registry.load_definition(skill_name, ctx)
             if skill_def is not None:
                 skill_instructions = skill_def.instructions or ""
@@ -195,14 +200,10 @@ class Reasoner:
         """获取 memory、blackboard、token 估算等共享数据，返回 tuple。"""
         messages = self._memory_svc.get_all_messages(agent.id)
 
-        # bb_entries = self._bb_svc.pull(session.id, "_root", agent.id)
-        # bb_snippets = [entry.content for entry in bb_entries]
         bb_snippets = []
-
-        if self._task_svc:
-            for child in self._task_svc.list_children(task.id, session.id):
-                for entry in self._bb_svc.pull(session.id, child.id, agent.id):
-                    bb_snippets.append(entry.content)
+        for tracked_task_id in agent.tracking_tasks:
+            for entry in self._bb_svc.pull(session.id, tracked_task_id, agent.id):
+                bb_snippets.append(entry.content)
 
         from app.common.utils import estimate_tokens
         from app.llm.types import content_to_text
@@ -247,12 +248,14 @@ class Reasoner:
         """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
         from app.config.settings import get_settings
         from app.tools.types import CallContext
-        _wd = (
+        from app.config.settings import resolve_working_dir
+        _wd = resolve_working_dir(
             (task.settings.get("working_dir") if task.settings else None)
             or agent.settings.get("working_dir")
             or get_settings().bash_exec_cwd
+            or ""
         )
-        ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd or "")
+        ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd)
         allowed = self._resolve_act_tool_names(agent)
         skill_resources = []
         if task.settings and not task.settings.get("skill_name"):

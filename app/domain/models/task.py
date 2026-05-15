@@ -19,8 +19,8 @@ class Task:
     creator_agent_id: str              # 产生该任务的 agent（不可变）
     assigned_agent_id: str             # 被分配执行该任务的 agent（auto-spawn 时可更新）
     status: str                        # PENDING | ACTIVE | SUSPENDED | TO_BE_OBSERVED | FINISHED | FAILED | CANCELED
-
     user_prompt: str | list            # 用户输入，str 纯文本或 list[ContentPart dict] 多模态
+    trackers: list[str] = field(default_factory=list)  # 订阅该任务 blackboard 的 agent id 列表
     conversation_turns: list[dict[str, Any]] = field(default_factory=list) # 任务相关的对话历史（agent 内部维护，非必需）
 
     title: str = ""                    # 简短描述，供 Agent 识别和展示用, 可为空，等待 llm 补全
@@ -52,6 +52,7 @@ class Task:
             "session_id": self.session_id,
             "creator_agent_id": self.creator_agent_id,
             "assigned_agent_id": self.assigned_agent_id,
+            "trackers": self.trackers,
             "user_prompt": self.user_prompt,
             "title": self.title,
             "status": self.status,
@@ -75,6 +76,7 @@ class Task:
             session_id=d["session_id"],
             creator_agent_id=d["creator_agent_id"],
             assigned_agent_id=d["assigned_agent_id"],
+            trackers=d.get("trackers", []),
             user_prompt=d["user_prompt"],
             title=d["title"],
             status=d["status"],

@@ -5,8 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel
-
 TaskOutcome = Literal["success", "failed", "needs_user_input"]
 
 if TYPE_CHECKING:
@@ -44,17 +42,6 @@ class ReasoningContext:
     token_estimate: int = 0
     # 项目背景（从 working_dir/BACKGROUND.md 读入）
     project_background: str = ""
-
-
-class PlannedTask(BaseModel):
-    """Planner 输出的单个任务。"""
-    title: str
-    description: str
-    user_prompt: str = ""          # Planner 可选指定，描述触发该任务的用户输入
-    skill_name: str | None = None       # Planner 指定，None 表示不用 skill
-    use_subagent: bool = False          # Planner 指定，True 表示由独立 sub-agent 执行
-    subagent_template: str | None = None  # 可选的 sub-agent template（如 planner 专用模板）
-    inherit_memory: bool = True         # sub-agent 是否继承 session 历史记忆
 
 
 

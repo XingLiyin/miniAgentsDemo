@@ -1,5 +1,4 @@
-"""内置工具实现：bash_exec、read、write、edit、glob、
-load_skill_reference、exec_skill_script、read_image、save_image_code、render_svg。
+"""内置工具实现：bash_exec、read、write、edit、glob、read_image、save_image_code、render_svg。
 
 新增内置工具步骤：
 1. 用 @builtin_tool 装饰函数，参数用 Annotated[type, "描述"] 声明
@@ -11,36 +10,17 @@ from __future__ import annotations
 
 import glob as _glob
 import logging
-import os
 import re
 import subprocess
-import sys
 from pathlib import Path
 from typing import Annotated, Literal
 
 from app.common.errors import AppError
 from app.config.settings import get_settings
 from app.tools.types import CallContext, ToolDefinition, ToolResult
-from app.tools.utils import extract_input_schema, make_tool_handler
+from app.tools.utils import BASH_BLACKLIST, _resolve_cwd, _resolve_path, build_venv_env, extract_input_schema, make_tool_handler
 
 logger = logging.getLogger(__name__)
-
-
-def _setup_gtk_path() -> None:
-    """将 GTK3 运行时目录加入 PATH（仅 Windows），供 WeasyPrint 等依赖使用。"""
-    gtk_bin = Path(os.environ.get("GTK3_BIN", r"C:\Program Files\GTK3-Runtime Win64\bin"))
-    if not gtk_bin.is_dir():
-        logger.debug("GTK3 runtime not found at %s, skipping PATH setup", gtk_bin)
-        return
-    gtk_bin_str = str(gtk_bin)
-    if gtk_bin_str not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = gtk_bin_str + os.pathsep + os.environ.get("PATH", "")
-    if hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(gtk_bin_str)
-
-
-if os.name == "nt":
-    _setup_gtk_path()
 
 
 # ── @builtin_tool 装饰器 ──────────────────────────────────────────────────────
@@ -63,67 +43,7 @@ def builtin_tool(fn):
     return tool_def
 
 
-# ── path helpers ──────────────────────────────────────────────────────────────
-
-def _resolve_cwd(ctx: CallContext | None) -> str | None:
-    wd = ctx.working_dir if ctx else ""
-    return wd or None
-
-
-def _resolve_path(path: str, ctx: CallContext | None) -> Path:
-    p = Path(path)
-    if p.is_absolute():
-        return p
-    cwd = _resolve_cwd(ctx)
-    return (Path(cwd) / p) if cwd else p
-
-
 # ── bash_exec ─────────────────────────────────────────────────────────────────
-
-def _build_venv_env(cwd: str | None) -> dict[str, str] | None:
-    """Return a copy of os.environ with .venv activated, creating it first if absent."""
-    if not cwd:
-        return None
-    venv_dir = Path(cwd) / ".venv"
-    if sys.platform == "win32":
-        python_exe = venv_dir / "Scripts" / "python.exe"
-        scripts_dir = str(venv_dir / "Scripts")
-    else:
-        python_exe = venv_dir / "bin" / "python"
-        scripts_dir = str(venv_dir / "bin")
-
-    if not python_exe.exists():
-        logger.info("bash_exec: creating venv at '%s'", venv_dir)
-        result = subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
-            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
-        )
-        if result.returncode != 0:
-            raise AppError(
-                "VENV_CREATE_FAILED",
-                f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
-            )
-
-    env = os.environ.copy()
-    env["VIRTUAL_ENV"] = str(venv_dir)
-    env["PATH"] = scripts_dir + os.pathsep + env.get("PATH", "")
-    env.pop("PYTHONHOME", None)
-    return env
-
-
-_BASH_BLACKLIST = [
-    r"\brm\s+-rf\b",
-    r"\bmkfs\b",
-    r"\bdd\b.*\bof=/dev/",
-    r"\bshutdown\b",
-    r"\breboot\b",
-    r"\bsudo\b",
-    r"\bsu\b\s",
-    r"\bchmod\s+777\b",
-    r"\bcurl\b.*\|\s*bash",
-    r"\bwget\b.*\|\s*bash",
-]
-
 
 @builtin_tool
 def bash_exec(
@@ -132,14 +52,14 @@ def bash_exec(
     ctx: CallContext | None = None,
 ) -> ToolResult:
     """Execute a shell command in a restricted environment. Returns stdout+stderr. Non-zero exit code sets is_error=true."""
-    for pattern in _BASH_BLACKLIST:
+    for pattern in BASH_BLACKLIST:
         if re.search(pattern, command):
             raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
 
     settings = get_settings()
     timeout_sec = settings.bash_exec_timeout_ms / 1000
     cwd = _resolve_cwd(ctx)
-    env = _build_venv_env(cwd)
+    env = build_venv_env(cwd)
 
     try:
         proc = subprocess.run(
@@ -325,251 +245,6 @@ def glob(
         content=output,
         metadata={"count": len(matches), "truncated": truncated, "root": str(root_path)},
     )
-
-
-# ── get_skill_files ───────────────────────────────────────────────────────────
-
-@builtin_tool
-def get_skill_files(
-    pattern: Annotated[str, "Glob pattern to match files (default: '**/*', local skills only)"] = "**/*",
-    limit: Annotated[int, "Maximum number of results (default: 200, local skills only)"] = 200,
-    *,
-    ctx: CallContext | None = None,
-) -> ToolResult:
-    """List files available in the current task's skill directory. For local skills, supports glob patterns (e.g. 'scripts/*.py', 'references/**'). Returns a newline-separated list of file paths (local) or file names (remote). For remote skills, also returns file IDs usable with load_skill_reference and exec_skill_script."""
-    skill_name = ctx.task.settings.get("skill_name") if (ctx and ctx.task and ctx.task.settings) else None
-    if not skill_name:
-        raise AppError("MISSING_SKILL_NAME", "Task has no skill assigned; cannot list skill files")
-
-    from app.skills.registry import get_skill_registry
-    registry = get_skill_registry()
-    metadata = registry.get_metadata(skill_name, ctx)
-
-    if metadata is None:
-        conn = registry.get_conn_for_skill(skill_name)
-        if conn is None:
-            raise AppError("SKILL_NOT_FOUND", f"Skill '{skill_name}' not found in registry")
-        try:
-            content = conn.get_skill_files(skill_name, pattern, limit, ctx)
-        except Exception as exc:
-            raise AppError("REMOTE_SKILL_ERROR", str(exc))
-        return ToolResult(content=content, metadata={"skill": skill_name, "source": "remote"})
-
-    skill_dir = metadata.skill_dir
-    if not skill_dir.exists():
-        raise AppError("SKILL_DIR_NOT_FOUND", f"Skill directory '{skill_dir}' does not exist")
-
-    matches = _glob.glob(pattern, root_dir=str(skill_dir), recursive=True)
-    files = [
-        m for m in matches
-        if (skill_dir / m).is_file()
-        and not any(part.startswith(".") for part in Path(m).parts)
-    ]
-    files.sort()
-    truncated = False
-    if len(files) > limit:
-        files = files[:limit]
-        truncated = True
-    output = "\n".join(files) if files else "(no files)"
-    if truncated:
-        output += f"\n[truncated at {limit} results]"
-    return ToolResult(
-        content=output,
-        metadata={"skill": skill_name, "source": "local", "count": len(files), "truncated": truncated},
-    )
-
-
-# ── load_skill_reference ──────────────────────────────────────────────────────
-
-@builtin_tool
-def load_skill_reference(
-    reference_path: Annotated[str, "Relative path to the reference file within the skill directory"],
-    *,
-    ctx: CallContext | None = None,
-) -> ToolResult:
-    """Read a reference file from the current task's skill directory. Use the relative path as shown in the skill instructions (e.g. 'references/background.md', 'checks/self_check.md')."""
-    if not reference_path:
-        raise AppError("INVALID_ARGUMENT", "reference_path is required")
-
-    skill_name = ctx.task.settings.get("skill_name") if (ctx and ctx.task and ctx.task.settings) else None
-    if not skill_name:
-        raise AppError("MISSING_SKILL_NAME", "Task has no skill assigned; cannot load skill reference")
-
-    from app.skills.registry import get_skill_registry
-    registry = get_skill_registry()
-    metadata = registry.get_metadata(skill_name, ctx)
-
-    if metadata is None:
-        conn = registry.get_conn_for_skill(skill_name)
-        if conn is None:
-            raise AppError("SKILL_NOT_FOUND", f"Skill '{skill_name}' not found in registry")
-        try:
-            content = conn.load_skill_reference(skill_name, reference_path, ctx)
-        except Exception as exc:
-            raise AppError("REMOTE_REFERENCE_ERROR", str(exc))
-        return ToolResult(content=content, metadata={"skill": skill_name, "path": reference_path})
-
-    from app.skills.loader import SkillLoader
-    try:
-        content = SkillLoader().load_resource(metadata.skill_dir, reference_path)
-    except ValueError as exc:
-        raise AppError("INVALID_ARGUMENT", str(exc))
-    except FileNotFoundError:
-        raise AppError("FILE_NOT_FOUND", f"Reference '{reference_path}' not found in skill '{skill_name}'")
-
-    return ToolResult(
-        content=content,
-        metadata={"skill": skill_name, "path": reference_path},
-    )
-
-
-# ── skill venv helpers ────────────────────────────────────────────────────────
-
-def _venv_python(working_dir: Path, skill_dir: Path) -> str:
-    """Return the Python executable for running a skill script.
-
-    venv lives in working_dir, not skill_dir. Priority:
-    1. working_dir/.venv exists → use it as-is (user manages deps)
-    2. working_dir/.venv absent + skill_dir/requirements.txt exists → create venv
-       at working_dir/.venv and install skill deps
-    3. No requirements.txt → sys.executable
-    """
-    if sys.platform == "win32":
-        _python = lambda d: d / "Scripts" / "python.exe"
-        _pip    = lambda d: d / "Scripts" / "pip.exe"
-    else:
-        _python = lambda d: d / "bin" / "python"
-        _pip    = lambda d: d / "bin" / "pip"
-
-    venv_dir = working_dir / ".venv"
-
-    if _python(venv_dir).exists():
-        return str(_python(venv_dir))
-
-    reqs = skill_dir / "requirements.txt"
-    if not reqs.exists():
-        return sys.executable
-
-    logger.info("exec_skill_script: creating venv at '%s'", venv_dir)
-    result = subprocess.run(
-        [sys.executable, "-m", "venv", str(venv_dir)],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
-    )
-    if result.returncode != 0:
-        raise AppError(
-            "VENV_CREATE_FAILED",
-            f"Failed to create venv: {((result.stdout or '') + (result.stderr or '')).strip()}",
-        )
-
-    logger.info("exec_skill_script: installing requirements from '%s'", reqs)
-    result = subprocess.run(
-        [str(_pip(venv_dir)), "install", "-r", str(reqs), "--disable-pip-version-check"],
-        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
-    )
-    if result.returncode != 0:
-        raise AppError(
-            "VENV_INSTALL_FAILED",
-            f"pip install failed: {((result.stdout or '') + (result.stderr or '')).strip()}",
-        )
-
-    return str(_python(venv_dir))
-
-
-# ── exec_skill_script ─────────────────────────────────────────────────────────
-
-@builtin_tool
-def exec_skill_script(
-    script_path: Annotated[str, "Relative path to the script within the skill directory (e.g. 'scripts/extract.py')"],
-    args: Annotated[str, "Command-line argument string appended after the script path"] = "",
-    *,
-    ctx: CallContext | None = None,
-) -> ToolResult:
-    """Execute a script from the current task's skill directory. The working directory is set to the skill root. Construct args as described in the skill instructions."""
-    if not script_path:
-        raise AppError("INVALID_ARGUMENT", "script_path is required")
-
-    skill_name = ctx.task.settings.get("skill_name") if (ctx and ctx.task and ctx.task.settings) else None
-    if not skill_name:
-        raise AppError("MISSING_SKILL_NAME", "Task has no skill assigned; cannot execute skill script")
-
-    from app.skills.registry import get_skill_registry
-    registry = get_skill_registry()
-    metadata = registry.get_metadata(skill_name, ctx)
-
-    if metadata is None:
-        conn = registry.get_conn_for_skill(skill_name)
-        if conn is None:
-            raise AppError("SKILL_NOT_FOUND", f"Skill '{skill_name}' not found in registry")
-        try:
-            return conn.exec_skill_script(skill_name, script_path, args, ctx)
-        except Exception as exc:
-            raise AppError("REMOTE_SCRIPT_ERROR", str(exc))
-
-    resolved = (metadata.skill_dir / script_path).resolve()
-
-    try:
-        resolved.relative_to(metadata.skill_dir.resolve())
-    except ValueError:
-        raise AppError("INVALID_ARGUMENT", "script_path escapes skill directory")
-
-    if not resolved.is_file():
-        raise AppError("SCRIPT_NOT_FOUND", f"Script '{script_path}' not found in skill '{skill_name}'")
-
-    abs_skill_dir = metadata.skill_dir.resolve()
-    if resolved.suffix == ".py":
-        wd_str = ctx.working_dir if ctx else ""
-        if wd_str:
-            python_exe = _venv_python(Path(wd_str), abs_skill_dir)
-        else:
-            python_exe = sys.executable
-        command = f'"{python_exe}" "{resolved}" {args}'.strip()
-    else:
-        command = f'"{resolved}" {args}'.strip()
-
-    for pattern in _BASH_BLACKLIST:
-        if re.search(pattern, command):
-            raise AppError("TOOL_COMMAND_BLOCKED", f"Command blocked by blacklist: {pattern}")
-
-    settings = get_settings()
-    timeout_sec = settings.bash_exec_timeout_ms / 1000
-    cwd = _resolve_cwd(ctx) or str(Path.cwd())
-
-    env = os.environ.copy()
-    env["SKILL_DIR"] = str(abs_skill_dir)
-
-    try:
-        proc = subprocess.run(
-            command,
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=timeout_sec,
-            cwd=cwd,
-            env=env,
-        )
-        output = (proc.stdout or "") + (proc.stderr or "")
-        limit = settings.bash_exec_output_limit_bytes
-        if len(output.encode("utf-8")) > limit:
-            output = output.encode("utf-8")[:limit].decode("utf-8", errors="replace")
-            output += f"\n[output truncated at {limit} bytes]"
-        is_error = proc.returncode != 0
-        return ToolResult(
-            content=output,
-            is_error=is_error,
-            error_code="SCRIPT_NONZERO_EXIT" if is_error else None,
-            metadata={"exit_code": proc.returncode, "skill": skill_name, "script": script_path},
-        )
-    except subprocess.TimeoutExpired:
-        raise AppError("TOOL_TIMEOUT", f"exec_skill_script timed out after {timeout_sec}s")
-    except Exception as exc:
-        return ToolResult(
-            content=f"Failed to launch script: {exc}",
-            is_error=True,
-            error_code="SCRIPT_LAUNCH_ERROR",
-            metadata={"skill": skill_name, "script": script_path},
-        )
 
 
 # ── read_image ────────────────────────────────────────────────────────────────

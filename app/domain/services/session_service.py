@@ -143,6 +143,24 @@ class SessionService:
             )
         return Session.from_dict(data)
 
+    def set_goal(self, session_id: str, goal: str) -> None:
+        """Update session goal without touching other session state (thread-safe for daemon threads).
+
+        Operates on the raw dict to avoid overwriting concurrent status transitions,
+        following the same pattern as add_tokens().
+        """
+        data = self._store.get(session_id)
+        if data is None:
+            return
+        data["goal"] = goal
+        data["updated_at"] = now_iso()
+        self._store.save(data)
+        try:
+            from app.common.sse_bus import get_sse_bus
+            get_sse_bus().push(session_id, {"type": "session_goal_updated", "goal": goal})
+        except Exception:
+            pass
+
     def list_ids(self) -> list[str]:
         return self._store.list_ids()
 

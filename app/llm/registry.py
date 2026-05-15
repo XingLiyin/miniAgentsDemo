@@ -216,11 +216,39 @@ class LLMRegistry:
 @lru_cache
 def get_llm_registry() -> LLMRegistry:
     from app.config.settings import get_settings
-    transport = HttpxTransport(timeout=get_settings().default_llm_timeout_sec)
+    settings = get_settings()
+    transport = HttpxTransport(timeout=settings.default_llm_timeout_sec)
     registry = LLMRegistry(ProviderRegistry(transport))
     loaded = registry.load_from_store()
     if loaded:
         logger.info("LLMRegistry: restored %d provider(s)", loaded)
+
+    # Bootstrap default provider from env if not already registered via UI/storage
+    name = settings.default_llm_provider
+    if (name
+            and not registry.is_registered(name)
+            and settings.default_llm_api_key
+            and settings.default_llm_base_url):
+        models = (
+            [ModelConfig(
+                name=settings.default_llm_model,
+                context_limit=settings.default_llm_context_limit,
+                max_output_tokens=settings.default_llm_max_output_tokens,
+            )]
+            if settings.default_llm_model else []
+        )
+        provider = LLMProvider(
+            name=name,
+            style=settings.default_llm_style,
+            api_key=settings.default_llm_api_key,
+            base_url=settings.default_llm_base_url,
+            models=models,
+            default_model=settings.default_llm_model,
+            timeout_sec=settings.default_llm_timeout_sec,
+        )
+        registry.register(provider, persist=False)
+        logger.info("LLMRegistry: bootstrapped default provider '%s' from env", name)
+
     return registry
 
 

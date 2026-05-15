@@ -47,10 +47,10 @@ class ToolRegistry:
             self._tools[tool_def.name] = tool_def
             logger.debug("ToolRegistry: registered tool '%s' from %s", tool_def.name, name)
 
-    def register_control_tools(self, task_svc, session_svc) -> None:
+    def register_control_tools(self, task_svc, session_svc, agent_store=None) -> None:
         """注入服务并批量注册控制工具。"""
         from app.tools.control_tools import get_control_tools
-        for tool_def in get_control_tools(task_svc, session_svc):
+        for tool_def in get_control_tools(task_svc, session_svc, agent_store):
             self._tools[tool_def.name] = tool_def
             logger.debug("ToolRegistry: registered tool '%s' from control tools", tool_def.name)
 

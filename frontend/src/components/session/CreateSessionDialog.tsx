@@ -32,10 +32,14 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
   const [debouncedWorkspaceDir, setDebouncedWorkspaceDir] = useState('')
   const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  const isAbsolutePath = (p: string) => /^[/\\]|^[a-zA-Z]:/.test(p)
+  const workingDirError = workingDirInput && isAbsolutePath(workingDirInput) ? '请填写相对路径，不支持绝对路径' : ''
+
   // 工作目录 debounce：停止输入 600ms 后更新 debouncedWorkspaceDir 并同步到 config
   useEffect(() => {
     if (debounceTimer.current) clearTimeout(debounceTimer.current)
     debounceTimer.current = setTimeout(() => {
+      if (isAbsolutePath(workingDirInput)) return
       setDebouncedWorkspaceDir(workingDirInput)
       setConfig((c) => ({ ...c, working_dir: workingDirInput || null, template_id: null }))
     }, 600)
@@ -80,7 +84,9 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
         {/* 工作目录：第一步 */}
         <Input
           label="工作目录"
-          placeholder="留空则使用服务器默认目录"
+          placeholder="如 my-project 或 team/proj-a"
+          hint="填写相对路径，由服务器基于 WORKSPACE_BASE_DIR 解析；留空使用服务器默认目录"
+          error={workingDirError}
           value={workingDirInput}
           onChange={(e) => setWorkingDirInput(e.target.value)}
         />
@@ -181,7 +187,7 @@ export function CreateSessionDialog({ open, onClose, onConfigured }: Props) {
 
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>取消</Button>
-          <Button onClick={handleConfirm}>确认配置</Button>
+          <Button onClick={handleConfirm} disabled={!!workingDirError}>确认配置</Button>
         </div>
       </div>
     </Dialog>

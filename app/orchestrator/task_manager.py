@@ -28,6 +28,7 @@ from app.orchestrator.task_queue import TaskQueue  # noqa: F401 – kept for ext
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
     from app.orchestrator.lifecycle_manager import LifecycleManager
+    from app.storage.file.agent_store import AgentStore
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +44,14 @@ class TaskManager:
         event_bus: "EventBus | None" = None,
         max_task_retries: int = 3,
         memory_svc: MemoryService | None = None,
+        agent_store: "AgentStore | None" = None,
     ) -> None:
         self._task_svc = task_svc
         self._session_svc = session_svc
         self._lm = lifecycle_manager
         self._max_task_retries = max_task_retries
         self._memory_svc = memory_svc
+        self._agent_store = agent_store
         self._session_locks: dict[str, threading.Lock] = {}
 
         if event_bus is not None:
@@ -194,6 +197,8 @@ class TaskManager:
                         logger.debug(
                             "TM: re-queued active task %s for session %s", finished_task_id, session_id
                         )
+                    elif _ft.status == "FINISHED":
+                        self._notify_trackers(session_id, _ft)
                 except Exception:
                     logger.exception("TM: failed to check active task %s", finished_task_id)
 
@@ -284,6 +289,7 @@ class TaskManager:
                     self._max_task_retries,
                     session_id,
                 )
+                self._notify_trackers(session_id, failed_task)
                 self._cancel_remaining_and_fail(session_id)
                 _session_done = True
 
@@ -362,12 +368,15 @@ class TaskManager:
             use_subagent=bool(next_task.settings.get("use_subagent")),
             template_name=template_name,
             inherit_memory=bool(next_task.settings.get("inherit_memory", True)),
+            task_assigned_agent_id=next_task.assigned_agent_id or "",
+            task_creator_agent_id=next_task.creator_agent_id or "",
         )
         if agent_id:
             try:
                 task = self._task_svc.get(next_task.id, session_id)
                 task.assigned_agent_id = agent_id
                 self._task_svc.save(task)
+                self._sync_sibling_tracking(session_id, task, agent_id)
             except Exception:
                 logger.exception("TM: failed to update assigned_agent_id for task %s", next_task.id)
             try:
@@ -379,24 +388,134 @@ class TaskManager:
                 logger.exception("TM: failed to append active_tasks for task %s", next_task.id)
             self._lm.run_agent(session_id, agent_id, next_task.id)
 
+    def _notify_trackers(self, session_id: str, task: Task) -> None:
+        """向所有不在 RUNNING 状态的 tracker agent 写入 task 结果，并从其 tracking_tasks 中移除该 task。"""
+        if not task.trackers or not self._memory_svc or not self._agent_store:
+            return
+        outcome = "completed" if task.status == "FINISHED" else "failed"
+        content = f"Tracked task「{task.title}」{outcome}."
+        if task.outputs:
+            content += f"\nOutput: {task.outputs}"
+        if task.result:
+            content += f"\nResult: {task.result}"
+        if task.error:
+            content += f"\nError: {task.error}"
+
+        notified: list[str] = []
+        for agent_id in list(task.trackers):
+            try:
+                agent_data = self._agent_store.get(session_id, agent_id)
+                if agent_data is None or agent_data.get("status") == "RUNNING":
+                    continue
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=content,
+                    session_id=session_id,
+                    task_id=task.id,
+                )
+                tracking: list[str] = agent_data.get("tracking_tasks", [])
+                if task.id in tracking:
+                    tracking.remove(task.id)
+                    agent_data["tracking_tasks"] = tracking
+                    self._agent_store.save(agent_data)
+                notified.append(agent_id)
+            except Exception:
+                logger.warning("TM: failed to notify tracker %s for task %s", agent_id, task.id)
+        if notified:
+            try:
+                for aid in notified:
+                    if aid in task.trackers:
+                        task.trackers.remove(aid)
+                self._task_svc.save(task)
+            except Exception:
+                logger.warning("TM: failed to update trackers for task %s", task.id)
+
+    def _sync_sibling_tracking(self, session_id: str, task: Task, agent_id: str) -> None:
+        """将兄弟 task 的 id 写入新分配 agent 的 tracking_tasks，并将 agent_id 同步写入各兄弟 task 的 trackers。
+        已终结的兄弟直接写 memory，不加入 tracking_tasks。"""
+        if not self._agent_store or not task.parent_task_id:
+            return
+        _TERMINAL = {"FINISHED", "FAILED", "CANCELED"}
+        try:
+            data = self._agent_store.get(session_id, agent_id)
+            if data is None:
+                return
+            tracking: list[str] = data.get("tracking_tasks", [])
+            newly_tracked: list[str] = []
+            for sib in self._task_svc.list_children(task.parent_task_id, session_id):
+                if sib.id == task.id or sib.id in tracking:
+                    continue
+                if sib.status in _TERMINAL:
+                    self._write_sib_result_to_memory(session_id, sib, agent_id, task.id)
+                else:
+                    tracking.append(sib.id)
+                    newly_tracked.append(sib.id)
+            if newly_tracked:
+                data["tracking_tasks"] = tracking
+                self._agent_store.save(data)
+                for sib_id in newly_tracked:
+                    try:
+                        sib_task = self._task_svc.get(sib_id, session_id)
+                        if agent_id not in sib_task.trackers:
+                            sib_task.trackers.append(agent_id)
+                            self._task_svc.save(sib_task)
+                    except Exception:
+                        pass
+        except Exception:
+            logger.warning("TM: failed to sync sibling tracking for agent %s task %s", agent_id, task.id)
+
+    def _write_sib_result_to_memory(self, session_id: str, sib: Task, agent_id: str, task_id: str) -> None:
+        """将已终结兄弟 task 的结果直接写入 agent memory。"""
+        if not self._memory_svc:
+            return
+        try:
+            outcome = "completed" if sib.status == "FINISHED" else "failed"
+            content = f"Sibling task「{sib.title}」{outcome}."
+            if sib.outputs:
+                content += f"\nOutput: {sib.outputs}"
+            if sib.result:
+                content += f"\nResult: {sib.result}"
+            if sib.error:
+                content += f"\nError: {sib.error}"
+            self._memory_svc.append_message(
+                agent_id=agent_id,
+                role="assistant",
+                content=content,
+                session_id=session_id,
+                task_id=task_id,
+            )
+        except Exception:
+            logger.warning("TM: failed to write sib result to memory for agent %s sib %s", agent_id, sib.id)
+
     def _lm_recycle_finished(self, session_id: str, finished_agent_id: str) -> None:
         if self._lm is not None:
             self._lm.release(session_id, finished_agent_id)
 
-    def _write_children_results_to_parent_memory(self, session_id: str, parent: Task, children: list[Task]) -> None:
-        """在父任务恢复前，将所有子任务结果批量写入父 agent 的 memory。"""
-        if self._memory_svc is None or not parent.assigned_agent_id:
+    def _flush_tracking_tasks_to_memory(self, session_id: str, parent: Task) -> None:
+        """将 parent agent 的 tracking_tasks 中已终结的 task 结果写入 memory，并双向清理关联。"""
+        if not self._agent_store or not self._memory_svc or not parent.assigned_agent_id:
             return
-        for child in children:
+        agent_data = self._agent_store.get(session_id, parent.assigned_agent_id)
+        if not agent_data:
+            return
+        tracking: list[str] = list(agent_data.get("tracking_tasks", []))
+        if not tracking:
+            return
+        flushed: list[str] = []
+        for task_id in tracking:
             try:
-                outcome = "completed" if child.status == "FINISHED" else "failed"
-                output_text = child.outputs or ""
-                result_text = child.result or child.error or ""
-                content = f"Sub-task「{child.title}」{outcome}."
-                if output_text:
-                    content += f"\nOutput: {output_text}"
-                if result_text:
-                    content += f"\nResult: {result_text}"
+                t = self._task_svc.get(task_id, session_id)
+                if t.status not in ("FINISHED", "FAILED", "CANCELED"):
+                    continue
+                outcome = "completed" if t.status == "FINISHED" else "failed"
+                content = f"Tracked task「{t.title}」{outcome}."
+                if t.outputs:
+                    content += f"\nOutput: {t.outputs}"
+                if t.result:
+                    content += f"\nResult: {t.result}"
+                if t.error:
+                    content += f"\nError: {t.error}"
                 self._memory_svc.append_message(
                     agent_id=parent.assigned_agent_id,
                     role="assistant",
@@ -404,8 +523,22 @@ class TaskManager:
                     session_id=session_id,
                     task_id=parent.id,
                 )
+                flushed.append(task_id)
             except Exception:
-                logger.exception("TM: failed to write child result to parent memory for task %s", child.id)
+                logger.exception("TM: failed to flush tracking task %s to parent %s memory", task_id, parent.id)
+        if not flushed:
+            return
+        new_tracking = [tid for tid in agent_data.get("tracking_tasks", []) if tid not in flushed]
+        agent_data["tracking_tasks"] = new_tracking
+        self._agent_store.save(agent_data)
+        for task_id in flushed:
+            try:
+                t = self._task_svc.get(task_id, session_id)
+                if parent.assigned_agent_id in t.trackers:
+                    t.trackers.remove(parent.assigned_agent_id)
+                    self._task_svc.save(t)
+            except Exception:
+                pass
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
         """Conclude a SUSPENDED parent once all its children are terminal.
@@ -431,7 +564,7 @@ class TaskManager:
                 self._q_remove(session_id, parent.id)
                 self._cascade_fail(session_id, parent.id)
             else:
-                self._write_children_results_to_parent_memory(session_id, parent, children)
+                self._flush_tracking_tasks_to_memory(session_id, parent)
                 self._task_svc.resume(parent.id, session_id)
                 self._q_push(session_id, parent.id)
         except Exception:

@@ -74,9 +74,12 @@ def get_agent_template_service() -> AgentTemplateService:
 
 @lru_cache
 def get_tool_registry() -> ToolRegistry:
-    from app.tools.builtins import get_builtin_tools
+    from app.tools.skill_executor import get_skill_executor_tools
     registry = ToolRegistry()
-    registry.register_tools(get_builtin_tools(), name="builtin")
+    if get_settings().enable_builtin_tools:
+        from app.tools.builtins import get_builtin_tools
+        registry.register_tools(get_builtin_tools(), name="builtin")
+    registry.register_tools(get_skill_executor_tools(), name="skill_executor")
     return registry
 
 
@@ -107,13 +110,14 @@ def get_task_manager() -> TaskManager:
         event_bus=get_event_bus(),
         max_task_retries=settings.max_task_retries,
         memory_svc=get_memory_service(),
+        agent_store=AgentStore(),
     )
 
 
 @lru_cache
 def get_tool_gateway() -> ToolGateway:
     registry = get_tool_registry()
-    registry.register_control_tools(get_task_service(), get_session_service())
+    registry.register_control_tools(get_task_service(), get_session_service(), AgentStore())
     return ToolGateway(
         policy=PolicyEngine([
             WhitelistRule(registry),

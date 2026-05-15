@@ -10,11 +10,11 @@ register_control_tools()：填充 _svc，将 _CONTROL_SCHEMAS 批量注册到 To
 from __future__ import annotations
 
 import inspect
+import json
 import logging
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING, Annotated, TypedDict
 
 from app.config.settings import get_settings
-from app.runtime.types import PlannedTask
 from app.tools.types import CallContext, ToolDefinition, ToolResult
 from app.tools.utils import extract_input_schema, make_tool_handler
 
@@ -22,6 +22,19 @@ if TYPE_CHECKING:
     from app.domain.models.task import Task
     from app.domain.services.session_service import SessionService
     from app.domain.services.task_service import TaskService
+
+
+class _PlannedTaskBase(TypedDict):
+    title: Annotated[str, "Short imperative title for the task"]
+    description: Annotated[str, "WHAT to achieve — not HOW, no tool names or arguments"]
+
+
+class PlannedTask(_PlannedTaskBase, total=False):
+    task_prompt: Annotated[str, "Detailed prompt — extract and include as much relevant context from the user's original request as possible"]
+    skill_name: Annotated[str | None, "One of the available skills, or null"]
+    use_subagent: Annotated[bool, "True if the task should run in an independent sub-agent"]
+    subagent_template: Annotated[str | None, "Template name for the sub-agent (e.g. 'default'); empty uses system default"]
+    inherit_memory: Annotated[bool, "True (default) for sub-agents that need session history"]
 
 
 # ── @control_tool 装饰器 ──────────────────────────────────────────────────────
@@ -33,6 +46,60 @@ _SKIP: frozenset[str] = frozenset({"ctx", "task_svc", "session_svc"})
 
 # 运行时服务引用，由 register_control_tools() 在启动时填入
 _svc: dict = {}
+
+
+def _add_tracking_tasks(session_id: str, agent_ids: list[str], task_id: str) -> None:
+    """将 task_id 追加到指定 agents 的 tracking_tasks，并将 agent_id 同步写入 task.trackers（均幂等）。"""
+    agent_store = _svc.get("agent_store")
+    task_svc = _svc.get("task_svc")
+    if not agent_store:
+        return
+    added: list[str] = []
+    for aid in agent_ids:
+        data = agent_store.get(session_id, aid)
+        if data is None:
+            continue
+        tracking: list[str] = data.get("tracking_tasks", [])
+        if task_id not in tracking:
+            tracking.append(task_id)
+            data["tracking_tasks"] = tracking
+            agent_store.save(data)
+            added.append(aid)
+    if added and task_svc:
+        try:
+            t = task_svc.get(task_id, session_id)
+            changed = False
+            for aid in added:
+                if aid not in t.trackers:
+                    t.trackers.append(aid)
+                    changed = True
+            if changed:
+                task_svc.save(t)
+        except Exception:
+            pass
+
+
+def _track_parent_and_siblings(
+    session_id: str, parent_task_id: str | None, new_task_id: str, task_svc
+) -> None:
+    """将 new_task_id 追加到父 task 的 agent 以及所有兄弟 task 的 agent 的 tracking_tasks。"""
+    if not parent_task_id or not task_svc:
+        return
+    agent_ids: set[str] = set()
+    try:
+        parent = task_svc.get(parent_task_id, session_id)
+        if parent.assigned_agent_id:
+            agent_ids.add(parent.assigned_agent_id)
+    except Exception:
+        pass
+    try:
+        for sib in task_svc.list_children(parent_task_id, session_id):
+            if sib.id != new_task_id and sib.assigned_agent_id:
+                agent_ids.add(sib.assigned_agent_id)
+    except Exception:
+        pass
+    if agent_ids:
+        _add_tracking_tasks(session_id, list(agent_ids), new_task_id)
 
 
 def control_tool(fn):
@@ -47,8 +114,10 @@ def control_tool(fn):
         if n not in {"task_svc", "session_svc"}
     ])
 
+    _accepted = set(orig_sig.parameters.keys())
+
     def _fn(*args, **kwargs):
-        return fn(*args, **kwargs, **_svc)
+        return fn(*args, **kwargs, **{k: v for k, v in _svc.items() if k in _accepted})
 
     _fn.__signature__ = stripped
 
@@ -79,6 +148,13 @@ def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService",
 
     session_svc.transition(session_id, "WAITING_INPUT")
     try:
+        sess = session_svc.get(session_id)
+        sess.metadata["_hitl_prompt"] = prompt
+        sess.metadata["_hitl_input_type"] = "task_completion_confirm"
+        session_svc.save(sess)
+    except Exception:
+        pass
+    try:
         get_sse_bus().push(session_id, {"type": "message", "role": "assistant",
                                         "content": prompt, "created_at": now_iso()})
         get_sse_bus().push(session_id, {"type": "waiting_input", "prompt": prompt,
@@ -89,6 +165,13 @@ def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService",
 
     answer = get_hitl_store().wait(session_id, agent_id, prompt, "task_completion_confirm")
     session_svc.transition(session_id, "RUNNING")
+    try:
+        sess = session_svc.get(session_id)
+        sess.metadata.pop("_hitl_prompt", None)
+        sess.metadata.pop("_hitl_input_type", None)
+        session_svc.save(sess)
+    except Exception:
+        pass
 
     if answer.startswith("用户已确认任务完成"):
         task_svc.finish(task.id, result=task_result, session_id=task.session_id)
@@ -168,6 +251,13 @@ def request_human_input(
 
     session_svc.transition(session_id, "WAITING_INPUT")
     try:
+        sess = session_svc.get(session_id)
+        sess.metadata["_hitl_prompt"] = prompt
+        sess.metadata["_hitl_input_type"] = "user_input"
+        session_svc.save(sess)
+    except Exception:
+        pass
+    try:
         get_sse_bus().push(session_id, {"type": "message", "role": "assistant",
                                         "content": prompt, "created_at": now_iso()})
         get_sse_bus().push(session_id, {"type": "waiting_input", "prompt": prompt,
@@ -177,6 +267,13 @@ def request_human_input(
 
     answer = get_hitl_store().wait(session_id, agent_id, prompt, "user_input")
     session_svc.transition(session_id, "RUNNING")
+    try:
+        sess = session_svc.get(session_id)
+        sess.metadata.pop("_hitl_prompt", None)
+        sess.metadata.pop("_hitl_input_type", None)
+        session_svc.save(sess)
+    except Exception:
+        pass
     return ToolResult(content=answer)
 
 
@@ -215,14 +312,7 @@ def update_task_metadata(
 
     if session_goal and session_id:
         try:
-            session = session_svc.get(session_id)
-            session.goal = session_goal
-            session_svc.save(session)
-            try:
-                from app.common.sse_bus import get_sse_bus
-                get_sse_bus().push(session_id, {"type": "session_goal_updated", "goal": session_goal})
-            except Exception:
-                pass
+            session_svc.set_goal(session_id, session_goal)
         except Exception:
             logging.getLogger(__name__).exception(
                 "control_tools: failed to update session goal for session %s", session_id)
@@ -248,14 +338,17 @@ def replan(
 
     cancelled = task_svc.cancel_pending(task.session_id if task else "")
     settings  = get_settings()
+    replan_inputs: dict = {"use_subagent": True, "inherit_memory": True,
+                           "subagent_template": settings.default_planner_template_name}
+    if ctx and ctx.working_dir:
+        replan_inputs["working_dir"] = ctx.working_dir
     task_svc.create(
         session_id=task.session_id if task else "",
         creator_agent_id=task.assigned_agent_id if task else "",
         user_prompt=(task.user_prompt if task else "") or "",
         title=f"Replan For: {reason}",
         description=f"{summary}\n\n请基于最新情况重新制定计划。",
-        inputs={"use_subagent": True, "inherit_memory": True,
-                "subagent_template": settings.default_planner_template_name},
+        inputs=replan_inputs,
     )
     if task is not None:
         task.actor_outcome     = "success"
@@ -338,7 +431,8 @@ def submit_plan(
             "Each task: "
             "  title: short imperative title; "
             "  description: WHAT to achieve — not HOW, no tool names or arguments; "
-            "  user_prompt: the user prompt that triggered this task, or empty if none. "
+            "  task_prompt: detailed prompt for this task — extract and include as much relevant context from the user's original request as possible; "
+
             "  skill_name: one of the available skills, or null; "
             "  use_subagent: true if the task should run in an independent sub-agent; "
             "  subagent_template: template name for the sub-agent (e.g. 'planner'); empty uses system default; "
@@ -350,31 +444,48 @@ def submit_plan(
     task_svc: "TaskService" = None,
     session_svc: "SessionService" = None,
 ) -> ToolResult:
-    """Submit the decomposed task plan. Call exactly once per turn. Each task: title (str, short imperative), description (str, WHAT not HOW), use_subagent (bool), inherit_memory (bool, default true), skill_name (str or null), user_prompt (str or empty)."""
+    """Submit the decomposed task plan. Call exactly once per turn. Each task: title (str), description (str, WHAT not HOW), task_prompt (str), skill_name (str|null), use_subagent (bool), subagent_template (str), inherit_memory (bool, default true). Pass empty list if goal is already complete."""
     task = ctx.task if ctx else None
     task_ids: list[str] = []
     titles:   list[str] = []
     prev_id:  str | None = None
 
-    for spec in tasks:
+    if isinstance(tasks, str):
+        try:
+            tasks = json.loads(tasks)
+        except Exception:
+            tasks = []
+
+    session_id_val = task.session_id if task else ""
+    assigned_id = task.assigned_agent_id if task else ""
+    creator_id  = task.creator_agent_id  if task else ""
+    tracked_agent_ids = list(dict.fromkeys(x for x in [assigned_id, creator_id] if x))
+
+    for planned in tasks:
+        if isinstance(planned, str):
+            spec: PlannedTask = {"title": planned, "description": planned}
+        else:
+            spec = planned
         inputs: dict = {}
-        skill_name = spec.get("skill_name") or None if isinstance(spec, dict) else getattr(spec, "skill_name", None)
+        if ctx and ctx.working_dir:
+            inputs["working_dir"] = ctx.working_dir
+        skill_name = spec.get("skill_name")
         if skill_name:
             inputs["skill_name"] = skill_name
-        use_subagent = spec.get("use_subagent", False) if isinstance(spec, dict) else getattr(spec, "use_subagent", False)
+        use_subagent = spec.get("use_subagent", False)
         if bool(use_subagent):
             inputs["use_subagent"] = True
             default_subagent_template = get_settings().default_agent_template_name
-            subagent_template = spec.get("subagent_template") if isinstance(spec, dict) else getattr(spec, "subagent_template", None)
+            subagent_template = spec.get("subagent_template")
             inputs["subagent_template"] = subagent_template or default_subagent_template
-            inherit_memory = spec.get("inherit_memory", True) if isinstance(spec, dict) else getattr(spec, "inherit_memory", True)
+            inherit_memory = spec.get("inherit_memory", True)
             inputs["inherit_memory"] = bool(inherit_memory)
-        title_val       = spec.get("title", "")        if isinstance(spec, dict) else spec.title
-        description_val = spec.get("description", "")  if isinstance(spec, dict) else spec.description
-        user_prompt_val = spec.get("user_prompt", "")  if isinstance(spec, dict) else getattr(spec, "user_prompt", "")
+        title_val       = spec["title"]
+        description_val = spec["description"]
+        user_prompt_val = spec.get("task_prompt", "")
         t = task_svc.create(
-            session_id=task.session_id if task else "",
-            creator_agent_id=task.assigned_agent_id if task else "",
+            session_id=session_id_val,
+            creator_agent_id=assigned_id,
             user_prompt=user_prompt_val,
             title=title_val,
             description=description_val,
@@ -382,6 +493,8 @@ def submit_plan(
             parent_task_id=task.id if task else None,
             dag_deps=[prev_id] if prev_id else [],
         )
+        _add_tracking_tasks(session_id_val, tracked_agent_ids, t.id)
+        _track_parent_and_siblings(session_id_val, task.id if task else None, t.id, task_svc)
         task_ids.append(t.id)
         titles.append(title_val)
         prev_id = t.id
@@ -394,7 +507,7 @@ def submit_plan(
     if task is not None and task_ids:
         task_svc.transition(task.id, "SUSPENDED", task.session_id)
         task.status = "SUSPENDED"
-    task.actor_done = True
+        task.actor_done = True
     return ToolResult(content=result_text)
 
 
@@ -402,11 +515,11 @@ def submit_plan(
 def submit_task(
     title: Annotated[str, "Short imperative title for the task (≤20 chars)"],
     description: Annotated[str, "WHAT to achieve — not HOW, no tool names or arguments (≤80 chars)"],
+    task_prompt: Annotated[str, "Detailed prompt for this task — extract and include as much relevant context from the user's original request as possible"],
     skill_name: Annotated[str, "Skill to assign to the task, or empty string if none"] = "",
     use_subagent: Annotated[bool, "True if the task should run in an independent sub-agent"] = False,
     subagent_template: Annotated[str, "Template name for the sub-agent (e.g. 'planner'); empty uses system default"] = "",
     inherit_memory: Annotated[bool, "True (default) for sub-agents that need session history"] = True,
-    task_prompt: Annotated[str, "Detailed prompt for this task — extract and include as much relevant context from the user's original request as possible; leave empty only if no additional detail is needed"] = "",
     *,
     ctx: CallContext | None = None,
     task_svc: "TaskService" = None,
@@ -418,6 +531,8 @@ def submit_task(
     if skill_name and not use_subagent:
         use_subagent = True
     inputs: dict = {}
+    if ctx and ctx.working_dir:
+        inputs["working_dir"] = ctx.working_dir
     if skill_name:
         inputs["skill_name"] = skill_name
     if bool(use_subagent):
@@ -425,15 +540,20 @@ def submit_task(
         inputs["inherit_memory"] = bool(inherit_memory)
         if subagent_template:
             inputs["subagent_template"] = subagent_template
+    creator_id = task.assigned_agent_id if task else ""
     t = task_svc.create(
         session_id=task.session_id if task else "",
-        creator_agent_id=task.assigned_agent_id if task else "",
+        creator_agent_id=creator_id,
         user_prompt=task_prompt,
         title=title,
         description=description,
         inputs=inputs,
         parent_task_id=task.id if task else None,
     )
+    session_id_val = task.session_id if task else ""
+    if creator_id:
+        _add_tracking_tasks(session_id_val, [creator_id], t.id)
+    _track_parent_and_siblings(session_id_val, task.id if task else None, t.id, task_svc)
     if task is not None:                                                                                        
         task_svc.transition(task.id, "SUSPENDED", task.session_id)                                              
         task.status = "SUSPENDED"                                                                               
@@ -441,10 +561,53 @@ def submit_task(
     return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
 
 
+@control_tool
+def get_tracked_task_output(
+    title: Annotated[str, "Title of the task to fetch output for"],
+    *,
+    ctx: CallContext | None = None,
+    task_svc: "TaskService" = None,
+    session_svc: "SessionService" = None,
+) -> ToolResult:
+    """Fetch the output of a tracked task by title. Returns outputs of all tracked tasks whose title matches.
+    Only tasks in the current agent's tracking list are searched."""
+    agent_store = _svc.get("agent_store")
+    session_id = ctx.session_id if ctx else ""
+    agent_id   = ctx.agent_id   if ctx else ""
+
+    tracking_task_ids: list[str] = []
+    if agent_store and agent_id and session_id:
+        data = agent_store.get(session_id, agent_id)
+        if data:
+            tracking_task_ids = data.get("tracking_tasks", [])
+
+    matches: list[str] = []
+    for task_id in tracking_task_ids:
+        try:
+            t = task_svc.get(task_id, session_id)
+        except Exception:
+            continue
+        if t.title != title:
+            continue
+        parts = [f"Task「{t.title}」(id={t.id}, status={t.status})"]
+        if t.outputs:
+            parts.append(f"Output:\n{t.outputs}")
+        if t.result:
+            parts.append(f"Result:\n{t.result}")
+        if t.error:
+            parts.append(f"Error:\n{t.error}")
+        matches.append("\n".join(parts))
+
+    if not matches:
+        return ToolResult(content=f"No tracked task found with title {title!r}.")
+    return ToolResult(content="\n\n---\n\n".join(matches))
+
+
 def get_control_tools(
     task_svc: "TaskService",
     session_svc: "SessionService",
+    agent_store=None,
 ) -> list[ToolDefinition]:
     """填充服务引用，返回所有控制工具定义。由 ToolRegistry.register_control_tools() 调用。"""
-    _svc.update(task_svc=task_svc, session_svc=session_svc)
+    _svc.update(task_svc=task_svc, session_svc=session_svc, agent_store=agent_store)
     return list(_CONTROL_SCHEMAS)

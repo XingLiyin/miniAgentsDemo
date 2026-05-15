@@ -186,10 +186,19 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
                 from app.storage.file.hitl_store import get_hitl_store
                 pending = get_hitl_store().get_pending(session_id)
                 if pending:
+                    replay_prompt = pending.prompt
+                    replay_input_type = pending.input_type
+                elif session.metadata.get("_hitl_prompt"):
+                    replay_prompt = session.metadata["_hitl_prompt"]
+                    replay_input_type = session.metadata.get("_hitl_input_type", "user_input")
+                else:
+                    replay_prompt = None
+                    replay_input_type = None
+                if replay_prompt:
                     replay = {
                         "type": "waiting_input",
-                        "prompt": pending.prompt,
-                        "input_type": pending.input_type,
+                        "prompt": replay_prompt,
+                        "input_type": replay_input_type,
                         "task_title": "等待用户输入",
                     }
                     yield f"data: {json.dumps(replay, default=str)}\n\n"

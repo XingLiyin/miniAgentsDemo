@@ -63,9 +63,16 @@ class AgentTemplateSyncer:
 
         logger.info("AgentTemplateSyncer: synced %d global template(s) from '%s'", len(details_list), agents_dir)
 
+    @staticmethod
+    def _resolve(workspace_dir: str) -> str:
+        from app.config.settings import resolve_working_dir
+        return resolve_working_dir(workspace_dir) or workspace_dir
+
     def sync_workspace(self, workspace_dir: str) -> None:
         """扫描 workspace/.agents/，upsert workspace 模板，删除已消失的。"""
+        workspace_dir = self._resolve(workspace_dir)
         ws_agents_dir = Path(workspace_dir) / ".agents"
+        logger.debug("AgentTemplateSyncer: scanning '%s'", ws_agents_dir.resolve())
         details_list = self._loader.scan(ws_agents_dir)
         synced_ids: set[str] = set()
 
@@ -99,16 +106,17 @@ class AgentTemplateSyncer:
 
     def purge_workspace(self, workspace_dir: str) -> None:
         """删除该 workspace 的全部 store 记录。session delete 时调用。"""
+        workspace_dir = self._resolve(workspace_dir)
         count = self._store.delete_workspace(workspace_dir)
         logger.info("AgentTemplateSyncer: purged %d template(s) for workspace '%s'", count, workspace_dir)
 
     # ── 监控 ─────────────────────────────────────────────────────────────────
 
     def register_workspace(self, workspace_dir: str) -> None:
-        self._watched_workspaces.add(workspace_dir)
+        self._watched_workspaces.add(self._resolve(workspace_dir))
 
     def unregister_workspace(self, workspace_dir: str) -> None:
-        self._watched_workspaces.discard(workspace_dir)
+        self._watched_workspaces.discard(self._resolve(workspace_dir))
 
     def start_watcher(self, agents_dir: Path, poll_interval: float = 5.0) -> None:
         """启动后台轮询线程，检测目录 mtime 变化后自动重新同步。"""

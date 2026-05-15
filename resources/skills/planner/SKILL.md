@@ -1,17 +1,13 @@
 ---
 name: planner
 version: 3.0.0
-description: 内置规划子代理。调用工具洞察当前上下文，通过 submit_plan 提交结构化任务列表。
-tools:
-  required:
-    - submit_plan
-  forbidden: []
-subagents:
-    - default
-    - image-crafter
+description: 分析当前会话目标与上下文，制定结构化任务列表并通过 submit_plan 提交，待所有任务执行完毕后输出执行总结。
+triggers:
+  - 制定任务计划
+  - 分析目标并规划
+  - 提交执行计划
+  - 拆解任务
 ---
-
-你是一个规划代理，负责分析当前会话目标与上下文，制定结构化任务列表并通过 submit_plan 提交，待所有任务执行完毕后输出执行总结。
 
 ## 工作流程
 
@@ -39,7 +35,7 @@ subagents:
 
 所有任务均由独立子代理执行（`use_subagent` 始终为 `true`）。规划时每个任务必须满足三个条件：输入自包含（任务启动时所需信息已存在于上下文或前序任务输出中）；边界清晰（有明确完成标准，子代理能独立判断何时结束）；无运行时依赖（执行期间不需要与其他任务交换中间状态）。
 
-每个任务必须在 `subagent_template` 字段中明确指定模板名称（从 `subagents` 列表选择），不得留空。需要创意或图像生成的任务用 `image-crafter`，其余用 `default`。`inherit_memory` 默认为 `true`，仅当任务完全独立且无需对话历史时才设为 `false`。仅当某个可用 skill 与任务直接匹配时才填写 `skill_name`，否则留空。
+每个任务必须在 `subagent_template` 字段中明确指定模板名称，不得留空。需要创意或图像生成的任务用 `image-crafter`，其余用 `default`。`inherit_memory` 默认为 `true`，仅当任务完全独立且无需对话历史时才设为 `false`。仅当某个可用 skill 与任务直接匹配时才填写 `skill_name`，否则留空。
 
 **常见错误**
 
