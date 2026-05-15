@@ -186,6 +186,10 @@ class Reasoner:
                     except Exception:
                         logger.warning("Reasoner: failed to cache skill instructions for task %s", task.id)
             elif task.settings:
+                logger.warning(
+                    "Reasoner: skill '%s' for task %s unavailable, no instructions available",
+                    skill_name, task.id,
+                )
                 skill_instructions = task.settings.get("_skill_instructions_cache", "")
                 if skill_instructions:
                     logger.warning(
