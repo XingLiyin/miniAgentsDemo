@@ -33,6 +33,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _task_result_content(prefix: str, outputs: "str | list", process_report: "str | None", error: "str | None") -> "str | list":
+    """Build memory content for a finished/failed task, preserving images when outputs is multimodal."""
+    if isinstance(outputs, list):
+        images = [p for p in outputs if p.get("type") == "image"]
+        output_text = next((p.get("text", "") for p in outputs if p.get("type") == "text"), "")
+    else:
+        images = []
+        output_text = outputs or ""
+    text_parts = [prefix]
+    if output_text:
+        text_parts.append(f"Output: {output_text}")
+    if process_report:
+        text_parts.append(f"Process Report: {process_report}")
+    if error:
+        text_parts.append(f"Error: {error}")
+    text = "\n".join(text_parts)
+    if images:
+        return [*images, {"type": "text", "text": text}]
+    return text
+
+
 class TaskManager:
     """Task scheduling decisions and session lifecycle."""
 
@@ -332,8 +353,8 @@ class TaskManager:
     def activate(self, task_id: str, session_id: str | None = None) -> Task:
         return self._task_svc.transition(task_id, "ACTIVE", session_id)
 
-    def complete(self, task_id: str, result: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
-        task = self._task_svc.finish(task_id, result=result, outputs=outputs, session_id=session_id)
+    def complete(self, task_id: str, process_report: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
+        task = self._task_svc.finish(task_id, process_report=process_report, outputs=outputs, session_id=session_id)
         self._reset_failure_counter(task.session_id)
         return task
 
@@ -393,13 +414,10 @@ class TaskManager:
         if not task.trackers or not self._memory_svc or not self._agent_store:
             return
         outcome = "completed" if task.status == "FINISHED" else "failed"
-        content = f"Tracked task「{task.title}」{outcome}."
-        if task.outputs:
-            content += f"\nOutput: {task.outputs}"
-        if task.result:
-            content += f"\nResult: {task.result}"
-        if task.error:
-            content += f"\nError: {task.error}"
+        content = _task_result_content(
+            f"Tracked task「{task.title}」{outcome}.",
+            task.outputs, task.process_report, task.error,
+        )
 
         notified: list[str] = []
         for agent_id in list(task.trackers):
@@ -471,13 +489,10 @@ class TaskManager:
             return
         try:
             outcome = "completed" if sib.status == "FINISHED" else "failed"
-            content = f"Sibling task「{sib.title}」{outcome}."
-            if sib.outputs:
-                content += f"\nOutput: {sib.outputs}"
-            if sib.result:
-                content += f"\nResult: {sib.result}"
-            if sib.error:
-                content += f"\nError: {sib.error}"
+            content = _task_result_content(
+                f"Sibling task「{sib.title}」{outcome}.",
+                sib.outputs, sib.process_report, sib.error,
+            )
             self._memory_svc.append_message(
                 agent_id=agent_id,
                 role="assistant",
@@ -509,13 +524,10 @@ class TaskManager:
                 if t.status not in ("FINISHED", "FAILED", "CANCELED"):
                     continue
                 outcome = "completed" if t.status == "FINISHED" else "failed"
-                content = f"Tracked task「{t.title}」{outcome}."
-                if t.outputs:
-                    content += f"\nOutput: {t.outputs}"
-                if t.result:
-                    content += f"\nResult: {t.result}"
-                if t.error:
-                    content += f"\nError: {t.error}"
+                content = _task_result_content(
+                    f"Tracked task「{t.title}」{outcome}.",
+                    t.outputs, t.process_report, t.error,
+                )
                 self._memory_svc.append_message(
                     agent_id=parent.assigned_agent_id,
                     role="assistant",

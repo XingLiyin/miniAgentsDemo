@@ -164,7 +164,7 @@ class ActorPromptBuilder(BasePromptBuilder):
         tools  = [r for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None]
         agents = [r for r in ctx.actor_resources if r.kind == "agent"]
         parts: list[str] = []
-        if skills:
+        if skills and not ctx.skill_instructions:  # 已有技能资源但无 skill instructions，才渲染技能列表（否则可能重复）
             lines = ["## Available Skills (assign to tasks where appropriate)"]
             for r in skills:
                 lines.append(f"- {r.name}: {r.description}")
@@ -261,7 +261,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
         """渲染任务列表为可读文本。"""
         lines: list[str] = []
         for t in tasks:
-            result_hint = f" | result: {t.result[:120]}" if t.status == "FINISHED" and t.result else ""
+            result_hint = f" | result: {t.process_report[:120]}" if t.status == "FINISHED" and t.process_report else ""
             lines.append(f"  [{t.status}] {t.title}{result_hint}")
         return "\n".join(lines)
 

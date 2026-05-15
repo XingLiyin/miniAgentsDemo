@@ -160,8 +160,12 @@ class Observer:
         if task.status == "TO_BE_OBSERVED":
             raise RuntimeError("Observer: no assessment submitted by LLM")
 
+        if task.process_report and task.error:
+            summary = f"{task.process_report}\n\nError encountered: {task.error}"
+        else:
+            summary = task.process_report or task.error or last_llm_text or ""
         return ObserverVerdict(
-            summary=task.actor_summary or last_llm_text or "",
+            summary=summary,
             context_tokens=max_context_tokens,
         )
 
@@ -184,20 +188,54 @@ class Observer:
             else 0
         )
 
+        process_report = self._build_rule_report(result, token_exhausted=token_pct > 0.9)
+
         if token_pct > 0.9:
-            summary = "Token budget nearly exhausted; stopping."
-            self._task_svc.finish(task.id, result="Token budget nearly exhausted; treating as complete.", session_id=task.session_id)
-            return ObserverVerdict(summary=summary)
+            self._task_svc.finish(task.id, process_report=process_report, outputs=result.output or "", session_id=task.session_id)
+            return ObserverVerdict(summary=process_report)
 
         if result.success:
-            detail = result.output or ""
-            summary = "Completed this turn's task."
-            self._task_svc.finish(task.id, result=detail, session_id=task.session_id)
+            self._task_svc.finish(task.id, process_report=process_report, outputs=result.output or "", session_id=task.session_id)
         else:
-            detail = result.output or result.error or ""
-            summary = f"Task failed this turn.\n{detail}" if detail else "Task failed this turn."
-            self._task_svc.fail(task.id, error=detail, session_id=task.session_id)
-        return ObserverVerdict(summary=summary)
+            self._task_svc.fail(task.id, error=result.error or result.output or "", session_id=task.session_id)
+            task = self._task_svc.get(task.id, task.session_id)
+            task.process_report = process_report
+            task.outputs = result.output or ""
+            self._task_svc.save(task)
+        return ObserverVerdict(summary=process_report)
+
+    @staticmethod
+    def _build_rule_report(result: ActorResult, *, token_exhausted: bool = False) -> str:
+        """从 ActorResult 构造规则降级时的 process_report 摘要。"""
+        rounds = len(result.conversation_turns)
+        all_calls = result.tool_calls_made
+
+        tools_used: list[str] = []
+        seen: set[str] = set()
+        for tc in all_calls:
+            if tc.tool_name not in seen:
+                tools_used.append(tc.tool_name)
+                seen.add(tc.tool_name)
+
+        error_tools = list({tc.tool_name for tc in all_calls if tc.is_error})
+
+        lines: list[str] = []
+        lines.append(f"Ran {rounds} conversation round(s).")
+        if tools_used:
+            lines.append(f"Tools used: {', '.join(tools_used)}.")
+        else:
+            lines.append("No tools were called.")
+        if error_tools:
+            lines.append(f"Tools with errors: {', '.join(error_tools)}.")
+
+        if token_exhausted:
+            lines.append("Token budget nearly exhausted; treating as complete.")
+        elif result.success:
+            lines.append("Task completed successfully.")
+        else:
+            lines.append("Task failed this turn.")
+
+        return " ".join(lines)
 
 
 def _push_llm_event(

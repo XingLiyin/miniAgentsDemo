@@ -14,6 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Annotated, TypedDict
 
+from app.common.utils import extract_text
 from app.config.settings import get_settings
 from app.tools.types import CallContext, ToolDefinition, ToolResult
 from app.tools.utils import extract_input_schema, make_tool_handler
@@ -134,7 +135,7 @@ def control_tool(fn):
 
 # ── 模块级辅助函数 ─────────────────────────────────────────────────────────────
 
-def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService", session_svc: "SessionService") -> tuple[str, str]:
+def _confirm_with_user(task: Task, process_report: str, *, task_svc: "TaskService", session_svc: "SessionService") -> tuple[str, str]:
     from app.storage.file.hitl_store import get_hitl_store
     from app.common.sse_bus import get_sse_bus
     from app.common.utils import now_iso
@@ -143,7 +144,7 @@ def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService",
     agent_id   = task.assigned_agent_id
     prompt = (
         f"任务「{task.title}」已执行，但系统无法自动判定完成状态。\n\n"
-        f"执行结果：\n{task_result or '（无输出）'}\n\n"
+        f"执行过程：\n{process_report or '（无输出）'}\n\n"
         "请确认任务是否完成，或补充说明以便 Agent 重新规划。"
     )
 
@@ -175,12 +176,12 @@ def _confirm_with_user(task: Task, task_result: str, *, task_svc: "TaskService",
         pass
 
     if answer.startswith("用户已确认任务完成"):
-        task_svc.finish(task.id, result=task_result, session_id=task.session_id)
-        return "success", task_result
+        task_svc.finish(task.id, process_report=process_report, session_id=task.session_id)
+        return "success", process_report
     else:
         prefix = "用户表示任务未完成，请重试。用户补充说明："
         feedback = answer[len(prefix):] if answer.startswith(prefix) else answer
-        task_svc.fail(task.id, error=feedback or "用户确认任务未完成", session_id=task.session_id)
+        task_svc.fail(task.id, process_report=process_report, error=feedback or "用户确认任务未完成", session_id=task.session_id)
         return "failed", feedback or "用户确认任务未完成"
 
 
@@ -219,7 +220,7 @@ def _apply_reviews(reviews: list, ctx: CallContext, *, task_svc: "TaskService") 
                 task_svc.reopen(matched.id, matched.session_id)
                 _log.info("Task %s reopened by observer: %s", matched.id, reasoning)
             elif review_status == "skip":
-                task_svc.finish(matched.id, result=reasoning or "Completed indirectly per observer.",
+                task_svc.finish(matched.id, process_report=reasoning or "Completed indirectly per observer.",
                                 session_id=matched.session_id)
                 _log.info("Task %s skipped by observer: %s", matched.id, reasoning)
         except Exception as e:
@@ -260,7 +261,7 @@ def request_human_input(
         pass
     try:
         get_sse_bus().push(session_id, {"type": "message", "role": "assistant",
-                                        "content": prompt, "created_at": now_iso()})
+                                        "content": context, "created_at": now_iso()})
         get_sse_bus().push(session_id, {"type": "waiting_input", "prompt": prompt,
                                         "input_type": "user_input", "task_title": "等待用户输入"})
     except Exception:
@@ -321,45 +322,8 @@ def update_task_metadata(
                 "control_tools: failed to update session goal for session %s", session_id)
 
     if task is not None:
-        task.actor_done    = True
-        task.actor_outcome = "success"
-        task.actor_summary = "metadata updated"
+        task.actor_done = True
     return ToolResult(content="ok")
-
-
-@control_tool
-def replan(
-    reason: Annotated[str, "The reason for replanning"],
-    summary: Annotated[str, "Concise summary of this replanning action (1-3 sentences)"] = "",
-    *,
-    ctx: CallContext | None = None,
-    task_svc: "TaskService" = None,
-    session_svc: "SessionService" = None,
-) -> ToolResult:
-    """Trigger a replan: cancel all pending tasks and create a new plan task."""
-    task = ctx.task if ctx else None
-
-    cancelled = task_svc.cancel_pending(task.session_id if task else "")
-    settings  = get_settings()
-    replan_inputs: dict = {"use_subagent": True, "inherit_memory": True,
-                           "subagent_template": settings.default_planner_template_name}
-    if ctx and ctx.working_dir:
-        replan_inputs["working_dir"] = ctx.working_dir
-    task_svc.create(
-        session_id=task.session_id if task else "",
-        creator_agent_id=task.assigned_agent_id if task else "",
-        user_prompt=(task.user_prompt if task else "") or "",
-        title=f"Replan For: {reason}",
-        description=f"{summary}\n\n请基于最新情况重新制定计划。",
-        inputs=replan_inputs,
-    )
-    if task is not None:
-        task.actor_outcome     = "success"
-        task.actor_summary     = reason
-        task.proceed_to_review = False
-        task_svc.finish(task.id, result=reason, session_id=task.session_id)
-        task.status = "FINISHED"
-    return ToolResult(content=f"Cancelled {cancelled} tasks. New plan task created.")
 
 
 @control_tool
@@ -372,7 +336,13 @@ def submit_task_assessment(
         "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn); "
         "'needs_user_input' if completion cannot be determined without user confirmation.",
     ],
-    task_result: Annotated[str, "Complete description of current progress: what was accomplished, what was produced or modified, what remains, and why the task could not be completed if applicable. This field is written directly to memory and read by the next actor turn — be thorough, not a one-liner."],
+    task_process_report: Annotated[str, "Execution process summary: describe what was accomplished, what was modified or produced, and what progress was made this turn. Include which tools were called and whether any failed. If the task is incomplete, explain what remains and why. Written to memory and read by the next actor turn — be thorough."],
+    task_failure_reason: Annotated[
+        str,
+        "Required when task_status is 'failed'. "
+        "Explain specifically what went wrong: which step failed, what error or unexpected result was encountered, "
+        "and what the root cause is. Leave empty for non-failed outcomes.",
+    ] = "",
     task_reviews: Annotated[
         list,
         "Optional reviews for FINISHED/PENDING sibling tasks in the session. "
@@ -394,35 +364,30 @@ def submit_task_assessment(
     task = ctx.task if ctx else None
     if task_status not in ("success", "failed", "active", "needs_user_input"):
         task_status = "failed"
-    task_result = f"{task_result}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_result
+    task_process_report = f"{task_process_report}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_process_report
 
     if task is not None:
-        task.actor_outcome = task_status
-        task.actor_summary = task_result
-        task.proceed_to_review = True
-
         if task_status == "success":
-            task_svc.finish(task.id, result=task_result, session_id=task.session_id)
+            task_svc.finish(task.id, process_report=task_process_report, session_id=task.session_id)
             task.status = "FINISHED"
         elif task_status == "failed":
-            task_svc.fail(task.id, error=task_result, session_id=task.session_id)
+            task_svc.fail(task.id, process_report=task_process_report, error=task_failure_reason, session_id=task.session_id)
             task.status = "FAILED"
         elif task_status == "active":
-            task_svc.transition(task.id, "PENDING", task.session_id)
+            task_svc.transition(task.id, "PENDING", process_report=task_process_report, session_id=task.session_id)
             task.status = "PENDING"
         else:  # needs_user_input
-            task_status, task_result = _confirm_with_user(
-                task, task_result, task_svc=task_svc, session_svc=session_svc,
+            task_status, task_process_report = _confirm_with_user(
+                task, task_process_report, task_svc=task_svc, session_svc=session_svc,
             )
-            task.actor_outcome = task_status
-            task.actor_summary = task_result
             task.status = "FINISHED" if task_status == "success" else "FAILED"
 
     review_msg = ""
     if task_reviews and ctx:
         review_msg = _apply_reviews(task_reviews, ctx, task_svc=task_svc)
 
-    return ToolResult(content=f"Assessment recorded: outcome={task_status}. {task_result}{review_msg}")
+    failure_part = f" Failure reason: {task_failure_reason}" if task_status == "failed" and task_failure_reason else ""
+    return ToolResult(content=f"Assessment recorded: outcome={task_status}.{failure_part} {task_process_report}{review_msg}")
 
 
 @control_tool
@@ -592,18 +557,35 @@ def get_tracked_task_output(
             continue
         if t.title != title:
             continue
-        parts = [f"Task「{t.title}」(id={t.id}, status={t.status})"]
-        if t.outputs:
-            parts.append(f"Output:\n{t.outputs}")
-        if t.result:
-            parts.append(f"Result:\n{t.result}")
+        text_lines = [f"Task「{t.title}」(id={t.id}, status={t.status})"]
+        images: list = []
+        if isinstance(t.outputs, list):
+            images = [p for p in t.outputs if p.get("type") == "image"]
+            out_text = next((p.get("text", "") for p in t.outputs if p.get("type") == "text"), "")
+            if out_text:
+                text_lines.append(f"Output:\n{out_text}")
+        elif t.outputs:
+            text_lines.append(f"Output:\n{t.outputs}")
+        if t.process_report:
+            text_lines.append(f"Process Report:\n{t.process_report}")
         if t.error:
-            parts.append(f"Error:\n{t.error}")
-        matches.append("\n".join(parts))
+            text_lines.append(f"Error:\n{t.error}")
+        matches.append((images, "\n".join(text_lines)))
 
     if not matches:
         return ToolResult(content=f"No tracked task found with title {title!r}.")
-    return ToolResult(content="\n\n---\n\n".join(matches))
+
+    has_images = any(imgs for imgs, _ in matches)
+    if not has_images:
+        return ToolResult(content="\n\n---\n\n".join(text for _, text in matches))
+
+    content: list = []
+    for i, (imgs, text) in enumerate(matches):
+        if i > 0:
+            content.append({"type": "text", "text": "\n\n---\n\n"})
+        content.extend(imgs)
+        content.append({"type": "text", "text": text})
+    return ToolResult(content=content)
 
 
 def get_control_tools(

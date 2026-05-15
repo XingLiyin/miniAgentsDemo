@@ -67,15 +67,13 @@ class ConversationTurn:
 
 @dataclass
 class ActorResult:
-    """Actor 对单个 task 的执行结果（plan 或 atomic 均适用）。"""
+    """Actor 对单个 task 的执行结果，作为 Observer 的输入。"""
     task_id: str
     success: bool                                                   # 执行层成功（未抛异常）
     output: str                                                     # 最后一轮 LLM 文本
     tool_calls_made: list[ToolCallRecord] = field(default_factory=list)
     conversation_turns: list[ConversationTurn] = field(default_factory=list)
-    task_outputs: dict[str, Any] = field(default_factory=dict)     # 额外输出（如 planned_task_ids）
     actor_mode: Literal["text", "tool_use", "skill", "plan"] = "text"
-    plan_task_count: int | None = None  # plan 模式专用；0 = 空计划（目标已达成）
     skill_used: str | None = None
     error: str | None = None
     context_tokens: int = 0            # 本次执行中最大单轮 prompt_tokens

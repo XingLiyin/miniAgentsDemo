@@ -100,11 +100,11 @@ class TaskService:
             pass
         return task
 
-    def finish(self, task_id: str, result: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
-        """完成 Task，写入 result/outputs 后转为 FINISHED。"""
+    def finish(self, task_id: str, process_report: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
+        """完成 Task，写入 process_report/outputs 后转为 FINISHED。"""
         task = self.get(task_id, session_id)
-        if result is not None:
-            task.result = result
+        if process_report is not None:
+            task.process_report = process_report
         if outputs is not None:
             task.outputs = outputs
         self.save(task)
@@ -123,7 +123,7 @@ class TaskService:
     def reopen(self, task_id: str, session_id: str | None = None) -> Task:
         """将 FINISHED 任务重置为 PENDING（Observer 复核不通过时使用）。"""
         task = self.get(task_id, session_id)
-        task.result = None
+        task.process_report = None
         task.outputs = ""
         self.save(task)
         result = self.transition(task_id, "PENDING", task.session_id)

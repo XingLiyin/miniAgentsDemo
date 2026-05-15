@@ -84,10 +84,10 @@ class AgentLoop:
 
             verdict, task = self._run_observer(session, agent, ctx, task, result, session_id, agent_id, task_id)
 
-            self._write_execution_memory(agent_id, task, result, verdict, session_id, task_id)
+            self._write_execution_memory(agent_id, task, verdict, session_id, task_id)
 
             if task.status == "FAILED":
-                raise AppError("TASK_FAILED_BY_OBSERVER", task.result or "")
+                raise AppError("TASK_FAILED_BY_OBSERVER", task.process_report or "")
 
             if task.status == "PENDING":
                 return
@@ -124,8 +124,17 @@ class AgentLoop:
 
         task = self._task_svc.get(task.id, session_id)
 
-        if result.exit_reason == "normal" and result.output:
-            task.outputs = result.output
+        if result.exit_reason == "normal" and (result.output or (result.conversation_turns and result.conversation_turns[-1].images)):
+            last_images = result.conversation_turns[-1].images if result.conversation_turns else []
+            if last_images:
+                task.outputs = [
+                    {"type": "image", "data": img.data, "media_type": img.media_type, "source_type": img.source_type}
+                    for img in last_images
+                ]
+                if result.output:
+                    task.outputs.append({"type": "text", "text": result.output})
+            else:
+                task.outputs = result.output
             self._task_svc.save(task)
 
         return result, task
@@ -169,9 +178,8 @@ class AgentLoop:
             task_id=task_id,
         )
 
-    def _write_execution_memory(self, agent_id: str, task: Task, result: ActorResult, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
+    def _write_execution_memory(self, agent_id: str, task: Task, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
         """Write user prompt and observer verdict summary to memory."""
-        task_output = ""
         if task.user_prompt and not task.user_prompt_in_memory:
             self._memory_svc.append_message(
                 agent_id=agent_id,
@@ -181,19 +189,21 @@ class AgentLoop:
                 task_id=task_id,
             )
             task.user_prompt_in_memory = True
-            task_output = result.output if result.output != task.result else ""
             self._task_svc.save(task)
-        if verdict.summary or (result.conversation_turns and result.conversation_turns[-1].images):
-            last_images = result.conversation_turns[-1].images if result.conversation_turns else []
-            if last_images:
-                mem_content: str | list = [
-                    {"type": "image", "data": img.data, "media_type": img.media_type, "source_type": img.source_type}
-                    for img in last_images
-                ]
-                if verdict.summary:
-                    mem_content.append({"type": "text", "text": "\n\n".join(filter(None, [task_output, verdict.summary, task.result]))})
+        if verdict.summary or task.outputs:
+            if isinstance(task.outputs, list):
+                output_images = [p for p in task.outputs if p.get("type") == "image"]
+                output_text = next((p.get("text", "") for p in task.outputs if p.get("type") == "text"), "")
             else:
-                mem_content = "\n\n".join(filter(None, [task_output, verdict.summary, task.result]))
+                output_images = []
+                output_text = task.outputs or ""
+            if output_images:
+                mem_content: str | list = list(output_images)
+                text_part = "\n\nProcess Report: ".join(filter(None, [output_text, verdict.summary]))
+                if text_part:
+                    mem_content.append({"type": "text", "text": text_part})
+            else:
+                mem_content = "\n\nProcess Report: ".join(filter(None, [output_text, verdict.summary]))
             self._memory_svc.append_message(
                 agent_id=agent_id,
                 role="assistant",
@@ -204,8 +214,8 @@ class AgentLoop:
 
     def _publish_blackboard(self, session_id: str, agent_id: str, task: Task, result: ActorResult) -> None:
         """Publish task result and conversation turns to the blackboard."""
-        if task.result:
-            self._bb_svc.publish(session_id, task.id, agent_id, task.result)
+        if task.process_report:
+            self._bb_svc.publish(session_id, task.id, agent_id, task.process_report)
         if task.outputs:
             self._bb_svc.publish(session_id, task.id, agent_id, task.outputs)
         for result_turn in result.conversation_turns:

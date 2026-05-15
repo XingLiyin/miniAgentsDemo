@@ -26,10 +26,9 @@ class Task:
     title: str = ""                    # 简短描述，供 Agent 识别和展示用, 可为空，等待 llm 补全
     description: str = ""              # 详细描述，供 Agent 识别和展示用, 可为空，等待 llm 补全
     settings: dict[str, Any] = field(default_factory=dict) # 任务配置项（如 skill_name、use_subagent 等，Agent 执行时参考）
-    progress_text: str = ""            # 任务执行中的进度描述，供 Agent 内部维护和展示用
     user_prompt_in_memory: bool = False  # user_prompt 是否已写入 memory（防 resume 重复写）
-    result: str | None = None          # 结果文本
-    outputs: str = ""                   # actor 最终输出的完整文本
+    process_report: str | None = None    # observer 观察到的该任务执行过程的文本报告（如工具调用记录、子 Agent 执行记录等）
+    outputs: str | list = ""             # actor 最终输出（文本或含图片的 multimodal list）
     error: str | None = None           # 若任务失败，存储错误信息
 
     # DAG & spawn 字段（仅 sub-task 填充）
@@ -42,9 +41,6 @@ class Task:
 
     # ── 运行时临时字段（不持久化，handler 直接写，loop 直接读）──────────────────
     actor_done: bool = field(default=False, compare=False)
-    actor_outcome: str = field(default="", compare=False)
-    actor_summary: str = field(default="", compare=False)
-    proceed_to_review: bool = field(default=False, compare=False)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,7 +55,7 @@ class Task:
             "description": self.description,
             "settings": self.settings,
             "user_prompt_in_memory": self.user_prompt_in_memory,
-            "result": self.result,
+            "process_report": self.process_report,
             "outputs": self.outputs,
             "error": self.error,
             "dag_deps": self.dag_deps,
@@ -83,7 +79,7 @@ class Task:
             description=d.get("description", ""),
             settings=d.get("settings", {}),
             user_prompt_in_memory=d.get("user_prompt_in_memory", False),
-            result=d.get("result"),
+            process_report=d.get("process_report"),
             outputs=d.get("outputs", ""),
             error=d.get("error"),
             dag_deps=d.get("dag_deps", []),
