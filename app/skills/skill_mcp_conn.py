@@ -92,6 +92,10 @@ class SkillMCPConn:
             ctx,
         )
 
+    @property
+    def is_connected(self) -> bool:
+        return self._provider._initialized
+
     def stop(self) -> None:
         try:
             self._provider.stop()

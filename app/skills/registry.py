@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -48,6 +49,7 @@ class SkillRegistry:
         self._source_configs: dict[str, RemoteSkillSourceConfig] = {}
         self._mcp_conns: dict[str, SkillMCPConn] = {}
         self._last_connect_attempt: dict[str, float] = {}
+        self._connect_locks: dict[str, threading.Lock] = {}
         self._remote_index: dict[str, str] = {}                 # skill_name → source_name（ephemeral）
 
         # ── workspace file (.skills/ 子目录) ───────────────────────────────────
@@ -60,6 +62,8 @@ class SkillRegistry:
         self._ws_mcp_conns: dict[str, dict[str, SkillMCPConn]] = {}
         # working_dir → {source_name → last_attempt_ts}
         self._ws_last_connect: dict[str, dict[str, float]] = {}
+        # working_dir → {source_name → Lock}
+        self._ws_connect_locks: dict[str, dict[str, threading.Lock]] = {}
         # working_dir → {skill_name → source_name}（ephemeral，每次 list_all 刷新）
         self._ws_remote_index: dict[str, dict[str, str]] = {}
 
@@ -97,11 +101,13 @@ class SkillRegistry:
                 f"Remote skill source '{config.source_name}' already registered",
             )
         self._source_configs[config.source_name] = config
+        self._connect_locks[config.source_name] = threading.Lock()
         logger.info("SkillRegistry: registered remote source '%s' (lazy)", config.source_name)
 
     def unregister_remote_source(self, source_name: str) -> None:
         self._source_configs.pop(source_name, None)
         self._last_connect_attempt.pop(source_name, None)
+        self._connect_locks.pop(source_name, None)
         stale = [n for n, s in self._remote_index.items() if s == source_name]
         for n in stale:
             del self._remote_index[n]
@@ -312,34 +318,22 @@ class SkillRegistry:
         if not configs:
             return []
 
-        ws_conns = self._ws_mcp_conns.setdefault(working_dir, {})
-        ws_last = self._ws_last_connect.setdefault(working_dir, {})
+        ws_conns  = self._ws_mcp_conns.setdefault(working_dir, {})
+        ws_last   = self._ws_last_connect.setdefault(working_dir, {})
+        ws_locks  = self._ws_connect_locks.setdefault(working_dir, {})
         ws_index: dict[str, str] = {}
         result: list[SkillMetadata] = []
 
         for config in configs:
             source_name = config.source_name
-            if source_name not in ws_conns:
-                now = time.monotonic()
-                if now - ws_last.get(source_name, 0) < self._CONNECT_COOLDOWN:
-                    continue
-                ws_last[source_name] = now
-                try:
-                    conn = self._build_conn(config)
-                    self._validate_connection(conn, config)
-                    ws_conns[source_name] = conn
-                    logger.info(
-                        "SkillRegistry: connected workspace remote source '%s' (workspace=%s)",
-                        source_name, working_dir,
-                    )
-                except Exception as e:
-                    logger.warning(
-                        "SkillRegistry: failed to connect workspace source '%s': %s",
-                        source_name, e,
-                    )
-                    continue
-
             conn = ws_conns.get(source_name)
+            if conn is None or not conn.is_connected:
+                lock = ws_locks.setdefault(source_name, threading.Lock())
+                if not self._try_connect_source(
+                    source_name, config, ws_conns, ws_last, lock,
+                ):
+                    continue
+                conn = ws_conns.get(source_name)
             if conn is None:
                 continue
             try:
@@ -377,10 +371,17 @@ class SkillRegistry:
         self._remote_index.clear()
         result: list[SkillMetadata] = []
         for source_name, config in self._source_configs.items():
-            if source_name not in self._mcp_conns:
-                if not self._try_connect_source(source_name, config):
-                    continue
             conn = self._mcp_conns.get(source_name)
+            if conn is None or not conn.is_connected:
+                lock = self._connect_locks.get(source_name)
+                if lock is None:
+                    continue
+                if not self._try_connect_source(
+                    source_name, config,
+                    self._mcp_conns, self._last_connect_attempt, lock,
+                ):
+                    continue
+                conn = self._mcp_conns.get(source_name)
             if conn is None:
                 continue
             try:
@@ -406,20 +407,39 @@ class SkillRegistry:
                 logger.warning("SkillRegistry: live-fetch from '%s' failed: %s", source_name, e)
         return result
 
-    def _try_connect_source(self, source_name: str, config: RemoteSkillSourceConfig) -> bool:
-        now = time.monotonic()
-        if now - self._last_connect_attempt.get(source_name, 0) < self._CONNECT_COOLDOWN:
-            return False
-        self._last_connect_attempt[source_name] = now
-        try:
-            conn = self._build_conn(config)
-            self._validate_connection(conn, config)
-            self._mcp_conns[source_name] = conn
-            logger.info("SkillRegistry: connected remote source '%s'", source_name)
-            return True
-        except Exception as e:
-            logger.warning("SkillRegistry: failed to connect '%s': %s", source_name, e)
-            return False
+    def _try_connect_source(
+        self,
+        source_name: str,
+        config: RemoteSkillSourceConfig,
+        conn_store: dict[str, SkillMCPConn],
+        last_attempt: dict[str, float],
+        lock: threading.Lock,
+    ) -> bool:
+        with lock:
+            existing = conn_store.get(source_name)
+            if existing is not None and existing.is_connected:
+                return True
+            if existing is not None:
+                conn_store.pop(source_name, None)
+                last_attempt.pop(source_name, None)  # 断连重连，跳过冷却
+                try:
+                    existing.stop()
+                except Exception:
+                    pass
+            now = time.monotonic()
+            if now - last_attempt.get(source_name, 0) < self._CONNECT_COOLDOWN:
+                return False
+            last_attempt[source_name] = now
+            try:
+                conn = self._build_conn(config)
+                self._validate_connection(conn, config)
+                conn_store[source_name] = conn
+                last_attempt.pop(source_name, None)
+                logger.info("SkillRegistry: connected remote source '%s'", source_name)
+                return True
+            except Exception as e:
+                logger.warning("SkillRegistry: failed to connect '%s': %s", source_name, e)
+                return False
 
     def _validate_connection(self, conn: SkillMCPConn, config: RemoteSkillSourceConfig) -> None:
         try:
