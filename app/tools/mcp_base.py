@@ -13,7 +13,6 @@ import concurrent.futures
 import logging
 import threading
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from contextlib import AsyncExitStack
 from datetime import timedelta
 from typing import Any
@@ -45,10 +44,6 @@ class _MCPProviderBase(ABC):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._initialized = False
-        self._generation: int = 0
-        # Set by ToolRegistry to route reconnects through _connect_locks; fallback uses _reconnect_lock.
-        self._reconnect_fn: Callable[[int], None] | None = None
-        self._reconnect_lock = threading.Lock()
 
     # ── 子类接口 ──────────────────────────────────────────────────────────
 
@@ -85,28 +80,14 @@ class _MCPProviderBase(ABC):
                 "MCP_NOT_STARTED",
                 f"{type(self).__name__}.start() has not been called",
             )
-        gen = self._generation
         meta = {"netcowork/sessionId": ctx.session_id} if ctx else None
         try:
             return self._do_call(tool_name, arguments, meta)
         except Exception as e:
-            if not _is_session_terminated(e):
-                raise
-            logger.warning(
-                "MCP session terminated while calling '%s', reconnecting...", tool_name
-            )
-            self._handle_session_terminated(gen)
-            logger.info("MCP reconnected, retrying '%s'", tool_name)
-            return self._do_call(tool_name, arguments, meta)
-
-    def _handle_session_terminated(self, gen: int) -> None:
-        """Reconnect after session termination; routes through registry lock when available."""
-        if self._reconnect_fn is not None:
-            self._reconnect_fn(gen)
-        else:
-            with self._reconnect_lock:
-                if self._generation == gen and self._initialized:
-                    self._reconnect()
+            if _is_session_terminated(e):
+                self._initialized = False
+                logger.warning("MCP session terminated while calling '%s', marked as disconnected", tool_name)
+            raise
 
     def _do_call(self, tool_name: str, arguments: dict, meta: dict | None) -> ToolResult:
         logger.debug("Calling MCP tool '%s' with arguments %s", tool_name, arguments)
@@ -114,17 +95,9 @@ class _MCPProviderBase(ABC):
         result = self._run_sync(self._session.call_tool(tool_name, arguments=arguments, meta=meta))
         return ToolResult(content=_parse_mcp_tool_result(result))
 
-    def _reconnect(self) -> None:
-        try:
-            self.stop()
-        except Exception:
-            pass
-        self.start()
-
     def _finish_start(self) -> None:
         """Called by subclasses at the end of start() to record a successful connection."""
         self._initialized = True
-        self._generation += 1
 
     # ── 生命周期（共享） ───────────────────────────────────────────────────
 

@@ -14,13 +14,13 @@ class MCPSkillExecutor:
         self._conn = conn
 
     def load_instructions(self, meta: SkillMetadata, ctx: CallContext | None = None) -> str:
-        return self._conn.get_instructions(meta, ctx)
+        return self._conn.load_skill_md(meta.name, ctx)
 
     def list_files(self, meta: SkillMetadata, ctx: CallContext | None = None) -> str:
-        return self._conn.list_files(meta, ctx)
+        return self._conn.get_skill_files(meta.name, ctx)
 
     def load_resource(self, meta: SkillMetadata, path: str, ctx: CallContext | None = None) -> str:
-        return self._conn.load_reference(meta, path, ctx)
+        return self._conn.load_skill_reference(meta.name, path, ctx)
 
     def exec_script(
         self,
@@ -29,4 +29,4 @@ class MCPSkillExecutor:
         args: str,
         ctx: CallContext | None = None,
     ) -> ToolResult:
-        return self._conn.exec_script(meta, script_name, args, ctx)
+        return self._conn.exec_skill_script(meta.name, script_name, args, ctx)

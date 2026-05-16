@@ -70,7 +70,7 @@ class Observer:
         if not ctx.role:
             logger.debug("Observer: no role_md configured, using rule-based fallback")
             return self._rule_observe(result, session, task)
-        if agent.spawn_depth  == 0:
+        if agent.spawn_depth  == 0 and result.exit_reason not in ("max_rounds", "context_limit"):
             logger.debug("Observer: spawn_depth=0, skipping observation and marking task done")
             return self._rule_observe(result, session, task)
         try:

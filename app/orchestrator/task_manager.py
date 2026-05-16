@@ -273,7 +273,7 @@ class TaskManager:
                 try:
                     current_task = self._task_svc.get(failed_task_id, session_id)
                     if current_task.status != "FAILED":
-                        self._task_svc.fail(failed_task_id, error=payload.get("error", ""), session_id=session_id)
+                        self._task_svc.fail(failed_task_id, process_report=payload.get("process_report", ""), error=payload.get("error", ""), session_id=session_id)
                     else:
                         logger.debug("TM: task %s already FAILED (set by observer), skipping transition", failed_task_id)
                 except Exception:
@@ -356,11 +356,6 @@ class TaskManager:
     def complete(self, task_id: str, process_report: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
         task = self._task_svc.finish(task_id, process_report=process_report, outputs=outputs, session_id=session_id)
         self._reset_failure_counter(task.session_id)
-        return task
-
-    def fail_task(self, task_id: str, error: str, session_id: str | None = None) -> Task:
-        task = self._task_svc.fail(task_id, error, session_id=session_id)
-        self.record_failure(task.session_id)
         return task
 
     # ── Private helpers ───────────────────────────────────────────────────────

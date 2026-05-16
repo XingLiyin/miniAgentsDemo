@@ -13,4 +13,5 @@ co-workspace
 workspace
 data
 packaging
+!packaging/entrypoint.sh
 logs

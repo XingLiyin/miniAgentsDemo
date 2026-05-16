@@ -78,11 +78,18 @@ class TaskService:
         task.updated_at = now_iso()
         self._store.save(task.to_dict())
 
-    def transition(self, task_id: str, to_status: str, session_id: str | None = None) -> Task:
+    def transition(self, task_id: str, to_status: str, session_id: str | None = None, 
+                   process_report: str | None = None, task_output: str | None = None, error: str | None = None) -> Task:
         """校验并执行状态转换，持久化后发布事件。"""
         task = self.get(task_id, session_id)
         self._sm.validate_task(task.status, to_status)
         task.status = to_status
+        if process_report:
+            task.process_report = process_report
+        if task_output:
+            task.outputs = task_output
+        if error:
+            task.error = error
         self.save(task)
         event_map = {
             "ACTIVE": TASK_STARTED,
@@ -102,19 +109,11 @@ class TaskService:
 
     def finish(self, task_id: str, process_report: str | None = None, outputs: str | None = None, session_id: str | None = None) -> Task:
         """完成 Task，写入 process_report/outputs 后转为 FINISHED。"""
-        task = self.get(task_id, session_id)
-        if process_report is not None:
-            task.process_report = process_report
-        if outputs is not None:
-            task.outputs = outputs
-        self.save(task)
-        return self.transition(task_id, "FINISHED", task.session_id)
+        return self.transition(task_id, "FINISHED", session_id, process_report=process_report, task_output=outputs)
 
-    def fail(self, task_id: str, error: str, session_id: str | None = None) -> Task:
-        task = self.get(task_id, session_id)
-        task.error = error
-        self.save(task)
-        return self.transition(task_id, "FAILED", task.session_id)
+    def fail(self, task_id: str, error: str, session_id: str | None = None, 
+             process_report: str | None = None, task_output: str | None = None) -> Task:
+        return self.transition(task_id, "FAILED", session_id, process_report=process_report, task_output=task_output, error=error)
 
     def to_be_observed(self, task_id: str, session_id: str | None = None) -> Task:
         """Actor 完成后转入待观察状态。"""

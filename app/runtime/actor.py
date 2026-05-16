@@ -126,7 +126,7 @@ class Actor:
                 _usage is not None
                 and _usage.prompt_tokens is not None
                 and llm_client.context_limit > 0
-                and _usage.prompt_tokens >= llm_client.context_limit * 0.9
+                and _usage.prompt_tokens >= llm_client.context_limit * 0.8
             )
             if context_limit_hit:
                 logger.warning(
@@ -298,14 +298,26 @@ class Actor:
         """plan 和 act 统一走文本路径；task 创建由 Observer 阶段负责。"""
         skill_used = task.settings.get("skill_name")
         actor_mode = "skill" if skill_used else ("tool_use" if tool_calls_made else "text")
+
+        error_parts: list[str] = []
+        failed_tools = [tc for tc in tool_calls_made if tc.is_error]
+        if failed_tools:
+            summaries = [f"{tc.tool_name}: {tc.result}" for tc in failed_tools]
+            error_parts.append("Tool errors: " + "; ".join(summaries))
+        if exit_reason == "max_rounds":
+            error_parts.append("Actor reached max tool rounds without completion")
+        elif exit_reason == "context_limit":
+            error_parts.append("Actor stopped: context limit reached")
+
         return ActorResult(
             task_id=task.id,
-            success=True,
+            success=exit_reason not in ("max_rounds", "context_limit"),
             output=last_text,
             tool_calls_made=tool_calls_made,
             conversation_turns=conversation_turns,
             actor_mode=actor_mode,
             skill_used=skill_used,
+            error="\n".join(error_parts) if error_parts else None,
             context_tokens=context_tokens,
             exit_reason=exit_reason,
         )
