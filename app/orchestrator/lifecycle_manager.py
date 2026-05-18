@@ -37,6 +37,7 @@ if TYPE_CHECKING:
     from app.domain.services.memory_service import MemoryService
     from app.domain.models.task import Task
     from app.runtime.agent_loop import AgentLoop
+    from app.runtime.reasoner import Reasoner
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,7 @@ class LifecycleManager:
         max_spawn_depth: int = 1,
         memory_svc: "MemoryService | None" = None,
         template_loader: AgentLoader | None = None,
+        reasoner: "Reasoner | None" = None,
     ) -> None:
         self._session_svc = session_svc
         self._agent_store = agent_store
@@ -94,6 +96,7 @@ class LifecycleManager:
         self._max_spawn_depth = max_spawn_depth
         self._memory_svc = memory_svc
         self._template_loader = template_loader
+        self._reasoner = reasoner
 
         self._agent_loop: "AgentLoop | None" = None
         self._states: dict[str, LMState] = {}
@@ -116,6 +119,8 @@ class LifecycleManager:
     def cleanup_session(self, session_id: str) -> None:
         self._states.pop(session_id, None)
         self._locks.pop(session_id, None)
+        if self._reasoner:
+            self._reasoner.evict_session(session_id)
 
     # ── Agent registration ────────────────────────────────────────────────────
 

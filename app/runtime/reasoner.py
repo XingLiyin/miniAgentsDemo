@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,10 +20,13 @@ if TYPE_CHECKING:
     from app.agent_template.loader import AgentLoader
     from app.runtime.memory_compaction import MemoryCompactionAgent
     from app.skills.registry import SkillRegistry
+    from app.skills.skill import Skill
     from app.storage.file.agent_store import AgentStore
     from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+_SKILL_CACHE_TTL = 60.0  # 秒，每个 agent 的 skill 列表缓存时间
 
 
 class Reasoner:
@@ -54,6 +58,8 @@ class Reasoner:
         self._agent_template_loader = agent_template_loader
         self._compaction_agent = compaction_agent
         self._agent_store = agent_store
+        # (session_id, agent_id, working_dir) → (fetched_at, skills)
+        self._skill_cache: dict[tuple[str, str, str], tuple[float, list["Skill"]]] = {}
 
     def reason(
         self, session: Session, agent: Agent, task: Task
@@ -76,6 +82,12 @@ class Reasoner:
             token_estimate=token_estimate,
             project_background=self._load_background(agent, task),
         )
+
+    def evict_session(self, session_id: str) -> None:
+        """Session 结束时清理该 session 下所有 agent 的 skill 缓存。"""
+        stale = [k for k in self._skill_cache if k[0] == session_id]
+        for k in stale:
+            del self._skill_cache[k]
 
     def _maybe_compact(self, session: Session, agent: Agent, memory_tokens: int) -> bool:
         """检查 token 预算，必要时触发 compaction，返回是否执行了压缩。"""
@@ -307,10 +319,19 @@ class Reasoner:
         return tool_resources
 
     def _retrieve_skills(self, goal: str, agent: Agent, ctx: "CallContext | None" = None) -> list[tuple[str, str]]:
-        """返回 (name, description) 元组列表。"""
+        """返回 (name, description) 元组列表。结果缓存在 Reasoner 内，按 TTL + working_dir 失效。"""
         if not self._skill_registry:
             return []
-        return [
-            (m.name, m.description)
-            for m in self._skill_registry.list_all(ctx)
-        ]
+        wd = ctx.working_dir if ctx else ""
+        key = (agent.session_id, agent.id, wd)
+        now = time.monotonic()
+        cached = self._skill_cache.get(key)
+        if cached is not None and now - cached[0] < _SKILL_CACHE_TTL:
+            return [(s.name, s.description) for s in cached[1]]
+
+        skills = self._skill_registry.fetch_skills(ctx)
+        allowlist = set(agent.actor.skills)
+        if allowlist:
+            skills = [s for s in skills if s.name in allowlist]
+        self._skill_cache[key] = (now, skills)
+        return [(s.name, s.description) for s in skills]

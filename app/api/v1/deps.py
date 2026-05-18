@@ -234,6 +234,7 @@ def get_lifecycle_manager() -> LifecycleManager:
         max_spawn_depth=settings.max_spawn_depth,
         memory_svc=get_memory_service(),
         template_loader=get_agent_template_loader(),
+        reasoner=get_reasoner(),
     )
     lm.set_agent_loop(get_agent_loop())
     return lm

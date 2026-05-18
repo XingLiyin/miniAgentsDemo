@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from app.skills.definition import SkillDefinition, SkillMetadata
+from app.skills.definition import SkillMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 class SkillLoader:
     """扫描 skills 目录并解析 SKILL.md 文件。"""
 
-    def scan(self, skills_dir: Path) -> list[SkillMetadata]:
-        """扫描 skills_dir，返回所有发现的 SkillMetadata 列表。"""
+    def scan(self, skills_dir: Path) -> list[tuple[SkillMetadata, Path]]:
+        """扫描 skills_dir，返回 (SkillMetadata, skill_dir) 列表。"""
         if not skills_dir.exists():
             logger.warning("SkillLoader: skills_dir '%s' not found, no skills loaded", skills_dir)
             return []
@@ -26,14 +26,14 @@ class SkillLoader:
             if not skill_md.exists():
                 continue
             try:
-                metadata = self.load_metadata(skill_md, skill_dir)
-                result.append(metadata)
+                metadata = self.load_metadata(skill_md)
+                result.append((metadata, skill_dir))
                 logger.debug("SkillLoader: loaded skill '%s' from '%s'", metadata.name, skill_dir)
             except Exception as e:
                 logger.warning("SkillLoader: failed to load '%s': %s", skill_dir.name, e)
         return result
 
-    def load_metadata(self, skill_md_path: Path, skill_dir: Path) -> SkillMetadata:
+    def load_metadata(self, skill_md_path: Path) -> SkillMetadata:
         """解析 SKILL.md frontmatter，返回 SkillMetadata（Level 1）。"""
         content = skill_md_path.read_text(encoding="utf-8")
         frontmatter, _ = _parse_skill_md(content)
@@ -42,7 +42,6 @@ class SkillLoader:
             description=str(frontmatter.get("description", "")).strip(),
             triggers=frontmatter.get("triggers") or [],
             version=str(frontmatter.get("version", "1.0")),
-            skill_dir=skill_dir,
         )
 
     def load_instructions(self, skill_dir: Path) -> str:
