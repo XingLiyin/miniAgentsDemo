@@ -214,7 +214,10 @@ class SkillRegistry:
             # workspace remote
             conn = self.get_ws_conn_for_skill(name, ctx.working_dir)
             if conn is not None:
-                source_name = self._ws_remote_index[ctx.working_dir][name]
+                source_name = self._ws_remote_index.get(ctx.working_dir, {}).get(name)
+                if source_name is None:
+                    conn = None
+            if conn is not None:
                 try:
                     instructions = conn.load_skill_md(name, ctx)
                     meta = SkillMetadata(
@@ -244,7 +247,9 @@ class SkillRegistry:
                 name,
             )
             return None
-        source_name = self._remote_index[name]
+        source_name = self._remote_index.get(name)
+        if source_name is None:
+            return None
         try:
             instructions = conn.load_skill_md(name, ctx)
             meta = SkillMetadata(
@@ -379,7 +384,7 @@ class SkillRegistry:
 
     def _fetch_remote_live(self, ctx: CallContext | None = None) -> list[SkillMetadata]:
         """实时从全局 remote source 拉取 skill 列表，刷新 _remote_index。"""
-        self._remote_index.clear()
+        new_index: dict[str, str] = {}
         result: list[SkillMetadata] = []
         for source_name, config in self._source_configs.items():
             conn = self._mcp_conns.get(source_name)
@@ -402,7 +407,7 @@ class SkillRegistry:
                     name = item.get("name", "")
                     if not name:
                         continue
-                    self._remote_index[name] = source_name
+                    new_index[name] = source_name
                     result.append(SkillMetadata(
                         name=name,
                         description=item.get("description", ""),
@@ -417,6 +422,7 @@ class SkillRegistry:
                 )
             except Exception as e:
                 logger.warning("SkillRegistry: live-fetch from '%s' failed: %s", source_name, e)
+        self._remote_index = new_index
         return result
 
     def _try_connect_source(
