@@ -13,7 +13,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+import threading
+
 from app.config.settings import get_settings
+from app.common.interrupt import AgentInterruptedError
 from app.domain.models.agent import Agent
 from app.domain.models.session import Session
 from app.domain.models.task import Task
@@ -46,7 +49,8 @@ class Actor:
         self._session_svc = session_svc
         self._prompt_builder = prompt_builder or PromptBuilderFactory.for_actor()
 
-    def act(self, task: Task, ctx: ReasoningContext, agent: Agent, session: Session) -> ActorResult:
+    def act(self, task: Task, ctx: ReasoningContext, agent: Agent, session: Session,
+            interrupt_flag: "threading.Event | None" = None) -> ActorResult:
         """执行单个 task"""
         if task.status == "PENDING":
             self._task_svc.transition(task.id, "ACTIVE", task.session_id)
@@ -74,15 +78,31 @@ class Actor:
         last_prompt_tokens = ctx.token_estimate
         exit_reason = "max_rounds"
 
+        from app.common.interrupt import InterruptContext
         for _round in range(agent.loop_guard.actor_max_tool_rounds):
+            if interrupt_flag and interrupt_flag.is_set():
+                raise AgentInterruptedError(
+                    "interrupted before actor round",
+                    context=InterruptContext(tool_calls=list(tool_calls_made), partial_text=last_text),
+                )
+
             messages = self._prompt_builder.sanitize_messages(messages)
             messages_sent = list(messages)
             self._push_prompt_event(_sse, session_id, _round, system_prompt, messages, ctx, is_daemon)
 
             round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens)
-            full_text, reasoning_text, tool_call_acc, image_acc, _usage = self._stream_llm(
-                llm_client, messages, system_prompt, tools, _round, _sse, session_id, round_max_tokens, is_daemon
-            )
+            try:
+                full_text, reasoning_text, tool_call_acc, image_acc, _usage = self._stream_llm(
+                    llm_client, messages, system_prompt, tools, _round, _sse, session_id, round_max_tokens, is_daemon,
+                    interrupt_flag=interrupt_flag,
+                )
+            except AgentInterruptedError as exc:
+                partial = (exc.context.partial_text if exc.context else "") or last_text
+                raise AgentInterruptedError(
+                    str(exc),
+                    context=InterruptContext(tool_calls=list(tool_calls_made), partial_text=partial),
+                ) from None
+
             if _usage:
                 if self._session_svc and session_id:
                     self._session_svc.add_tokens(
@@ -104,9 +124,18 @@ class Actor:
                 messages = self._prompt_builder.append_assistant_tool_calls(
                     messages, full_text, tool_calls_from_stream, reasoning_text or None
                 )
-                round_tool_calls, messages, done = self._execute_tools(
-                    tool_calls_from_stream, agent, task, toolcall_ctx, messages
-                )
+                try:
+                    round_tool_calls, messages, done = self._execute_tools(
+                        tool_calls_from_stream, agent, task, toolcall_ctx, messages,
+                        interrupt_flag=interrupt_flag,
+                    )
+                except AgentInterruptedError as exc:
+                    # 工具执行中被打断：tool_calls_made 尚未 extend，加上本轮已完成的部分
+                    partial_calls = list(tool_calls_made) + (exc.context.tool_calls if exc.context else [])
+                    raise AgentInterruptedError(
+                        str(exc),
+                        context=InterruptContext(tool_calls=partial_calls, partial_text=last_text),
+                    ) from None
                 tool_calls_made.extend(round_tool_calls)
 
             if _usage and _usage.prompt_tokens:
@@ -176,7 +205,7 @@ class Actor:
             "tool_names": [r.name for r in ctx.actor_resources if r.kind == "tool" and r.llm_tool is not None],
         })
 
-    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str, max_tokens: int | None = None, is_daemon: bool = False):
+    def _stream_llm(self, llm_client: BaseChatClient, messages, system_prompt, tools, _round: int, _sse, session_id: str, max_tokens: int | None = None, is_daemon: bool = False, interrupt_flag: "threading.Event | None" = None):
         full_text = ""
         reasoning_text = ""
         tool_call_acc: dict[int, dict] = {}
@@ -185,8 +214,14 @@ class Actor:
         final_usage = None
 
         from app.common.errors import AppError
+        from app.common.interrupt import InterruptContext
         try:
             for chunk in llm_client.stream_message(messages=messages, system_prompt=system_prompt, tools=tools, max_tokens=max_tokens):
+                if interrupt_flag and interrupt_flag.is_set():
+                    raise AgentInterruptedError(
+                        "interrupted during LLM stream",
+                        context=InterruptContext(partial_text=full_text),
+                    )
                 if chunk.text_delta:
                     full_text += chunk.text_delta
                     if not is_daemon:
@@ -216,7 +251,7 @@ class Actor:
                     final_usage = chunk.usage
                     if chunk.error:
                         raise AppError("LLM_API_ERROR", str(chunk.error))
-        except AppError:
+        except (AppError, AgentInterruptedError):
             raise
         except Exception as e:
             raise AppError("LLM_API_ERROR", str(e)) from e
@@ -248,11 +283,18 @@ class Actor:
         )
         return full_text, reasoning_text, tool_call_acc, image_acc, final_usage
 
-    def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages):
+    def _execute_tools(self, tool_calls, agent: Agent, task: Task, toolcall_ctx: CallContext, messages,
+                       interrupt_flag: "threading.Event | None" = None):
+        from app.common.interrupt import InterruptContext
         round_tool_calls: list[ToolCallRecord] = []
         done = False
 
         for tool_call in tool_calls:
+            if interrupt_flag and interrupt_flag.is_set():
+                raise AgentInterruptedError(
+                    "interrupted before tool call",
+                    context=InterruptContext(tool_calls=list(round_tool_calls)),
+                )
             try:
                 result = self._tool_gateway.call(
                     tool_name=tool_call.name,
@@ -261,9 +303,17 @@ class Actor:
                     task_id=task.id,
                     ctx=toolcall_ctx,
                 )
+            except AgentInterruptedError:
+                raise
             except Exception as e:
                 logger.warning("Actor: tool '%s' raised %s", tool_call.name, e)
                 result = ToolResult(content=str(e), is_error=True)
+
+            if interrupt_flag and interrupt_flag.is_set():
+                raise AgentInterruptedError(
+                    "interrupted after tool result",
+                    context=InterruptContext(tool_calls=list(round_tool_calls)),
+                )
 
             if task.actor_done:
                 done = True

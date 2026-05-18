@@ -7,9 +7,10 @@ export type SessionStatus =
   | 'SUCCEEDED'
   | 'FAILED'
   | 'CANCELED'
+  | 'INTERRUPTED'
   | 'PAUSED_HITL'
 
-export const TERMINAL_STATUSES: SessionStatus[] = ['SUCCEEDED', 'FAILED', 'CANCELED']
+export const TERMINAL_STATUSES: SessionStatus[] = ['SUCCEEDED', 'FAILED', 'CANCELED', 'INTERRUPTED']
 
 export interface Session {
   id: string

@@ -499,13 +499,8 @@ class LifecycleManager:
         from app.domain.models.memory import MemorySummary
 
         parent_messages = self._memory_svc.get_window(src_agent_id, n=10000)
-        for msg in parent_messages:
-            self._memory_svc.append_message(
-                agent_id=dst_agent_id,
-                role=msg["role"],
-                content=msg["content"],
-                session_id=session_id,
-            )
+        if parent_messages:
+            self._memory_svc.bulk_write_messages(dst_agent_id, parent_messages)
 
         parent_summary = self._memory_svc.get_summary(src_agent_id)
         if parent_summary:

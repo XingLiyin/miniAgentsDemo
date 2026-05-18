@@ -242,6 +242,11 @@ class SessionManager:
         if session.status in ("QUEUED", "RUNNING"):
             raise AppError("SESSION_BUSY", f"Session {session_id} is still running (status={session.status})")
 
+        # 从打断状态恢复：清除 interrupt flag，新 loop 不会立即被打断
+        if session.status == "INTERRUPTED":
+            from app.common.interrupt import InterruptRegistry
+            InterruptRegistry.clear(session_id)
+
         # Session ended — reuse the existing root agent, reset its state
         if not session.root_agent_id:
             raise AppError("AGENT_NOT_FOUND", f"Session {session_id} has no root agent")
@@ -307,6 +312,61 @@ class SessionManager:
 
         # 工作线程自行将 session 转回 RUNNING，此处无需重启 loop
         return self._session_svc.get(session_id)
+
+    def interrupt_session(self, session_id: str) -> Session:
+        """打断正在运行的 session。
+
+        立即设置 interrupt flag，取消 PENDING/SUSPENDED tasks，清空队列，
+        将 session 转为 INTERRUPTED 状态。Worker thread 在下一个检查点感知 flag 后
+        写入快照并正常退出。
+        """
+        from app.common.interrupt import InterruptRegistry
+
+        session = self._session_svc.get(session_id)
+        if session.status not in ("RUNNING", "QUEUED", "WAITING_INPUT"):
+            raise AppError(
+                "INVALID_STATE",
+                f"Session {session_id} cannot be interrupted in status={session.status}",
+            )
+
+        # 1. 通知 worker thread
+        InterruptRegistry.set(session_id)
+
+        # 2. 若处于 HITL 等待，解除阻塞（worker thread 在 tool result 返回后的检查点触发）
+        if session.status == "WAITING_INPUT":
+            from app.storage.file.hitl_store import get_hitl_store
+            get_hitl_store().submit(session_id, "")
+
+        # 3. 取消前先记录 PENDING/SUSPENDED task IDs，供快照精确读取
+        if self._task_svc is not None:
+            interrupted_ids = [
+                t.id for t in self._task_svc.list_by_session(session_id)
+                if t.status in ("PENDING", "SUSPENDED")
+                and not (t.settings or {}).get("_daemon")
+            ]
+            if interrupted_ids:
+                session.metadata["_interrupted_task_ids"] = interrupted_ids
+                self._session_svc.save(session)
+
+        # 4. 取消队列中的 PENDING tasks
+        if self._task_svc is not None:
+            self._task_svc.cancel_pending(session_id)
+
+        # 5. 取消 SUSPENDED tasks（父任务不再等待子任务）
+        if self._task_svc is not None:
+            for t in self._task_svc.list_by_session(session_id):
+                if t.status == "SUSPENDED":
+                    try:
+                        self._task_svc.transition(t.id, "CANCELED", session_id)
+                    except Exception:
+                        logger.warning("interrupt_session: failed to cancel suspended task %s", t.id)
+
+        # 6. 清空任务队列
+        if self._task_manager is not None:
+            self._task_manager._q_clear(session_id)
+
+        # 7. Session → INTERRUPTED
+        return self._session_svc.transition(session_id, "INTERRUPTED")
 
     def cancel_session(self, session_id: str) -> Session:
         """取消 Session。"""

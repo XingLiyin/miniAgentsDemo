@@ -13,6 +13,7 @@ const sessionColors: Record<SessionStatus, string> = {
   SUCCEEDED: 'bg-green-100 text-green-700',
   FAILED: 'bg-red-100 text-red-700',
   CANCELED: 'bg-gray-100 text-gray-400',
+  INTERRUPTED: 'bg-orange-100 text-orange-700',
   PAUSED_HITL: 'bg-yellow-100 text-yellow-700',
 }
 
@@ -23,6 +24,7 @@ const sessionDot: Record<SessionStatus, string> = {
   SUCCEEDED: 'bg-green-500',
   FAILED: 'bg-red-500',
   CANCELED: 'bg-gray-300',
+  INTERRUPTED: 'bg-orange-400',
   PAUSED_HITL: 'bg-yellow-500',
 }
 

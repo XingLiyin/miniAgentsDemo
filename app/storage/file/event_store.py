@@ -4,6 +4,9 @@ Persists display-worthy events to data/event_logs/{session_id}.jsonl so that
 reconnecting clients can restore the full chat timeline.
 
 Ephemeral events (streaming deltas, pings, lifecycle signals) are NOT stored.
+Large debug events (llm_prompt, daemon_prompt) are intentionally excluded: they
+contain the full serialized system prompt + message history (100 KB+) and would
+block the SSE push path on every LLM call with no UX benefit for reconnecting clients.
 """
 
 from __future__ import annotations
@@ -28,12 +31,12 @@ _PERSIST_TYPES: frozenset[str] = frozenset({
     "daemon_task_created",
     "daemon_task_updated",
     "daemon_message",
-    "daemon_prompt",
     "daemon_tool_call",
     "daemon_control_tool_call",
     "reasoning_done",
     "text_done",
-    "llm_prompt",
+    # llm_prompt / daemon_prompt intentionally omitted: 100 KB+ payloads that
+    # block the push path with no UX value in history replay.
     "observer_reasoning_done",
     "observer_text_done",
 })
@@ -85,7 +88,9 @@ class EventStore:
             try:
                 return read_jsonl(self._path(session_id))[offset:]
             except Exception as e:
-                logger.warning("EventStore.load_since failed for session %s: %s", session_id, e)
+                logger.warning(
+                    "EventStore.load_since failed for session %s: %s", session_id, e
+                )
                 return []
 
     def delete(self, session_id: str) -> None:

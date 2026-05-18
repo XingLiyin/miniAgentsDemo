@@ -39,6 +39,7 @@ class SkillRegistry:
     """本地 skill 内存索引 + 全局/workspace 远端 skill source 连接管理。"""
 
     _CONNECT_COOLDOWN = 30.0
+    _MAX_CONNECT_FAILURES = 5  # 连续失败达到此次数后停止自动重试
 
     def __init__(self) -> None:
         # ── local ──────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ class SkillRegistry:
         self._mcp_conns: dict[str, SkillMCPConn] = {}
         self._last_connect_attempt: dict[str, float] = {}
         self._connect_locks: dict[str, threading.Lock] = {}
+        self._connect_failures: dict[str, int] = {}             # source_name → 连续失败次数
         self._remote_index: dict[str, str] = {}                 # skill_name → source_name（ephemeral）
 
         # ── workspace file (.skills/ 子目录) ───────────────────────────────────
@@ -102,7 +104,15 @@ class SkillRegistry:
             )
         self._source_configs[config.source_name] = config
         self._connect_locks[config.source_name] = threading.Lock()
-        logger.info("SkillRegistry: registered remote source '%s' (lazy)", config.source_name)
+        logger.info("SkillRegistry: registered remote source '%s'", config.source_name)
+        # 注册时立即在后台发起连接，保证 MCP 可用时首次 list_all 就能用上
+        self._try_connect_source(
+            config.source_name,
+            config,
+            self._mcp_conns,
+            self._last_connect_attempt,
+            self._connect_locks[config.source_name],
+        )
 
     def unregister_remote_source(self, source_name: str) -> None:
         self._source_configs.pop(source_name, None)
@@ -331,6 +341,7 @@ class SkillRegistry:
                 lock = ws_locks.setdefault(source_name, threading.Lock())
                 if not self._try_connect_source(
                     source_name, config, ws_conns, ws_last, lock,
+                    reset_failures=True,
                 ):
                     continue
                 conn = ws_conns.get(source_name)
@@ -379,6 +390,7 @@ class SkillRegistry:
                 if not self._try_connect_source(
                     source_name, config,
                     self._mcp_conns, self._last_connect_attempt, lock,
+                    reset_failures=True,
                 ):
                     continue
                 conn = self._mcp_conns.get(source_name)
@@ -414,7 +426,14 @@ class SkillRegistry:
         conn_store: dict[str, SkillMCPConn],
         last_attempt: dict[str, float],
         lock: threading.Lock,
+        *,
+        reset_failures: bool = False,
     ) -> bool:
+        """返回 source 是否已连接；未连接时在后台发起连接并立即返回 False。
+
+        reset_failures=True 时清零失败计数（agent 主动需要时使用）。
+        失败次数达到上限后停止自动重试，直到 reset_failures=True 再次触发。
+        """
         with lock:
             existing = conn_store.get(source_name)
             if existing is not None and existing.is_connected:
@@ -426,20 +445,39 @@ class SkillRegistry:
                     existing.stop()
                 except Exception:
                     pass
+            if reset_failures:
+                self._connect_failures[source_name] = 0
+            if self._connect_failures.get(source_name, 0) >= self._MAX_CONNECT_FAILURES:
+                return False  # 达到上限，等待下次主动调用重置
             now = time.monotonic()
             if now - last_attempt.get(source_name, 0) < self._CONNECT_COOLDOWN:
                 return False
             last_attempt[source_name] = now
+
+        def _bg() -> None:
             try:
                 conn = self._build_conn(config)
                 self._validate_connection(conn, config)
-                conn_store[source_name] = conn
-                last_attempt.pop(source_name, None)
+                with lock:
+                    conn_store[source_name] = conn
+                    last_attempt.pop(source_name, None)
+                    self._connect_failures[source_name] = 0
                 logger.info("SkillRegistry: connected remote source '%s'", source_name)
-                return True
             except Exception as e:
-                logger.warning("SkillRegistry: failed to connect '%s': %s", source_name, e)
-                return False
+                with lock:
+                    count = self._connect_failures.get(source_name, 0) + 1
+                    self._connect_failures[source_name] = count
+                if count >= self._MAX_CONNECT_FAILURES:
+                    logger.warning(
+                        "SkillRegistry: '%s' failed %d/%d times, stopping auto-retry until next demand",
+                        source_name, count, self._MAX_CONNECT_FAILURES,
+                    )
+                else:
+                    logger.warning("SkillRegistry: failed to connect '%s' (%d/%d): %s",
+                                   source_name, count, self._MAX_CONNECT_FAILURES, e)
+
+        threading.Thread(target=_bg, name=f"skill-mcp-{source_name}", daemon=True).start()
+        return False
 
     def _validate_connection(self, conn: SkillMCPConn, config: RemoteSkillSourceConfig) -> None:
         try:

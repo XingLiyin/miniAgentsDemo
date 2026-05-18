@@ -98,6 +98,10 @@ class MemoryService:
     def count_messages(self, agent_id: str) -> int:
         return self._store.count_messages(agent_id)
 
+    def bulk_write_messages(self, agent_id: str, messages: list[dict[str, Any]]) -> None:
+        """一次性写入一批消息（单次磁盘写，用于 memory 继承替代 N 次 append_message）。"""
+        self._store.bulk_write_messages(agent_id, messages)
+
     def rewrite_messages(self, agent_id: str, messages: list[dict[str, Any]]) -> None:
         """用 compact 后的消息替换活跃窗口（原内容归档到 .bak）。"""
         self._store.rewrite_messages(agent_id, messages)

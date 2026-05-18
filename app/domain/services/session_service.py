@@ -5,7 +5,10 @@ from __future__ import annotations
 from app.common.errors import AppError
 from app.common.utils import new_session_id, now_iso
 from app.domain.events.event_bus import EventBus
-from app.domain.events.event_types import SESSION_CREATED, SESSION_STARTED, SESSION_SUCCEEDED, SESSION_FAILED, SESSION_CANCELED
+from app.domain.events.event_types import (
+    SESSION_CREATED, SESSION_STARTED, SESSION_SUCCEEDED,
+    SESSION_FAILED, SESSION_CANCELED, SESSION_INTERRUPTED,
+)
 from app.domain.models.session import Session
 from app.domain.services.task_service import TaskService
 from app.domain.state_machine import SessionStateMachine
@@ -85,6 +88,7 @@ class SessionService:
             "SUCCEEDED": SESSION_SUCCEEDED,
             "FAILED": SESSION_FAILED,
             "CANCELED": SESSION_CANCELED,
+            "INTERRUPTED": SESSION_INTERRUPTED,
         }
         if to_status in event_map:
             self._bus.publish(event_map[to_status], {"session_id": session_id})
@@ -99,7 +103,7 @@ class SessionService:
                 "output_tokens_used": session.output_tokens_used,
             }
             get_sse_bus().push(session_id, sse_event)
-            if to_status in ("SUCCEEDED", "FAILED", "CANCELED"):
+            if to_status in ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"):
                 get_sse_bus().push(session_id, {"type": "done", "final_status": to_status})
         except Exception:
             pass

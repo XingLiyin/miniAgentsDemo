@@ -7,6 +7,7 @@ export const SESSION_STATUS_LABEL: Record<SessionStatus, string> = {
   SUCCEEDED: '已完成',
   FAILED: '失败',
   CANCELED: '已取消',
+  INTERRUPTED: '已打断',
   PAUSED_HITL: '等待确认',
 }
 
@@ -16,6 +17,7 @@ export const SESSION_STATUS_VARIANT = (status: SessionStatus) => {
     case 'SUCCEEDED': return 'success'
     case 'FAILED': return 'error'
     case 'CANCELED': return 'muted'
+    case 'INTERRUPTED': return 'warning'
     case 'WAITING_INPUT': return 'warning'
     case 'PAUSED_HITL': return 'warning'
     default: return 'muted'
@@ -49,7 +51,7 @@ export const TOOL_CALL_STATUS_VARIANT = (status: ToolCallStatus) => {
 }
 
 export function isTerminalSession(status: SessionStatus) {
-  return ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(status)
+  return ['SUCCEEDED', 'FAILED', 'CANCELED', 'INTERRUPTED'].includes(status)
 }
 
 export function formatDuration(startedAt: string, finishedAt: string | null): string {

@@ -32,12 +32,14 @@ class ToolRegistry:
     """工具注册表（内存单例）。"""
 
     _CONNECT_COOLDOWN = 30.0  # 连接失败后的最小重试间隔（秒）
+    _MAX_CONNECT_FAILURES = 5  # 连续失败达到此次数后停止自动重试
 
     def __init__(self) -> None:
         self._tools: dict[str, ToolDefinition] = {}             # builtin only
         self._mcp_providers: dict[str, _MCPProviderBase] = {}   # server_name → provider（懒连接）
         self._last_connect_attempt: dict[str, float] = {}       # server_name → monotonic timestamp
         self._connect_locks: dict[str, threading.Lock] = {}     # 防止并发 start()
+        self._connect_failures: dict[str, int] = {}             # server_name → 连续失败次数
 
     # ── Builtin 工具注册 ──────────────────────────────────────────────────────
 
@@ -65,12 +67,13 @@ class ToolRegistry:
         timeout: int = 30,
         connect_timeout: int = 5,
     ) -> None:
-        """注册 MCP stdio Server（懒连接：首次使用时才建立连接）。"""
+        """注册 MCP stdio Server 并立即在后台发起连接。"""
         from app.tools.mcp_provider import MCPStdioProvider
         provider = MCPStdioProvider(name=name, command=command, args=args, env=env, timeout=timeout, connect_timeout=connect_timeout)
         self._mcp_providers[name] = provider
         self._connect_locks[name] = threading.Lock()
-        logger.info("ToolRegistry: registered MCP stdio server '%s' (lazy)", name)
+        logger.info("ToolRegistry: registered MCP stdio server '%s'", name)
+        self._start_connect_bg(name, provider)
 
     def register_mcp_http(
         self,
@@ -80,12 +83,13 @@ class ToolRegistry:
         timeout: int = 30,
         connect_timeout: int = 5,
     ) -> None:
-        """注册 MCP Streamable HTTP Server（懒连接：首次使用时才建立连接）。"""
+        """注册 MCP Streamable HTTP Server 并立即在后台发起连接。"""
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
         provider = MCPStreamableHTTPProvider(name=name, url=url, timeout=timeout, connect_timeout=connect_timeout)
         self._mcp_providers[name] = provider
         self._connect_locks[name] = threading.Lock()
-        logger.info("ToolRegistry: registered MCP http server '%s' (lazy)", name)
+        logger.info("ToolRegistry: registered MCP http server '%s'", name)
+        self._start_connect_bg(name, provider)
 
     def shutdown_one(self, name: str) -> None:
         """停止并移除指定 MCP Server。"""
@@ -215,32 +219,69 @@ class ToolRegistry:
                 logger.warning("ToolRegistry: list_definitions failed for '%s': %s", name, e)
         return result
 
-    def _try_connect(self, name: str, provider: _MCPProviderBase) -> bool:
-        """尝试启动未连接的 provider，冷却期内跳过。返回是否连接成功。"""
+    def _start_connect_bg(self, name: str, provider: "_MCPProviderBase") -> None:
+        """在后台线程发起连接，不阻塞调用方。
+
+        冷却期内或连续失败次数达到上限时为空操作。
+        后台线程成功后清零失败计数；失败后递增，达到上限时停止自动重试。
+        """
+        lock = self._connect_locks.get(name)
+        if lock is None:
+            return
+        with lock:
+            if provider._initialized:
+                return
+            if self._connect_failures.get(name, 0) >= self._MAX_CONNECT_FAILURES:
+                return  # 达到上限，等待 _try_connect 重置后再试
+            now = time.monotonic()
+            if now - self._last_connect_attempt.get(name, 0) < self._CONNECT_COOLDOWN:
+                return
+            self._last_connect_attempt[name] = now
+
+        def _bg() -> None:
+            try:
+                with lock:
+                    if provider._initialized:
+                        return
+                    if provider._loop is not None:
+                        try:
+                            provider.stop()
+                        except Exception:
+                            pass
+                provider.start()
+                with lock:
+                    self._last_connect_attempt.pop(name, None)
+                    self._connect_failures[name] = 0
+                logger.info("ToolRegistry: connected MCP server '%s'", name)
+            except Exception as e:
+                with lock:
+                    count = self._connect_failures.get(name, 0) + 1
+                    self._connect_failures[name] = count
+                if count >= self._MAX_CONNECT_FAILURES:
+                    logger.warning(
+                        "ToolRegistry: '%s' failed %d/%d times, stopping auto-retry until next demand",
+                        name, count, self._MAX_CONNECT_FAILURES,
+                    )
+                else:
+                    logger.warning("ToolRegistry: failed to connect '%s' (%d/%d): %s",
+                                   name, count, self._MAX_CONNECT_FAILURES, e)
+
+        threading.Thread(target=_bg, name=f"mcp-connect-{name}", daemon=True).start()
+
+    def _try_connect(self, name: str, provider: "_MCPProviderBase") -> bool:
+        """返回 provider 是否已连接；未连接时重置失败计数并在后台发起连接，立即返回 False。
+
+        agent 实际需要（build tool list）时调用，重置失败计数以允许新一轮尝试。
+        """
         lock = self._connect_locks.get(name)
         if lock is None:
             return False
         with lock:
             if provider._initialized:
                 return True
-            now = time.monotonic()
-            if now - self._last_connect_attempt.get(name, 0) < self._CONNECT_COOLDOWN:
-                return False
-            self._last_connect_attempt[name] = now
-            try:
-                if provider._loop is not None:
-                    try:
-                        provider.stop()
-                    except Exception:
-                        pass
-                provider.start()
-                # Clear the timestamp so a future reconnect is not blocked by cooldown.
-                # The cooldown only makes sense after a *failed* attempt, not a success.
-                self._last_connect_attempt.pop(name, None)
-                logger.info("ToolRegistry: connected MCP server '%s'", name)
-                return True
-            except Exception as e:
-                logger.warning("ToolRegistry: failed to connect '%s': %s", name, e)
-                return False
+            # agent 主动需要时重置，让 _start_connect_bg 的上限检查从 0 重新计数
+            self._connect_failures[name] = 0
+        self._start_connect_bg(name, provider)
+        return False
 
 

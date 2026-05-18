@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks, Settings } from 'lucide-react'
+import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks, Settings, Square } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
@@ -483,10 +483,14 @@ function TextInput({
   sessionId,
   session,
   disabled,
+  onInterrupt,
+  isInterrupting,
 }: {
   sessionId: string
   session: Session | null
   disabled?: boolean
+  onInterrupt?: () => void
+  isInterrupting?: boolean
 }) {
   const [text, setText] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -558,6 +562,7 @@ function TextInput({
   }, [text])
 
   const canSend = (text.trim() || attachments.length > 0) && !mutation.isPending && !disabled
+  const isRunning = !!disabled
 
   return (
     <div className="border-t border-gray-200 bg-white p-3">
@@ -622,20 +627,28 @@ function TextInput({
               if (file) handleFiles(Object.assign(new DataTransfer(), { files: [file] as unknown as FileList }).files)
             })
           }}
-          placeholder={disabled ? 'Agent 正在运行中...' : '向 Agent 发送消息… (Enter 发送，Shift+Enter 换行)'}
+          placeholder={disabled ? 'Agent 正在运行中...' : session?.status === 'INTERRUPTED' ? '已打断，输入新指令继续… (Enter 发送)' : '向 Agent 发送消息… (Enter 发送，Shift+Enter 换行)'}
           rows={1}
           disabled={disabled}
           className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 leading-5 disabled:bg-gray-50 disabled:text-gray-400"
         />
         <button
-          onClick={submit}
-          disabled={!canSend}
+          onClick={isRunning ? onInterrupt : submit}
+          disabled={isRunning ? !onInterrupt : !canSend}
+          title={isRunning ? '打断 Agent' : '发送'}
           className={clsx(
             'flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0',
-            canSend ? 'bg-blue-500 text-white hover:bg-blue-600' : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            isRunning
+              ? 'bg-orange-500 text-white hover:bg-orange-600'
+              : canSend
+                ? 'bg-blue-500 text-white hover:bg-blue-600'
+                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           )}
         >
-          {mutation.isPending ? <Spinner size="sm" /> : <Send size={14} />}
+          {isRunning
+            ? (isInterrupting ? <Spinner size="sm" /> : <Square size={14} className="fill-current" />)
+            : (mutation.isPending ? <Spinner size="sm" /> : <Send size={14} />)
+          }
         </button>
       </div>
     </div>
@@ -911,8 +924,17 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
     ?.models.find(m => m.name === session?.llm_model)?.context_limit ?? 0
 
   const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
-  const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED'].includes(session.status)
+  const isTerminal = session?.status && ['SUCCEEDED', 'FAILED', 'CANCELED', 'INTERRUPTED'].includes(session.status)
   const activeTaskCount = tasks.filter(t => t.status === 'ACTIVE').length
+  const queryClient = useQueryClient()
+
+  const interruptMutation = useMutation({
+    mutationFn: () => sessionsApi.interrupt(sessionId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['session', sessionId] })
+      queryClient.invalidateQueries({ queryKey: ['sessions'] })
+    },
+  })
 
   return (
     <div className="flex flex-col h-full">
@@ -1019,20 +1041,22 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
 
         {/* Terminal status */}
         {isTerminal && session && (
-          <div className={clsx(
-            'flex justify-center',
-          )}>
+          <div className="flex justify-center">
             <div className={clsx(
               'flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full',
               session.status === 'SUCCEEDED' ? 'bg-green-50 text-green-700' :
               session.status === 'FAILED' ? 'bg-red-50 text-red-600' :
+              session.status === 'INTERRUPTED' ? 'bg-orange-50 text-orange-700' :
               'bg-gray-100 text-gray-500'
             )}>
               {session.status === 'SUCCEEDED' && <CheckCircle2 size={11} />}
               {session.status === 'FAILED' && <XCircle size={11} />}
+              {session.status === 'INTERRUPTED' && <Square size={11} className="fill-current" />}
               <span>
                 {session.status === 'SUCCEEDED' ? '会话已完成' :
-                 session.status === 'FAILED' ? '会话失败' : '会话已取消'}
+                 session.status === 'FAILED' ? '会话失败' :
+                 session.status === 'INTERRUPTED' ? '已打断 — 发送新指令继续' :
+                 '会话已取消'}
               </span>
             </div>
           </div>
@@ -1071,7 +1095,13 @@ export function ChatPanel({ sessionId }: ChatPanelProps) {
       {waitingInput ? (
         <WaitingInputArea sessionId={sessionId} waitingInput={waitingInput} />
       ) : (
-        <TextInput sessionId={sessionId} session={session ?? null} disabled={isRunning} />
+        <TextInput
+          sessionId={sessionId}
+          session={session ?? null}
+          disabled={isRunning}
+          onInterrupt={() => interruptMutation.mutate()}
+          isInterrupting={interruptMutation.isPending}
+        />
       )}
     </div>
   )

@@ -11,6 +11,7 @@ export const sessionsApi = {
   get: (id: string) => http.get<Session>(`/sessions/${id}`),
   create: (data: CreateSessionRequest) => http.post<Session>('/sessions', data),
   cancel: (id: string) => http.post<Session>(`/sessions/${id}/cancel`),
+  interrupt: (id: string) => http.post<Session>(`/sessions/${id}/interrupt`),
   getTasks: (id: string) => http.get<Task[]>(`/sessions/${id}/tasks`),
   sendMessage: (
     id: string,

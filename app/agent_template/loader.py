@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,6 +13,8 @@ from app.config.settings import get_settings, resolve_working_dir
 
 if TYPE_CHECKING:
     from app.storage.file.agent_template_store import AgentTemplateStore
+
+_LIST_DETAILS_TTL = 10.0  # seconds
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +34,7 @@ class AgentLoader:
 
     def __init__(self, store: "AgentTemplateStore | None" = None) -> None:
         self._store = store
+        self._list_cache: dict[str, tuple[float, list[AgentDefDetails]]] = {}  # workspace_dir → (ts, details)
 
     def scan(self, agents_dir: Path) -> list[AgentDefDetails]:
         """扫描 agents_dir，每个子目录至少有 SOUL.md 才加载。"""
@@ -129,9 +133,13 @@ class AgentLoader:
             return None
 
     def list_details(self, workspace_dir: str = "") -> list[AgentDefDetails]:
-        """从 store 列出可见模板，逐条读文件返回 AgentDefDetails 列表。"""
+        """从 store 列出可见模板，逐条读文件返回 AgentDefDetails 列表。结果在 TTL 内缓存。"""
         assert self._store is not None, "AgentLoader.list_details requires store"
         workspace_dir = resolve_working_dir(workspace_dir) if workspace_dir else workspace_dir
+        now = time.monotonic()
+        cached = self._list_cache.get(workspace_dir)
+        if cached and now - cached[0] < _LIST_DETAILS_TTL:
+            return cached[1]
         result = []
         for d in self._store.list_for_workspace(workspace_dir):
             source_dir = d.get("source_dir", "")
@@ -141,6 +149,7 @@ class AgentLoader:
                 result.append(self.load(self._resolve_dir(source_dir, d.get("workspace_dir", ""))))
             except Exception as e:
                 logger.warning("AgentLoader.list_details: failed to load '%s': %s", d.get("name"), e)
+        self._list_cache[workspace_dir] = (now, result)
         return result
 
 

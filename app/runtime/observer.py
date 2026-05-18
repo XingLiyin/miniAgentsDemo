@@ -110,6 +110,7 @@ class Observer:
         is_daemon           = bool(task.settings.get("_daemon") if task.settings else False)
 
         for _round in range(max_rounds):
+            messages = self._prompt_builder.sanitize_messages(messages)
             from app.runtime.actor import _compute_max_tokens
             round_max_tokens = _compute_max_tokens(llm_client, last_prompt_tokens) if last_prompt_tokens else None
             _push_llm_event(session_id, f"observer_round_{_round}", system_prompt, messages, tools, task, is_daemon)

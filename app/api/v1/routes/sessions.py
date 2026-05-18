@@ -93,6 +93,20 @@ def delete_session(session_id: str) -> Response:
         raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
 
 
+@router.post("/{session_id}/interrupt", response_model=SessionResponse)
+def interrupt_session(session_id: str) -> SessionResponse:
+    """打断正在运行的 session。Agent 在下一个安全检查点停止，当前进度写入 memory。
+    打断后可通过 POST /sessions/{session_id}/messages 发送新 prompt 恢复。
+    """
+    try:
+        mgr = get_session_manager()
+        session = mgr.interrupt_session(session_id)
+        return _session_response(session)
+    except AppError as e:
+        status = 404 if e.code == "SESSION_NOT_FOUND" else 400
+        raise HTTPException(status_code=status, detail={"code": e.code, "message": e.message})
+
+
 @router.post("/{session_id}/cancel", response_model=SessionResponse)
 def cancel_session(session_id: str) -> SessionResponse:
     """取消会话。"""
