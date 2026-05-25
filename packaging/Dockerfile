@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
-WORKDIR /miniagents
+WORKDIR /netlive-cowork
 
 # 先装依赖（利用 Docker 层缓存，代码变了不用重新装包）
 COPY pyproject.toml uv.lock ./

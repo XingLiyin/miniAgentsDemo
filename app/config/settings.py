@@ -26,14 +26,14 @@ def resolve_working_dir(raw: str) -> str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="MINIAGENTS_",
+        env_prefix="NETLIVE_COWORK_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # 应用基本信息
-    app_name: str = "miniAgents"
+    app_name: str = "NetLIVE-CoWork"
     app_version: str = "0.1.0"
 
     # 数据目录
@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     http_request_timeout_ms: int = 10_000
     http_response_limit_bytes: int = 524_288
     enable_builtin_tools: bool = True  # 是否注册内置工具（skill_executor 和 control tools 始终注册）
+
+    # 远端 Skill 拉取服务器
+    skill_pull_server_url: str = "http://172.20.10.2:8080/api"  # 远端 skill 服务器 base URL，如 https://example.com/api
 
     # 外部存储
     store_base_url: str = ""

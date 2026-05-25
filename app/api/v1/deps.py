@@ -25,7 +25,11 @@ from app.runtime.policy_rule import BashExecGuardRule, WhitelistRule
 from app.runtime.reasoner import Reasoner
 from app.runtime.tool_gateway import ToolGateway
 from app.skills.registry import get_skill_registry
+from app.domain.services.local_skill_service import LocalSkillService
+from app.domain.services.skill_pull_service import SkillPullService
 from app.domain.services.skill_source_service import RemoteSkillSourceService
+from app.skills.loader import SkillLoader
+from app.storage.file.skill_pull_store import SkillPullStore
 from app.storage.file.remote_skill_source_store import RemoteSkillSourceStore
 from app.tools.registry import ToolRegistry
 from app.agent_template.loader import AgentLoader
@@ -89,6 +93,26 @@ def get_mcp_service() -> MCPService:
     return MCPService(
         tool_registry=get_tool_registry(),
         store=MCPConfigStore(),
+    )
+
+
+@lru_cache
+def get_local_skill_service() -> LocalSkillService:
+    settings = get_settings()
+    return LocalSkillService(
+        skills_dir=settings.skills_dir,
+        loader=SkillLoader(),
+        pull_store=SkillPullStore(),
+    )
+
+
+@lru_cache
+def get_skill_pull_service() -> SkillPullService:
+    settings = get_settings()
+    return SkillPullService(
+        server_url=settings.skill_pull_server_url,
+        skills_dir=settings.skills_dir,
+        store=SkillPullStore(),
     )
 
 

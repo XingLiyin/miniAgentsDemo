@@ -1,4 +1,4 @@
-# miniAgents one-click startup script (PowerShell)
+# NetLIVE-CoWork one-click startup script (PowerShell)
 param(
     [switch]$BackendOnly,
     [switch]$FrontendOnly,

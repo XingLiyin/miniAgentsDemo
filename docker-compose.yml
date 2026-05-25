@@ -1,13 +1,13 @@
 services:
-  miniagents:
-    image: miniagents:latest
-    container_name: miniagents
+  netlive-cowork:
+    image: netlive-cowork:latest
+    container_name: netlive-cowork
     restart: unless-stopped
     ports:
       - "15926:15926"
     env_file:
       - .env
     volumes:
-      - ./data:/miniagents/data
-      - ./resources:/miniagents/resources
-      - ./logs:/miniagents/logs
+      - ./data:/netlive-cowork/data
+      - ./resources:/netlive-cowork/resources
+      - ./logs:/netlive-cowork/logs

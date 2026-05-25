@@ -32,7 +32,7 @@ def init_logging(level: str = "INFO", log_dir: str = "") -> None:
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
         file_handler = TimedRotatingFileHandler(
-            filename=log_path / "miniagents.log",
+            filename=log_path / "netlive-cowork.log",
             when="midnight",
             backupCount=30,
             encoding="utf-8",

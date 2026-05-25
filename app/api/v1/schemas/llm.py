@@ -40,3 +40,25 @@ class LLMProviderResponse(BaseModel):
     models: list[ModelConfigResponse]
     default_model: str
     timeout_sec: int
+
+
+class PingLLMRequest(BaseModel):
+    style: str
+    api_key: str
+    base_url: str = ""
+    model: str = ""
+
+
+class PingLLMResponse(BaseModel):
+    ok: bool
+    latency_ms: int
+
+
+class ListModelsRequest(BaseModel):
+    style: str
+    api_key: str
+    base_url: str = ""
+
+
+class AvailableModelsResponse(BaseModel):
+    models: list[str]

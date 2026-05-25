@@ -1,0 +1,767 @@
+import React, { useState, useRef, useEffect, useCallback } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  ArrowUp, Square, Brain, Terminal, FolderIcon,
+  Copy, Check,
+} from 'lucide-react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type { SSEState, ChatItem, ChatMessage, ChatToolCall, ChatWaitingInput, ChatObserverMessage, ChatImageData } from '@/hooks/useSessionSSE'
+import { sessionsApi, type MessageContent } from '@/api/sessions'
+import { llmsApi } from '@/api/llms'
+import type { PendingSession } from '@/types'
+import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
+import { ModelPickerButton } from '@/components/ui/ModelPickerButton'
+
+function fmtTime(iso: string) {
+  try { return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
+  catch { return '' }
+}
+
+// ── Copy button — icon only, hidden until row hover, tooltip on button hover ──
+
+function CopyButton({ text, alignEnd }: { text: string; alignEnd?: boolean }) {
+  const [copied, setCopied] = useState(false)
+  async function doCopy() {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }
+  return (
+    <button
+      onClick={doCopy}
+      className="copy-btn"
+      style={{
+        position: 'relative',
+        marginTop: 4, padding: '4px 7px', borderRadius: 5, cursor: 'pointer',
+        border: `1px solid ${copied ? 'var(--teal)' : 'var(--border)'}`,
+        background: copied ? 'rgba(8,145,178,.08)' : 'var(--bg2)',
+        color: copied ? 'var(--teal)' : 'var(--t3)',
+        display: 'inline-flex', alignItems: 'center',
+        alignSelf: alignEnd ? 'flex-end' : 'flex-start',
+        transition: 'color var(--tr), background var(--tr), border-color var(--tr)',
+      }}
+      onMouseEnter={e => {
+        const btn = e.currentTarget as HTMLElement
+        if (!copied) { btn.style.background = 'var(--bg3)'; btn.style.borderColor = 'var(--border2)'; btn.style.color = 'var(--t2)' }
+        const tip = btn.querySelector('.copy-tip') as HTMLElement | null
+        if (tip) tip.style.opacity = '1'
+      }}
+      onMouseLeave={e => {
+        const btn = e.currentTarget as HTMLElement
+        if (!copied) { btn.style.background = 'var(--bg2)'; btn.style.borderColor = 'var(--border)'; btn.style.color = 'var(--t3)' }
+        const tip = btn.querySelector('.copy-tip') as HTMLElement | null
+        if (tip) tip.style.opacity = '0'
+      }}
+    >
+      {copied ? <Check size={12} strokeWidth={2.5} /> : <Copy size={12} strokeWidth={2} />}
+      {/* Tooltip */}
+      <span className="copy-tip" style={{
+        position: 'absolute', bottom: 'calc(100% + 6px)', left: '50%',
+        transform: 'translateX(-50%)',
+        background: 'rgba(15,23,42,.85)', color: '#fff',
+        fontSize: 11, padding: '3px 7px', borderRadius: 4,
+        whiteSpace: 'nowrap', pointerEvents: 'none',
+        opacity: 0, transition: 'opacity .15s',
+      }}>
+        {copied ? '已复制' : '复制'}
+      </span>
+    </button>
+  )
+}
+
+interface Props {
+  sessionId: string | null
+  sse: SSEState
+  pendingSession: PendingSession | null
+  onSessionCreated: (id: string) => void
+  nextProvider: string
+  nextModel: string
+  onNextLLMChange: (provider: string, model: string) => void
+}
+
+export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, nextProvider, nextModel, onNextLLMChange }: Props) {
+  const qc = useQueryClient()
+  const [input, setInput] = useState('')
+  const [images, setImages] = useState<{ data: string; media_type: string }[]>([])
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const [autoScroll, setAutoScroll] = useState(true)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const { data: providers = [] } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
+
+  const session = sse.session
+  const isRunning = session?.status === 'RUNNING' || session?.status === 'QUEUED'
+  const isWaiting = session?.status === 'WAITING_INPUT' || session?.status === 'PAUSED_HITL'
+
+  useEffect(() => {
+    if (session?.llm_provider) {
+      onNextLLMChange(session.llm_provider, session.llm_model ?? '')
+    }
+  }, [session?.id])
+
+  useEffect(() => {
+    if (autoScroll) bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [sse.items, sse.streamingText, sse.observerStreamingText, autoScroll])
+
+  const handleScroll = useCallback(() => {
+    if (!listRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = listRef.current
+    setAutoScroll(scrollHeight - scrollTop - clientHeight < 80)
+  }, [])
+
+  // Create session on first message (pending mode)
+  const createMut = useMutation({
+    mutationFn: (content: { text: string; imgs: typeof images }) => {
+      const { text } = content
+      const userPrompt = text
+      return sessionsApi.create({
+        user_prompt: userPrompt,
+        llm_provider: pendingSession?.provider || null,
+        llm_model: pendingSession?.model || null,
+        working_dir: pendingSession?.workingDir || null,
+      })
+    },
+    onSuccess: (session) => {
+      qc.invalidateQueries({ queryKey: ['sessions'] })
+      setInput('')
+      setImages([])
+      onSessionCreated(session.id)
+    },
+  })
+
+  const sendMut = useMutation({
+    mutationFn: (content: MessageContent) => sessionsApi.sendMessage(sessionId!, content, nextProvider || null, nextModel || null),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setInput(''); setImages([]) },
+  })
+  const answerMut = useMutation({
+    mutationFn: (text: string) => sessionsApi.answerInput(sessionId!, text),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['sessions'] }); setInput('') },
+  })
+  const interruptMut = useMutation({ mutationFn: () => sessionsApi.interrupt(sessionId!) })
+
+  function send() {
+    const text = input.trim()
+    if (!text && images.length === 0) return
+
+    // Pending mode: first message triggers session creation
+    if (pendingSession) {
+      createMut.mutate({ text, imgs: images })
+      return
+    }
+
+    if (!sessionId) return
+
+    if (isWaiting && sse.waitingInput) {
+      answerMut.mutate(text)
+      return
+    }
+
+    const content: MessageContent = images.length > 0
+      ? [
+          ...images.map(img => ({ type: 'image' as const, data: img.data, media_type: img.media_type, source_type: 'base64' as const })),
+          ...(text ? [{ type: 'text' as const, text }] : []),
+        ]
+      : text
+    sendMut.mutate(content)
+  }
+
+  function onKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      send()
+    }
+  }
+
+  function pasteImage(e: React.ClipboardEvent) {
+    for (const item of Array.from(e.clipboardData.items)) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile()
+        if (!file) continue
+        const reader = new FileReader()
+        reader.onload = ev => {
+          const dataUrl = ev.target?.result as string
+          const base64 = dataUrl.split(',')[1]
+          if (base64) setImages(imgs => [...imgs, { data: base64, media_type: item.type }])
+        }
+        reader.readAsDataURL(file)
+      }
+    }
+  }
+
+  // ── Pending mode ──────────────────────────────────────────────────────────────
+
+  if (pendingSession) {
+    const dirName = pendingSession.workingDir.split(/[\\/]/).filter(Boolean).pop() ?? pendingSession.workingDir
+    const isCreating = createMut.isPending
+    const canSend = !isCreating && (input.trim().length > 0 || images.length > 0)
+
+    return (
+      <div className="flex h-full flex-col" style={{ background: 'var(--bg0)' }}>
+        {/* Header */}
+        <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg1)' }}>
+          <FolderIcon size={14} className="flex-shrink-0 text-yellow-500" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--t1)' }}>{dirName}</p>
+            <p className="truncate text-xs" style={{ color: 'var(--t3)' }}>{pendingSession.workingDir}</p>
+          </div>
+        </div>
+
+        {/* Empty area */}
+        <div className="flex flex-1 flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)', background: 'var(--bg0)' }}>
+          <div style={{ fontSize: 32, opacity: .35 }}>💬</div>
+          <p className="text-sm">发送第一条消息来启动 Agent</p>
+        </div>
+
+        {/* Input */}
+        <div style={{ padding: '10px 14px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg1)', flexShrink: 0 }}>
+          <div style={{
+            background: 'var(--bg1)', border: '1px solid var(--border)',
+            borderRadius: 'var(--r2)', boxShadow: 'var(--shadow)',
+            transition: 'border-color .15s, box-shadow .15s',
+          }}
+            onFocusCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--blue)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 3px var(--blue-dim)' }}
+            onBlurCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow)' }}
+          >
+            {images.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 11px 0' }}>
+                {images.map((img, i) => (
+                  <div key={i} className="group" style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+                    <img src={`data:${img.media_type};base64,${img.data}`} style={{ width: '100%', height: '100%', borderRadius: 6, objectFit: 'cover' }} />
+                    <button onClick={() => setImages(imgs => imgs.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: '#94a3b8', color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              autoFocus
+              value={input}
+              onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px` }}
+              onKeyDown={onKeyDown}
+              onPaste={pasteImage}
+              disabled={isCreating}
+              placeholder="输入第一条消息（Enter 发送）"
+              rows={1}
+              style={{
+                width: '100%', padding: '11px 13px 4px', margin: 0,
+                background: 'transparent', border: 'none', outline: 'none',
+                color: 'var(--t1)', fontFamily: 'var(--font-ui)', fontSize: 13.5,
+                resize: 'none', maxHeight: 160, lineHeight: 1.6,
+                opacity: isCreating ? 0.4 : 1,
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 9px 8px' }}>
+              <span style={{ flex: 1 }} />
+              <ModelPickerButton
+                providers={providers}
+                selectedProvider={pendingSession.provider}
+                selectedModel={pendingSession.model}
+                onChange={onNextLLMChange}
+                disabled={isCreating}
+              />
+              <button
+                onClick={send}
+                disabled={!canSend}
+                style={{
+                  width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                  background: canSend ? 'var(--blue)' : 'var(--bg3)',
+                  border: 'none', color: canSend ? '#fff' : 'var(--t3)',
+                  display: 'grid', placeItems: 'center', cursor: canSend ? 'pointer' : 'not-allowed',
+                  transition: 'background var(--tr)',
+                }}
+              >
+                {isCreating ? <Spinner className="h-3 w-3" /> : <ArrowUp size={14} strokeWidth={2.5} />}
+              </button>
+            </div>
+          </div>
+          {createMut.isError && (
+            <p style={{ marginTop: 4, fontSize: 11, color: 'var(--red)' }}>{(createMut.error as Error)?.message}</p>
+          )}
+        </div>
+      </div>
+    )
+  }
+
+  // ── No session selected ───────────────────────────────────────────────────────
+
+  if (!sessionId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)', background: 'var(--bg0)' }}>
+        <div style={{ fontSize: 36, opacity: .35 }}>💬</div>
+        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t2)' }}>开始对话</div>
+        <p className="text-sm">选择或新建一个会话</p>
+      </div>
+    )
+  }
+
+  // ── Normal session mode ───────────────────────────────────────────────────────
+
+  const canSend = !isRunning && (input.trim().length > 0 || images.length > 0)
+  const waitingItem = sse.waitingInput
+
+  return (
+    <div className="flex h-full flex-col" style={{ background: 'var(--bg0)' }}>
+      {/* Header */}
+      {session && (
+        <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg1)' }}>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium" style={{ color: 'var(--t1)' }}>
+              {session.goal || session.user_prompt || session.id.slice(0, 8)}
+            </p>
+          </div>
+          {session.llm_provider && (
+            <span className="ml-3 flex-shrink-0 text-xs" style={{ color: 'var(--t3)' }}>
+              {session.llm_provider}{session.llm_model ? ` · ${session.llm_model}` : ''}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Messages */}
+      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto" style={{ background: 'var(--bg0)', paddingTop: 12, paddingBottom: 8 }}>
+        {!sse.connected && !sse.session && (
+          <div className="flex justify-center py-4"><Spinner /></div>
+        )}
+
+        {sse.items.map(item => <ChatItemView key={item.id} item={item} />)}
+
+        {/* Streaming text */}
+        {(sse.streamingText !== null || sse.streamingImages.length > 0 || sse.streamingReasoning !== null) && (
+          <AssistantBubble content={sse.streamingText ?? ''} images={sse.streamingImages} reasoning={sse.streamingReasoning ?? undefined} streaming />
+        )}
+
+        {/* Thinking dots — shown when running but no streaming yet */}
+        {isRunning && sse.streamingText === null && sse.streamingImages.length === 0 && sse.streamingReasoning === null && (
+          <ThinkingRow />
+        )}
+
+        {/* Observer streaming */}
+        {sse.observerStreamingText !== null && (
+          <div style={{ padding: '4px 16px 4px 58px', fontSize: 11, color: 'var(--t3)', fontStyle: 'italic' }}>
+            {sse.observerStreamingText}
+          </div>
+        )}
+
+        {/* Waiting input */}
+        {waitingItem && (
+          <div style={{ padding: '4px 16px' }}>
+            <WaitingInputPanel
+              item={waitingItem}
+              input={input}
+              setInput={setInput}
+              onSubmit={send}
+              onApprove={() => answerMut.mutate('approved')}
+              onReject={() => answerMut.mutate('rejected')}
+            />
+          </div>
+        )}
+
+        <div ref={bottomRef} />
+      </div>
+
+      {/* Input */}
+      {!waitingItem && (
+        <div style={{ padding: '10px 14px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg1)', flexShrink: 0 }}>
+          <div style={{
+            background: 'var(--bg1)', border: '1px solid var(--border)',
+            borderRadius: 'var(--r2)', boxShadow: 'var(--shadow)',
+            transition: 'border-color .15s, box-shadow .15s',
+          }}
+            onFocusCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--blue)'; (e.currentTarget as HTMLElement).style.boxShadow = '0 0 0 3px var(--blue-dim)' }}
+            onBlurCapture={e => { (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'; (e.currentTarget as HTMLElement).style.boxShadow = 'var(--shadow)' }}
+          >
+            {images.length > 0 && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, padding: '10px 11px 0' }}>
+                {images.map((img, i) => (
+                  <div key={i} style={{ position: 'relative', width: 56, height: 56, flexShrink: 0 }}>
+                    <img src={`data:${img.media_type};base64,${img.data}`} style={{ width: '100%', height: '100%', borderRadius: 6, objectFit: 'cover' }} />
+                    <button onClick={() => setImages(imgs => imgs.filter((_, j) => j !== i))} style={{ position: 'absolute', top: -4, right: -4, width: 16, height: 16, borderRadius: '50%', background: '#94a3b8', color: '#fff', fontSize: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={e => { setInput(e.target.value); e.target.style.height = 'auto'; e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px` }}
+              onKeyDown={onKeyDown}
+              onPaste={pasteImage}
+              disabled={isRunning}
+              placeholder={isRunning ? '等待 Agent 响应…' : '输入消息（Enter 发送，Shift+Enter 换行）'}
+              rows={1}
+              style={{
+                width: '100%', padding: '11px 13px 4px', margin: 0,
+                background: 'transparent', border: 'none', outline: 'none',
+                color: 'var(--t1)', fontFamily: 'var(--font-ui)', fontSize: 13.5,
+                resize: 'none', maxHeight: 160, lineHeight: 1.6,
+                opacity: isRunning ? 0.5 : 1,
+              }}
+            />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, padding: '0 9px 8px' }}>
+              <span style={{ flex: 1 }} />
+              {!isRunning && (
+                <ModelPickerButton
+                  providers={providers}
+                  selectedProvider={nextProvider}
+                  selectedModel={nextModel}
+                  onChange={onNextLLMChange}
+                />
+              )}
+              {isRunning ? (
+                <button
+                  onClick={() => interruptMut.mutate()}
+                  style={{
+                    width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                    background: '#ef4444', border: 'none', color: '#fff',
+                    display: 'grid', placeItems: 'center', cursor: 'pointer',
+                    transition: 'background var(--tr)',
+                  }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = '#dc2626' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '#ef4444' }}
+                >
+                  <Square size={13} />
+                </button>
+              ) : (
+                <button
+                  onClick={send}
+                  disabled={!canSend}
+                  style={{
+                    width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                    background: canSend ? 'var(--blue)' : 'var(--bg3)',
+                    border: 'none', color: canSend ? '#fff' : 'var(--t3)',
+                    display: 'grid', placeItems: 'center', cursor: canSend ? 'pointer' : 'not-allowed',
+                    transition: 'background var(--tr)',
+                  }}
+                >
+                  {sendMut.isPending ? <Spinner className="h-3 w-3" /> : <ArrowUp size={14} strokeWidth={2.5} />}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Item renderers ────────────────────────────────────────────────────────────
+
+function ChatItemView({ item }: { item: ChatItem }) {
+  if (item.kind === 'message')          return <MessageRow msg={item} />
+  if (item.kind === 'tool_call')        return <ToolCallRow tc={item} />
+  if (item.kind === 'observer_message') return <ObserverRow obs={item} />
+  return null
+}
+
+// ── Avatar (AI only) ──────────────────────────────────────────────────────────
+
+const AV_AI: React.CSSProperties = {
+  width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+  display: 'grid', placeItems: 'center', marginTop: 2,
+  fontSize: 11, fontWeight: 700,
+  background: 'linear-gradient(135deg, var(--blue), var(--teal))', color: '#fff',
+}
+
+// ── Message row ───────────────────────────────────────────────────────────────
+
+function MessageRow({ msg }: { msg: ChatMessage }) {
+  const isUser = msg.role === 'user'
+
+  if (isUser) {
+    // User: column, right-aligned, no avatar
+    return (
+      <div className="msg-row" style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'flex-end',
+        padding: '8px 16px', animation: 'msg-fade-up .2s ease both',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4, flexDirection: 'row-reverse' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>我</span>
+          <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>{fmtTime(msg.created_at)}</span>
+        </div>
+        <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+          <div style={BUBBLE_USER}>
+            {msg.images?.map((img, i) => <ImageView key={i} img={img} />)}
+            <p style={{ whiteSpace: 'pre-wrap', margin: 0 }}>{msg.content}</p>
+          </div>
+          <CopyButton text={msg.content} alignEnd />
+        </div>
+      </div>
+    )
+  }
+
+  // AI: row, left-aligned, with avatar
+  return (
+    <div className="msg-row" style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '8px 16px', animation: 'msg-fade-up .2s ease both',
+    }}>
+      <div style={AV_AI}>✦</div>
+      <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>NetLIVE-CoWork AI</span>
+          <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>{fmtTime(msg.created_at)}</span>
+        </div>
+        <div style={BUBBLE_AI}>
+          {msg.images?.map((img, i) => <ImageView key={i} img={img} />)}
+          {msg.reasoning && <ReasoningBlock text={msg.reasoning} />}
+          <div className="prose prose-sm max-w-none msg-md">
+            <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{msg.content}</Markdown>
+          </div>
+        </div>
+        <CopyButton text={msg.content} />
+      </div>
+    </div>
+  )
+}
+
+// ── Streaming assistant bubble ─────────────────────────────────────────────────
+
+function AssistantBubble({ content, images, reasoning, streaming }: { content: string; images: ChatImageData[]; reasoning?: string; streaming?: boolean }) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'flex-start', gap: 10,
+      padding: '8px 16px', animation: 'msg-fade-up .2s ease both',
+    }}>
+      <div style={AV_AI}>✦</div>
+      <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>NetLIVE-CoWork AI</span>
+        </div>
+        <div style={BUBBLE_AI}>
+          {images.map((img, i) => <ImageView key={i} img={img} />)}
+          {reasoning && <ReasoningBlock text={reasoning} defaultOpen={streaming} />}
+          <div className="prose prose-sm max-w-none msg-md">
+            <Markdown remarkPlugins={[remarkGfm]} components={mdComponents}>{content}</Markdown>
+          </div>
+          {streaming && <span style={{
+            display: 'inline-block', width: 2, height: 13, marginLeft: 2, verticalAlign: 'middle',
+            background: 'var(--t3)', animation: 'pulse 1s infinite',
+          }} />}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Thinking dots row ─────────────────────────────────────────────────────────
+
+function ThinkingRow() {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '9px 16px', animation: 'msg-fade-up .25s ease both',
+    }}>
+      <div style={AV_AI}>✦</div>
+      <div style={{ display: 'flex', gap: 4 }}>
+        {[0, 1, 2].map(i => (
+          <span key={i} style={{
+            width: 5, height: 5, borderRadius: '50%', background: 'var(--t3)',
+            display: 'inline-block',
+            animation: `t-bounce 1.4s infinite ${i * 0.2}s`,
+          }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── Tool call row (aligned with message rows, 16px padding) ───────────────────
+
+function ToolCallRow({ tc }: { tc: ChatToolCall }) {
+  const [open, setOpen] = useState(false)
+  const argsStr = Object.keys(tc.arguments).length > 0 ? JSON.stringify(tc.arguments, null, 2) : ''
+  const statusColor = tc.is_error ? 'var(--red)' : 'var(--green)'
+  const statusLabel = tc.is_error ? '✕ 失败' : '✓ 完成'
+  return (
+    <div style={{ padding: '3px 16px' }}>
+      <div style={{
+        borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--shadow)',
+        border: `1px solid ${tc.is_error ? '#fca5a5' : 'var(--border)'}`,
+        background: 'var(--bg1)',
+      }}>
+        {/* Header */}
+        <button
+          onClick={() => setOpen(o => !o)}
+          style={{
+            display: 'flex', width: '100%', alignItems: 'center', gap: 7,
+            padding: '7px 11px', cursor: 'pointer', textAlign: 'left',
+            background: 'var(--bg2)', border: 'none',
+            transition: 'background var(--tr)',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg2)' }}
+        >
+          {/* ⚙ icon in blue-dim square */}
+          <span style={{
+            width: 20, height: 20, borderRadius: 4, flexShrink: 0,
+            display: 'grid', placeItems: 'center', fontSize: 10,
+            background: tc.is_error ? 'rgba(220,38,38,.08)' : 'var(--blue-dim)',
+            color: tc.is_error ? 'var(--red)' : 'var(--blue)',
+          }}>⚙</span>
+          <code style={{ flex: 1, fontFamily: 'monospace', fontSize: 11.5, color: tc.is_error ? 'var(--red)' : 'var(--t2)', fontWeight: 500 }}>{tc.tool_name}</code>
+          <span style={{ fontSize: 10.5, color: statusColor, flexShrink: 0 }}>{statusLabel}</span>
+          <span style={{ fontSize: 9, color: 'var(--t3)', flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
+        </button>
+        {/* Body */}
+        {open && (
+          <div style={{
+            padding: '9px 11px', fontFamily: 'monospace', fontSize: 11,
+            color: 'var(--t2)', lineHeight: 1.6, background: 'var(--bg2)',
+            borderTop: '1px solid var(--border)',
+            display: 'flex', flexDirection: 'column', gap: 6,
+          }}>
+            {argsStr && (
+              <div>
+                <span style={{ color: 'var(--t3)', fontSize: 10 }}>参数：</span>
+                <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: 'var(--t2)' }}>{argsStr}</pre>
+              </div>
+            )}
+            {tc.result && (
+              <div>
+                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{tc.is_error ? '错误：' : '结果：'}</span>
+                <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: tc.is_error ? 'var(--red)' : 'var(--t2)' }}>
+                  {tc.result.length > 2000 ? tc.result.slice(0, 2000) + '\n…（结果已截断）' : tc.result}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Observer row ──────────────────────────────────────────────────────────────
+
+function ObserverRow({ obs }: { obs: ChatObserverMessage }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div style={{ padding: '3px 16px' }}>
+      <div style={{ borderLeft: '2px solid #c084fc', paddingLeft: 10 }}>
+        <button onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11.5, color: '#a855f7', background: 'none', border: 'none', cursor: 'pointer' }}>
+          <Brain size={11} />
+          <span>Observer {obs.round_label}</span>
+          <span style={{ fontSize: 9 }}>{open ? '▲' : '▼'}</span>
+        </button>
+        {open && (
+          <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.6, color: 'var(--t2)' }}>
+            {obs.reasoning && <p style={{ marginBottom: 4, fontStyle: 'italic', color: 'var(--t3)' }}>{obs.reasoning}</p>}
+            <p style={{ margin: 0 }}>{obs.content}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── Reasoning block (inside AI bubble) ───────────────────────────────────────
+
+function ReasoningBlock({ text, defaultOpen }: { text: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen ?? false)
+  return (
+    <div style={{ marginBottom: 8, paddingLeft: 8, borderLeft: '2px solid var(--border2)' }}>
+      <button onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}>
+        <Brain size={10} /> 推理过程 <span style={{ fontSize: 8 }}>{open ? '▲' : '▶'}</span>
+      </button>
+      {open && <p style={{ marginTop: 4, whiteSpace: 'pre-wrap', fontSize: 11, lineHeight: 1.6, color: 'var(--t2)' }}>{text}</p>}
+    </div>
+  )
+}
+
+function ImageView({ img }: { img: ChatImageData }) {
+  const src = img.source_type === 'base64' ? `data:${img.media_type};base64,${img.data}` : img.data
+  return <img src={src} style={{ maxHeight: 256, maxWidth: '100%', borderRadius: 6, marginBottom: 8, objectFit: 'contain' }} />
+}
+
+// ── Bubble style constants ────────────────────────────────────────────────────
+
+const BUBBLE_USER: React.CSSProperties = {
+  display: 'inline-block',
+  padding: '8px 12px', borderRadius: 12, borderTopRightRadius: 2,
+  fontSize: 13.5, lineHeight: 1.65, wordBreak: 'break-word',
+  background: 'var(--blue)', color: '#fff', textAlign: 'left',
+}
+
+const BUBBLE_AI: React.CSSProperties = {
+  display: 'block',
+  padding: '8px 12px', borderRadius: 12, borderTopLeftRadius: 2,
+  fontSize: 13.5, lineHeight: 1.65, wordBreak: 'break-word',
+  background: '#ffffff', border: '1px solid var(--border)', color: 'var(--t1)',
+}
+
+function WaitingInputPanel({ item, input, setInput, onSubmit, onApprove, onReject }: {
+  item: ChatWaitingInput; input: string; setInput: (v: string) => void
+  onSubmit: () => void; onApprove: () => void; onReject: () => void
+}) {
+  const isBash = item.input_type === 'bash_exec_confirm'
+  return (
+    <div style={{
+      borderRadius: 'var(--r)', border: `1px solid ${isBash ? 'rgba(234,88,12,.25)' : 'rgba(217,119,6,.25)'}`,
+      background: isBash ? 'rgba(255,237,213,.5)' : 'rgba(254,243,199,.5)',
+      padding: 12,
+    }}>
+      {isBash ? (
+        <>
+          <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: 'var(--amber)' }}>
+            <Terminal size={12} /> 执行确认
+          </div>
+          {item.command && (
+            <pre style={{ marginBottom: 8, overflowX: 'auto', borderRadius: 'var(--r)', background: 'var(--bg1)', border: '1px solid var(--border)', padding: '6px 10px', fontSize: 11, color: 'var(--t2)' }}>{item.command}</pre>
+          )}
+          {item.prompt && <p style={{ marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>{item.prompt}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button size="sm" onClick={onApprove} style={{ background: 'var(--amber)', color: '#fff' }}>允许</Button>
+            <Button size="sm" variant="outline" onClick={onReject}>拒绝</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={{ marginBottom: 8, fontSize: 12, fontWeight: 500, color: 'var(--amber)' }}>Agent 需要你的输入</p>
+          {item.prompt && <p style={{ marginBottom: 8, fontSize: 13, color: 'var(--t2)' }}>{item.prompt}</p>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              autoFocus value={input} onChange={e => setInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && onSubmit()}
+              style={{ flex: 1, borderRadius: 'var(--r)', border: '1px solid var(--border)', padding: '6px 10px', fontSize: 13, background: 'var(--bg1)', color: 'var(--t1)', outline: 'none' }}
+              placeholder="输入你的回复…"
+            />
+            <Button size="sm" disabled={!input.trim()} onClick={onSubmit}>发送</Button>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+// ── Markdown overrides ────────────────────────────────────────────────────────
+
+const mdComponents: React.ComponentProps<typeof Markdown>['components'] = {
+  code({ className, children, ...props }) {
+    const isBlock = className?.includes('language-')
+    if (isBlock) {
+      return (
+        <pre style={{ margin: '8px 0', borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)' }}>
+          <code style={{ display: 'block', padding: '12px 14px', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.6, background: '#f6f8fa', color: 'var(--t1)', overflowX: 'auto', whiteSpace: 'pre', border: 'none', borderRadius: 0 }} className={className} {...props}>{children}</code>
+        </pre>
+      )
+    }
+    return <code style={{ fontFamily: 'monospace', fontSize: 12, background: 'var(--bg3)', border: '1px solid var(--border)', padding: '1px 5px', borderRadius: 4, color: 'var(--blue)' }} {...props}>{children}</code>
+  },
+  a({ href, children }) {
+    return <a href={href} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)', textDecoration: 'underline' }}>{children}</a>
+  },
+  table({ children }) {
+    return <div style={{ overflowX: 'auto' }}><table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 12.5 }}>{children}</table></div>
+  },
+  th({ children }) {
+    return <th style={{ border: '1px solid var(--border)', padding: '5px 10px', background: 'var(--bg2)', fontWeight: 600, color: 'var(--t1)', textAlign: 'left' }}>{children}</th>
+  },
+  td({ children }) {
+    return <td style={{ border: '1px solid var(--border)', padding: '5px 10px', textAlign: 'left' }}>{children}</td>
+  },
+  blockquote({ children }) {
+    return <blockquote style={{ margin: '8px 0', padding: '6px 12px', borderLeft: '3px solid var(--border2)', color: 'var(--t3)', background: 'var(--bg2)', borderRadius: '0 4px 4px 0' }}>{children}</blockquote>
+  },
+}

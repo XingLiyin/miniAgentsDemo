@@ -1,14 +1,14 @@
-# miniAgents — 打包成 Docker 镜像供 Linux 离线部署
-# 用法: .\packaging\build_docker_image.ps1 [-Output miniagents-linux.tar]
+# NetLIVE-CoWork — 打包成 Docker 镜像供 Linux 离线部署
+# 用法: .\packaging\build_docker_image.ps1 [-Output netlive-cowork-linux.tar]
 param(
-    [string]$Output = "miniagents-linux.tar",
+    [string]$Output = "netlive-cowork-linux.tar",
     [string]$Tag    = "latest"
 )
 
 $ErrorActionPreference = "Stop"
 $Root      = Split-Path $PSScriptRoot -Parent   # 项目根目录
 $BuildDir  = Join-Path $Root "build"
-$ImageName = "miniagents"
+$ImageName = "netlive-cowork"
 $FullTag   = "${ImageName}:${Tag}"
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -52,18 +52,18 @@ Write-Host @"
 
   目标机操作（仅需安装 Docker，无需联网）:
 
-    docker load -i miniagents-linux.tar
+    docker load -i netlive-cowork-linux.tar
     cp .env.example .env
     # 编辑 .env 填写配置后:
     docker run -d \
-      --name miniagents \
+      --name netlive-cowork \
       -p 15926:15926 \
       --env-file .env \
-      -v ./data:/miniagents/data \
-      -v ./resources:/miniagents/resources \
-      -v ./logs:/miniagents/logs \
+      -v ./data:/netlive-cowork/data \
+      -v ./resources:/netlive-cowork/resources \
+      -v ./logs:/netlive-cowork/logs \
       --restart unless-stopped \
-      miniagents:latest
+      netlive-cowork:latest
 
   访问: http://localhost:15926
 ==========================================

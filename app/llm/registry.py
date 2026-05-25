@@ -106,6 +106,7 @@ class LLMRegistry:
         if name not in self._providers:
             raise KeyError(f"未注册 LLM: {name}")
         del self._providers[name]
+        self._provider_registry.delete(name)
         self._get_store().delete(name)
 
     # ── 模型管理 ──────────────────────────────────────────────────────────────

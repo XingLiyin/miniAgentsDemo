@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useMemo } from 'react'
+import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Send, ChevronDown, ChevronRight, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks, Settings, Square } from 'lucide-react'
+import { ArrowUp, ChevronDown, ChevronRight, ChevronUp, Check, Wrench, Bot, User, Loader2, CheckCircle2, XCircle, MessageCircleQuestion, Eye, Code2, Paperclip, X, ListChecks, Settings, Square } from 'lucide-react'
 import { clsx } from 'clsx'
 import { sessionsApi } from '@/api/sessions'
 import type { ContentPart, ImagePart } from '@/api/sessions'
@@ -479,6 +480,110 @@ function AttachmentPreview({ attachments, onRemove }: { attachments: Attachment[
   )
 }
 
+function ModelPickerButton({ llms, llmProvider, llmModel, setLlmProvider, setLlmModel, disabled }: {
+  llms: { name: string; models: { name: string }[]; default_model: string }[]
+  llmProvider: string
+  llmModel: string
+  setLlmProvider: (v: string) => void
+  setLlmModel: (v: string) => void
+  disabled?: boolean
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  const [pos, setPos] = useState<{ bottom: number; right: number } | null>(null)
+
+  const label = useMemo(() => {
+    if (!llmProvider) return '默认模型'
+    return llmModel || llmProvider
+  }, [llmProvider, llmModel])
+
+  const options = useMemo(() => {
+    const list: { provider: string; model: string; label: string }[] = [
+      { provider: '', model: '', label: '默认模型' },
+    ]
+    for (const p of llms) {
+      if (p.models.length === 0) {
+        list.push({ provider: p.name, model: '', label: p.name })
+      } else {
+        for (const m of p.models) {
+          list.push({ provider: p.name, model: m.name, label: m.name })
+        }
+      }
+    }
+    return list
+  }, [llms])
+
+  function toggle(e: React.MouseEvent) {
+    e.stopPropagation()
+    if (!open) {
+      const rect = btnRef.current?.getBoundingClientRect()
+      if (rect) setPos({ bottom: window.innerHeight - rect.top + 6, right: window.innerWidth - rect.right })
+    }
+    setOpen(v => !v)
+  }
+
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    document.addEventListener('click', close)
+    return () => document.removeEventListener('click', close)
+  }, [open])
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={toggle}
+        disabled={disabled}
+        className={clsx(
+          'flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs transition-colors max-w-[160px]',
+          'border-gray-200 bg-gray-50 text-gray-500 hover:border-gray-300 hover:bg-gray-100',
+          disabled && 'opacity-40 pointer-events-none'
+        )}
+      >
+        <span className="truncate">{label}</span>
+        <ChevronUp size={10} className={clsx('flex-shrink-0 text-gray-400 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && pos && createPortal(
+        <div
+          onClick={e => e.stopPropagation()}
+          className="py-1 overflow-y-auto"
+          style={{
+            position: 'fixed', bottom: pos.bottom, right: pos.right, zIndex: 9999,
+            minWidth: 200, maxWidth: 260, maxHeight: 240,
+            background: '#fff', border: '1px solid #e5e7eb',
+            borderRadius: 10, boxShadow: '0 4px 16px rgba(0,0,0,.1)',
+          }}
+        >
+          {options.map((opt, i) => {
+            const selected = opt.provider === llmProvider && opt.model === llmModel
+            return (
+              <button
+                key={i}
+                onClick={() => { setLlmProvider(opt.provider); setLlmModel(opt.model); setOpen(false) }}
+                className={clsx(
+                  'w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-50 transition-colors',
+                  selected ? 'text-blue-600' : 'text-gray-800'
+                )}
+              >
+                {opt.provider && (
+                  <span className={clsx(
+                    'flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded',
+                    selected ? 'bg-blue-50 text-blue-500' : 'bg-gray-100 text-gray-400'
+                  )}>{opt.provider}</span>
+                )}
+                <span className={clsx('flex-1 text-xs truncate', selected && 'font-medium')}>{opt.model || opt.label}</span>
+                {selected && <Check size={11} className="flex-shrink-0 text-blue-500" />}
+              </button>
+            )
+          })}
+        </div>,
+        document.body,
+      )}
+    </>
+  )
+}
+
 function TextInput({
   sessionId,
   session,
@@ -502,13 +607,10 @@ function TextInput({
 
   const { data: llms } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
 
-  // Sync LLM selectors with session when session loads or changes
   useEffect(() => {
     setLlmProvider(session?.llm_provider ?? '')
     setLlmModel(session?.llm_model ?? '')
   }, [session?.llm_provider, session?.llm_model])
-
-  const selectedProvider = llms?.find(l => l.name === llmProvider)
 
   const mutation = useMutation({
     mutationFn: (content: string | ContentPart[]) =>
@@ -558,43 +660,17 @@ function TextInput({
     const el = textareaRef.current
     if (!el) return
     el.style.height = 'auto'
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px'
+    el.style.height = Math.min(el.scrollHeight, 150) + 'px'
   }, [text])
 
   const canSend = (text.trim() || attachments.length > 0) && !mutation.isPending && !disabled
   const isRunning = !!disabled
 
   return (
-    <div className="border-t border-gray-200 bg-white p-3">
+    <div className="border-t border-gray-200 px-3.5 pb-3.5 pt-2.5 bg-white flex-shrink-0">
       {mutation.isError && <p className="text-xs text-red-500 mb-2">发送失败，请重试</p>}
-      {/* LLM switcher */}
-      {llms && llms.length > 0 && (
-        <div className="flex items-center gap-1.5 mb-2">
-          <span className="text-xs text-gray-400 flex-shrink-0">LLM</span>
-          <select
-            value={llmProvider}
-            onChange={e => { setLlmProvider(e.target.value); setLlmModel('') }}
-            disabled={disabled}
-            className="text-xs border border-gray-200 rounded px-1.5 py-0.5 text-gray-600 bg-white focus:outline-none focus:border-blue-400 disabled:opacity-50 disabled:bg-gray-50"
-          >
-            <option value="">默认</option>
-            {llms.map(l => <option key={l.name} value={l.name}>{l.name}</option>)}
-          </select>
-          {selectedProvider && selectedProvider.models.length > 0 && (
-            <select
-              value={llmModel}
-              onChange={e => setLlmModel(e.target.value)}
-              disabled={disabled}
-              className="text-xs border border-gray-200 rounded px-1.5 py-0.5 text-gray-600 bg-white focus:outline-none focus:border-blue-400 disabled:opacity-50 disabled:bg-gray-50"
-            >
-              <option value="">默认（{selectedProvider.default_model}）</option>
-              {selectedProvider.models.map(m => <option key={m.name} value={m.name}>{m.name}</option>)}
-            </select>
-          )}
-        </div>
-      )}
-      <AttachmentPreview attachments={attachments} onRemove={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))} />
-      <div className="flex items-end gap-2">
+      <div className="bg-white border border-gray-200 rounded-xl shadow-sm transition-[border-color,box-shadow] duration-150 focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100">
+        <AttachmentPreview attachments={attachments} onRemove={i => setAttachments(prev => prev.filter((_, idx) => idx !== i))} />
         <input
           ref={fileInputRef}
           type="file"
@@ -603,14 +679,6 @@ function TextInput({
           className="hidden"
           onChange={e => handleFiles(e.target.files)}
         />
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          disabled={disabled}
-          className="flex items-center justify-center w-8 h-8 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors flex-shrink-0 disabled:opacity-40"
-          title="附加图片"
-        >
-          <Paperclip size={15} />
-        </button>
         <textarea
           ref={textareaRef}
           value={text}
@@ -627,29 +695,50 @@ function TextInput({
               if (file) handleFiles(Object.assign(new DataTransfer(), { files: [file] as unknown as FileList }).files)
             })
           }}
-          placeholder={disabled ? 'Agent 正在运行中...' : session?.status === 'INTERRUPTED' ? '已打断，输入新指令继续… (Enter 发送)' : '向 Agent 发送消息… (Enter 发送，Shift+Enter 换行)'}
+          placeholder={disabled ? 'Agent 正在运行中...' : session?.status === 'INTERRUPTED' ? '已打断，输入新指令继续…' : '向 Agent 发送消息…'}
           rows={1}
           disabled={disabled}
-          className="flex-1 resize-none rounded-lg border border-gray-300 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-1 focus:ring-blue-400 leading-5 disabled:bg-gray-50 disabled:text-gray-400"
+          className="w-full px-3 pt-2.5 pb-0 bg-transparent border-none outline-none text-sm leading-relaxed text-gray-800 placeholder-gray-400 resize-none disabled:opacity-50"
         />
-        <button
-          onClick={isRunning ? onInterrupt : submit}
-          disabled={isRunning ? !onInterrupt : !canSend}
-          title={isRunning ? '打断 Agent' : '发送'}
-          className={clsx(
-            'flex items-center justify-center w-8 h-8 rounded-lg transition-colors flex-shrink-0',
-            isRunning
-              ? 'bg-orange-500 text-white hover:bg-orange-600'
-              : canSend
-                ? 'bg-blue-500 text-white hover:bg-blue-600'
-                : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+        <div className="flex items-center gap-2 px-2.5 pb-2 pt-1">
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={disabled}
+            className="text-gray-400 hover:text-gray-600 hover:bg-gray-100 p-1.5 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0"
+            title="附加图片"
+          >
+            <Paperclip size={14} />
+          </button>
+          <span className="flex-1" />
+          {llms && llms.length > 0 && !isRunning && (
+            <ModelPickerButton
+              llms={llms}
+              llmProvider={llmProvider}
+              llmModel={llmModel}
+              setLlmProvider={setLlmProvider}
+              setLlmModel={setLlmModel}
+              disabled={disabled}
+            />
           )}
-        >
-          {isRunning
-            ? (isInterrupting ? <Spinner size="sm" /> : <Square size={14} className="fill-current" />)
-            : (mutation.isPending ? <Spinner size="sm" /> : <Send size={14} />)
-          }
-        </button>
+          <button
+            onClick={isRunning ? onInterrupt : submit}
+            disabled={isRunning ? !onInterrupt : !canSend}
+            title={isRunning ? '打断 Agent' : '发送'}
+            className={clsx(
+              'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-colors',
+              isRunning
+                ? 'bg-gray-400 text-white hover:bg-gray-500'
+                : canSend
+                  ? 'bg-blue-600 text-white hover:bg-blue-700'
+                  : 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            )}
+          >
+            {isRunning
+              ? (isInterrupting ? <Spinner size="sm" /> : <Square size={13} className="fill-current" />)
+              : (mutation.isPending ? <Spinner size="sm" /> : <ArrowUp size={14} strokeWidth={2.5} />)
+            }
+          </button>
+        </div>
       </div>
     </div>
   )
@@ -728,7 +817,7 @@ function BashExecConfirmArea({
               disabled={mutation.isPending}
               className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
             >
-              {mutation.isPending ? <Spinner size="sm" /> : <><Send size={12} />确认拒绝</>}
+              {mutation.isPending ? <Spinner size="sm" /> : <><ArrowUp size={12} strokeWidth={2.5} />确认拒绝</>}
             </button>
           </div>
         </div>
@@ -831,7 +920,7 @@ function WaitingInputArea({
                 disabled={mutation.isPending}
                 className="flex-1 flex items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50 transition-colors"
               >
-                {mutation.isPending ? <Spinner size="sm" /> : <><Send size={12} />提交</>}
+                {mutation.isPending ? <Spinner size="sm" /> : <><ArrowUp size={12} strokeWidth={2.5} />提交</>}
               </button>
             </div>
           </div>
@@ -868,7 +957,7 @@ function WaitingInputArea({
               : 'bg-gray-100 text-gray-400 cursor-not-allowed'
           )}
         >
-          {mutation.isPending ? <Spinner size="sm" /> : <Send size={14} />}
+          {mutation.isPending ? <Spinner size="sm" /> : <ArrowUp size={14} strokeWidth={2.5} />}
         </button>
       </div>
     </div>

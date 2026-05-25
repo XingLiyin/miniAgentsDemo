@@ -80,6 +80,8 @@ def bash_exec(
         )
     except subprocess.TimeoutExpired:
         raise AppError("TOOL_TIMEOUT", f"bash_exec timed out after {timeout_sec}s")
+    except FileNotFoundError as e:
+        raise AppError("BASH_CWD_NOT_FOUND", f"Working directory not found: {cwd}") from e
 
 
 # ── read ──────────────────────────────────────────────────────────────────────

@@ -336,7 +336,7 @@ wheels = [
 ]
 
 [[package]]
-name = "miniagents"
+name = "netlive-cowork"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

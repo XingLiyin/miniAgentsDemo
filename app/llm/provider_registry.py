@@ -44,6 +44,12 @@ class ProviderRegistry:
         self._providers[name] = AnthropicAdapter(api_key, base_url, self._transport, timeout_sec)
         self._anthropic_names.add(name)
 
+    def delete(self, name: str) -> None:
+        """移除已注册的 provider。"""
+        self._providers.pop(name, None)
+        self._openai_names.discard(name)
+        self._anthropic_names.discard(name)
+
     def get(self, name: str) -> BaseAdapter:
         """按名称获取 provider（风格在注册时确定）。"""
         if name not in self._providers:

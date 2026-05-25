@@ -256,7 +256,7 @@ class Actor:
         except Exception as e:
             raise AppError("LLM_API_ERROR", str(e)) from e
 
-        if final_usage is None and not full_text and not tool_call_acc:
+        if finish_reason is None and not full_text and not tool_call_acc and not image_acc and not reasoning_text:
             raise AppError("LLM_API_ERROR", "LLM stream ended without completion")
 
         if not is_daemon and reasoning_text:

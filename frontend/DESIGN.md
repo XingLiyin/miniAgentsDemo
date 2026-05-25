@@ -1,4 +1,4 @@
-# miniAgents 前端设计方案
+# NetLIVE-CoWork 前端设计方案
 
 ## 一、技术选型
 

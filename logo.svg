@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 236 90" width="236" height="90">
+  <defs>
+    <clipPath id="icon-clip">
+      <rect x="0" y="0" width="90" height="90"/>
+    </clipPath>
+    <linearGradient id="green-grad" x1="2" y1="0" x2="38" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#a8d800"/>
+    </linearGradient>
+    <filter id="green-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceGraphic" stdDeviation="2" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- ── 闪电图标 ── -->
+  <g clip-path="url(#icon-clip)">
+    <!-- 蓝色双重拖影：右下方 -->
+    <polygon points="74,39 38,39 38,75" fill="#3b82f6" opacity="0.40" transform="translate(5,4)"/>
+    <polygon points="74,39 38,39 38,75" fill="#3b82f6" opacity="0.18" transform="translate(10,8)"/>
+    <!-- 绿色三角：实心，直角→右下 -->
+    <polygon points="2,52 38,16 38,52" fill="url(#green-grad)" filter="url(#green-glow)"/>
+    <!-- 蓝色三角：半透明，直角→左上 -->
+    <polygon points="74,39 38,39 38,75" fill="#3b82f6" opacity="0.65"/>
+  </g>
+
+  <!-- ── 上方：CoWork 产品名 ── -->
+  <text x="92" y="42"
+        font-family="'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif"
+        font-size="34" font-weight="700" letter-spacing="0.5"
+        fill="#000000">CoWork</text>
+
+  <!-- ── 下方：NetLIVE 品牌名 ── -->
+  <!-- 斜撇（绿，先画） -->
+  <polygon points="93,57 98,57 112,76 107,76" fill="#a8d800"/>
+  <!-- 左竖（绿） -->
+  <rect x="93" y="57" width="5" height="19" fill="#a8d800"/>
+  <!-- 右竖（蓝） -->
+  <rect x="107" y="57" width="5" height="19" fill="#3b82f6"/>
+  <!-- etLIVE -->
+  <text x="115" y="76"
+        font-family="'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif"
+        font-size="26" font-weight="700" letter-spacing="-0.5"
+        fill="#000000">etLIVE</text>
+
+</svg>

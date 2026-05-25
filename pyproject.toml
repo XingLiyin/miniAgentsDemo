@@ -1,5 +1,5 @@
 [project]
-name = "miniAgents"
+name = "NetLIVE-CoWork"
 version = "0.1.0"
 description = "Agent 后端服务（Task/Session/Memory 调度与 LLM 工具链）"
 readme = "README.md"

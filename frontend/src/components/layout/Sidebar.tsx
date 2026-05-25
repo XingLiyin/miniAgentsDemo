@@ -22,7 +22,7 @@ export function Sidebar() {
       <div className="px-4 py-4 border-b border-gray-100">
         <div className="flex items-center gap-2">
           <Activity size={20} className="text-blue-600" />
-          <span className="font-semibold text-gray-900 text-sm">miniAgents</span>
+          <span className="font-semibold text-gray-900 text-sm">NetLIVE-CoWork</span>
         </div>
       </div>
 

@@ -9,6 +9,12 @@ tools:
     - exec_skill_script
     - submit_task
     - get_tracked_task_output
+    - read
+    - read_image
+    - write
+    - edit
+    - glob
+    - bash_exec
   forbidden: []
 mcp_servers:
   - web-search

@@ -48,6 +48,38 @@ BASH_BLACKLIST = [
 ]
 
 
+def _python_for_venv() -> str:
+    """Return a Python interpreter path suitable for creating venvs.
+
+    PyInstaller sets sys.executable to the app exe, not Python — spawning it
+    with '-m venv' would re-launch the server and hit an EADDRINUSE error.
+    When frozen, search PATH for a real Python, skipping Windows Store stubs.
+    """
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    import shutil
+    for name in ("python3", "python"):
+        path = shutil.which(name)
+        if not path:
+            continue
+        # Windows Store aliases live under WindowsApps and are non-functional stubs
+        if sys.platform == "win32" and "WindowsApps" in path:
+            continue
+        # Quick sanity-check: a real Python can print its version
+        try:
+            r = subprocess.run(
+                [path, "--version"], capture_output=True, timeout=5,
+            )
+            if r.returncode == 0:
+                return path
+        except Exception:
+            continue
+    raise AppError(
+        "PYTHON_NOT_FOUND",
+        "No Python interpreter found in PATH. Install Python (python.org) and ensure it is on PATH to use bash_exec with a workspace.",
+    )
+
+
 def build_venv_env(cwd: str | None) -> dict[str, str] | None:
     """Return a copy of os.environ with .venv activated, creating it first if absent."""
     if not cwd:
@@ -63,7 +95,7 @@ def build_venv_env(cwd: str | None) -> dict[str, str] | None:
     if not python_exe.exists():
         logger.info("build_venv_env: creating venv at '%s'", venv_dir)
         result = subprocess.run(
-            [sys.executable, "-m", "venv", str(venv_dir)],
+            [_python_for_venv(), "-m", "venv", str(venv_dir)],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
         )
         if result.returncode != 0:

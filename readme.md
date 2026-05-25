@@ -1,4 +1,4 @@
-# miniAgents
+# NetLIVE-CoWork
 
 A backend service for running **multi-agent LLM workflows** — featuring a task scheduler, multi-layer agent trees, tool execution, memory management, and a built-in Human-in-the-Loop mechanism.
 
@@ -49,8 +49,8 @@ API Layer (FastAPI)
 
 ```bash
 # 1. Clone
-git clone https://github.com/your-username/miniAgents.git
-cd miniAgents
+git clone https://github.com/your-username/NetLIVE-CoWork.git
+cd NetLIVE-CoWork
 
 # 2. Install dependencies (uv recommended)
 uv sync
@@ -70,20 +70,20 @@ The API is now available at `http://localhost:8000`. Interactive docs: `http://l
 
 ## Configuration
 
-All settings are read from `.env` (prefix: `MINIAGENTS_`).
+All settings are read from `.env` (prefix: `NETLIVE_COWORK_`).
 
 | Variable | Default | Description |
 |---|---|---|
-| `MINIAGENTS_DEFAULT_LLM_PROVIDER` | `ms-openai` | LLM provider name (must be registered) |
-| `MINIAGENTS_DEFAULT_LLM_MODEL` | `Qwen/Qwen3.5-27B` | Model identifier |
-| `MINIAGENTS_DATA_DIR` | `data` | Runtime data directory |
-| `MINIAGENTS_AGENTS_DIR` | `resources/agents` | Agent definition files root |
-| `MINIAGENTS_SKILLS_DIR` | `resources/skills` | Skill definition files root |
-| `MINIAGENTS_DEFAULT_TOKEN_BUDGET` | `200000` | Hard token limit per session |
-| `MINIAGENTS_MAX_CONCURRENT_AGENTS` | `5` | Max simultaneous agents per session |
-| `MINIAGENTS_MAX_SPAWN_DEPTH` | `1` | Max sub-agent nesting depth |
-| `MINIAGENTS_BASH_EXEC_TIMEOUT_MS` | `30000` | Bash tool execution timeout |
-| `MINIAGENTS_LOG_LEVEL` | `INFO` | Logging level |
+| `NETLIVE_COWORK_DEFAULT_LLM_PROVIDER` | `ms-openai` | LLM provider name (must be registered) |
+| `NETLIVE_COWORK_DEFAULT_LLM_MODEL` | `Qwen/Qwen3.5-27B` | Model identifier |
+| `NETLIVE_COWORK_DATA_DIR` | `data` | Runtime data directory |
+| `NETLIVE_COWORK_AGENTS_DIR` | `resources/agents` | Agent definition files root |
+| `NETLIVE_COWORK_SKILLS_DIR` | `resources/skills` | Skill definition files root |
+| `NETLIVE_COWORK_DEFAULT_TOKEN_BUDGET` | `200000` | Hard token limit per session |
+| `NETLIVE_COWORK_MAX_CONCURRENT_AGENTS` | `5` | Max simultaneous agents per session |
+| `NETLIVE_COWORK_MAX_SPAWN_DEPTH` | `1` | Max sub-agent nesting depth |
+| `NETLIVE_COWORK_BASH_EXEC_TIMEOUT_MS` | `30000` | Bash tool execution timeout |
+| `NETLIVE_COWORK_LOG_LEVEL` | `INFO` | Logging level |
 
 ### Registering an LLM Provider
 
@@ -253,12 +253,12 @@ An agent can invoke a skill by calling `submit_task` with `skill_name: "summariz
 ## Project Structure
 
 ```
-miniAgents/
+NetLIVE-CoWork/
 ├── app/
 │   ├── api/v1/          # FastAPI routes and request/response schemas
 │   ├── agent_template/  # Agent definition loader and in-memory registry
 │   ├── common/          # Utilities: ID generation, SSE bus, error types
-│   ├── config/          # Settings (pydantic-settings, MINIAGENTS_ prefix)
+│   ├── config/          # Settings (pydantic-settings, NETLIVE_COWORK_ prefix)
 │   ├── domain/
 │   │   ├── models/      # Dataclasses: Session, Task, Agent, Memory, ...
 │   │   ├── services/    # Domain services: CRUD + state machine transitions
@@ -294,7 +294,7 @@ miniAgents/
 
 ## Design Document
 
-See [`docs/miniAgents_设计文档.md`](docs/miniAgents_设计文档.md) for the full architecture reference: domain models, state machines, scheduling flow, tool execution, memory management, and more.
+See [`docs/NetLIVE-CoWork_设计文档.md`](docs/NetLIVE-CoWork_设计文档.md) for the full architecture reference: domain models, state machines, scheduling flow, tool execution, memory management, and more.
 
 ---
 

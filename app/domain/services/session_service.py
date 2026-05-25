@@ -101,6 +101,8 @@ class SessionService:
                 "status": to_status,
                 "input_tokens_used": session.input_tokens_used,
                 "output_tokens_used": session.output_tokens_used,
+                "llm_provider": session.llm_provider,
+                "llm_model": session.llm_model,
             }
             get_sse_bus().push(session_id, sse_event)
             if to_status in ("SUCCEEDED", "FAILED", "CANCELED", "INTERRUPTED"):

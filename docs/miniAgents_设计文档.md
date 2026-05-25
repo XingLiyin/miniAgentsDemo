@@ -1,4 +1,4 @@
-# miniAgents 后端服务完整设计文档
+# NetLIVE-CoWork 后端服务完整设计文档
 
 > 最终态版本 · 2026-04-28
 >
@@ -34,7 +34,7 @@
 
 ## 1. 项目目标与范围
 
-miniAgents 是一个 **Agent 后端服务**，以学习验证架构思路为首要目标，同时构建稳定、可扩展、可观测的基础设施 Demo。核心理念是：先跑通最小可运行的 Agent Loop，再逐步迭代安全防护与可观测性。
+NetLIVE-CoWork 是一个 **Agent 后端服务**，以学习验证架构思路为首要目标，同时构建稳定、可扩展、可观测的基础设施 Demo。核心理念是：先跑通最小可运行的 Agent Loop，再逐步迭代安全防护与可观测性。
 
 ### 1.1 核心能力
 
@@ -809,7 +809,7 @@ for child in task_svc.list_children(task.id, session.id):
 
 ### 12.1 树形结构
 
-miniAgents 的 Agent 关系形成一棵**动态多层树**。「root」和「sub」不是固定角色，而是相对关系——同一 agent 可以同时是上级的 sub-agent（执行被分配的 Task）和下级的 root-agent（管理自己派生的 sub-agent）。
+NetLIVE-CoWork 的 Agent 关系形成一棵**动态多层树**。「root」和「sub」不是固定角色，而是相对关系——同一 agent 可以同时是上级的 sub-agent（执行被分配的 Task）和下级的 root-agent（管理自己派生的 sub-agent）。
 
 | 角色 | 定义 |
 |------|------|
@@ -1148,4 +1148,4 @@ EventBus 为内部异步通信总线，以下为当前已实现的事件类型�
 
 ---
 
-*miniAgents Design Document · 2026-04-28*
+*NetLIVE-CoWork Design Document · 2026-04-28*

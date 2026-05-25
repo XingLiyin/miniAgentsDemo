@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Dict, Iterator, Optional
+
+logger = logging.getLogger(__name__)
 
 from app.llm.base import (
     BaseAdapter,
@@ -89,6 +92,7 @@ class OpenAIAdapter(BaseAdapter):
 
         # 聚合 tool_call 增量（按 index）
         tool_call_buffers: dict[int, dict[str, Any]] = {}
+        got_done = False
 
         try:
             for raw_line in self._transport.stream_post(url, self._headers(), payload, self._timeout_sec):
@@ -99,9 +103,19 @@ class OpenAIAdapter(BaseAdapter):
 
                 choices = data.get('choices') or []
                 if not choices:
+                    # 检测 provider 在流中返回的错误（如 Dashscope 内容审核拦截）
+                    err_obj = data.get('error') or {}
+                    if not err_obj and data.get('code') and data.get('message'):
+                        err_obj = data
+                    if err_obj:
+                        msg = err_obj.get('message') or str(err_obj)
+                        code = err_obj.get('code') or 'STREAM_ERROR'
+                        logger.warning("OpenAI stream error chunk: code=%s msg=%s", code, msg)
+                        raise RuntimeError(f"[{code}] {msg}")
                     # 最后一个 chunk 可能只含 usage
                     usage_data = data.get('usage')
                     if usage_data:
+                        got_done = True
                         yield StreamChunk(is_done=True, usage=_parse_usage(usage_data))
                     continue
 
@@ -133,6 +147,7 @@ class OpenAIAdapter(BaseAdapter):
                     yield StreamChunk(tool_call_delta={'index': idx, **buf})
 
                 if finish_reason:
+                    got_done = True
                     usage_data = data.get('usage')
                     yield StreamChunk(
                         is_done=True,
@@ -143,6 +158,12 @@ class OpenAIAdapter(BaseAdapter):
                     # chunk (choices=[]) can be captured when stream_options is used
         except RuntimeError as exc:
             yield StreamChunk(is_done=True, finish_reason='api_error', error=_format_api_error(exc, req.model, url))
+            return
+
+        # 某些 provider 不发 finish_reason，只要流正常结束且有内容即视为完成
+        if not got_done:
+            logger.debug("OpenAI stream ended without explicit is_done, emitting implicit done")
+            yield StreamChunk(is_done=True, finish_reason='stop')
 
     # ── 内部工具 ──────────────────────────────────────────────────────────
 
