@@ -1,5 +1,5 @@
 [project]
-name = "NetLIVE-CoWork"
+name = "netlive-cowork"
 version = "0.1.0"
 description = "Agent 后端服务（Task/Session/Memory 调度与 LLM 工具链）"
 readme = "README.md"
@@ -9,11 +9,17 @@ dependencies = [
     "httpx>=0.28.1",
     "python-dotenv>=1.0.0",
     "pydantic>=2.12.5",
-    "pytest>=9.0.2",
+    "pydantic-settings>=2.14.0",
     "uvicorn>=0.42.0",
     "cairosvg>=2.9.0",
-    "pydantic-settings>=2.14.0",
     "mcp>=1.27.1",
+    "setuptools>=70.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pyinstaller>=6.0",
 ]
 
 [tool.pytest.ini_options]
