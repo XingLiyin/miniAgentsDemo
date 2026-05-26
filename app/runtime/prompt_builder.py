@@ -109,54 +109,64 @@ class ActorPromptBuilder(BasePromptBuilder):
     def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
         messages: list[LLMMessage] = []
 
-        recent_messages = (
-            ctx.recent_messages[:-1]
-            if ctx.recent_messages and ctx.recent_messages[-1].get("role") == "user"
-            else ctx.recent_messages
-        )
+        if task.user_prompt_in_memory:
+            # Resume 路径：user message 已以包装形式存在 memory，直接使用历史
+            for m in ctx.recent_messages:
+                messages.append(LLMMessage(
+                    role=m.get("role", "user"),
+                    content=m.get("content", ""),
+                    tool_calls=m.get("tool_calls"),
+                    tool_call_id=m.get("tool_call_id", ""),
+                    reasoning_content=m.get("reasoning_content"),
+                ))
+            # suspend 后 resume：末尾是 assistant，追加 blackboard 上下文
+            if ctx.blackboard_snippets and messages and messages[-1].role != "user":
+                bb = "## Task Background\n" + "\n".join(
+                    f"- {content_to_text(s)}" for s in ctx.blackboard_snippets
+                )
+                messages.append(LLMMessage(role="user", content=bb))
+            return messages
 
+        # 非 resume 路径（daemon 或无 user_prompt）：构建完整 user message
+        for m in ctx.recent_messages:
+            messages.append(LLMMessage(
+                role=m.get("role", "user"),
+                content=m.get("content", ""),
+                tool_calls=m.get("tool_calls"),
+                tool_call_id=m.get("tool_call_id", ""),
+                reasoning_content=m.get("reasoning_content"),
+            ))
         parts: list[str] = []
         if ctx.blackboard_snippets:
             parts.append("## Task Background\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
         if task.title and task.description:
             parts.append(f"## Current Goal\n{task.title}\n{task.description}")
-
         user_prompt = ctx.current_task.user_prompt
         if user_prompt:
             parts.append(f"## Current Message\n{content_to_text(user_prompt)}")
-        if recent_messages:
-            parts.append("## History\n" + self._format_history(recent_messages))
-        text_content = "\n\n".join(parts)
-
-        if isinstance(user_prompt, list):
-            image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]
-            msg_content = ([*image_parts, TextPart(text=text_content)] if image_parts else text_content)
-        else:
-            msg_content = text_content
-
-        messages.append(LLMMessage(role="user", content=msg_content))
+        if parts:
+            text_content = "\n\n".join(parts)
+            if isinstance(user_prompt, list):
+                image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]
+                msg_content: str | list = ([*image_parts, TextPart(text=text_content)] if image_parts else text_content)
+            else:
+                msg_content = text_content
+            messages.append(LLMMessage(role="user", content=msg_content))
         return messages
 
-    def _format_history(self, messages: list[dict]) -> str:
-        """将 recent_messages 格式化为可读的轮次文本。"""
-        lines: list[str] = []
-        round_num = 0
-        for m in messages:
-            role = m.get("role", "user")
-            content = content_to_text(content_from_raw(m.get("content", "")))
-            if role == "user":
-                round_num += 1
-                lines.append(f"--- Round {round_num} ---")
-                if content:
-                    lines.append(f"User: {content}")
-            elif role == "assistant":
-                if content:
-                    lines.append(f"Assistant: {content}")
-                for tc in (m.get("tool_calls") or []):
-                    lines.append(f"  Tool call: {tc.get('name')}({tc.get('input')})")
-            elif role == "tool":
-                lines.append(f"  Tool result: {content[:500]}")
-        return "\n".join(lines)
+    def build_initial_user_content(self, task: "Task") -> "str | list":
+        """不依赖 ctx，仅用 task 信息构建初始 user message 内容（写入 memory 用）。"""
+        parts: list[str] = []
+        if task.title and task.description:
+            parts.append(f"## Current Goal\n{task.title}\n{task.description}")
+        user_prompt = task.user_prompt
+        if user_prompt:
+            parts.append(f"## Current Message\n{content_to_text(user_prompt)}")
+        text_content = "\n\n".join(parts)
+        if isinstance(user_prompt, list):
+            image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]
+            return ([*image_parts, TextPart(text=text_content)] if image_parts else text_content)
+        return text_content
 
     def _build_resources_section(self, ctx: "ReasoningContext") -> str:
         """将 ctx.actor_resources 按 kind 分组渲染为 system prompt 段落。"""

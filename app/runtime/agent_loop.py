@@ -79,13 +79,13 @@ class AgentLoop:
 
             task = self._task_svc.get(task_id, session_id)
 
-            # 立即持久化 user_prompt，确保任务无论以何种方式结束都在 memory 里。
-            # PromptBuilder 的 recent_messages[:-1] 去重逻辑兼容此处提前写入。
+            # 立即持久化 user_prompt（包装格式），确保任务无论以何种方式结束都在 memory 里。
             if task.user_prompt and not task.user_prompt_in_memory and not (task.settings or {}).get("_daemon"):
+                wrapped = self._actor._prompt_builder.build_initial_user_content(task)
                 self._memory_svc.append_message(
                     agent_id=agent_id,
                     role="user",
-                    content=task.user_prompt,
+                    content=wrapped,
                     session_id=session_id,
                     task_id=task_id,
                 )
