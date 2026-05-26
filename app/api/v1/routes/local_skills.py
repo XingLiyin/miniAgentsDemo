@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from app.api.v1.schemas.local_skill import LocalSkillResponse
 from app.api.v1.schemas.skill_pull import PullSkillResponse, RemoteCatalogItem
@@ -20,10 +20,29 @@ _ERROR_STATUS = {
     "PULL_SERVER_ERROR": 502,
     "REMOTE_SKILL_NOT_FOUND": 404,
     "PULL_EXTRACT_FAILED": 500,
+    "IMPORT_INVALID_ZIP": 400,
+    "IMPORT_MISSING_SKILL_MD": 400,
+    "IMPORT_MISSING_NAME": 400,
+    "IMPORT_MISSING_DESCRIPTION": 400,
+    "IMPORT_EXTRACT_FAILED": 500,
 }
 
 
 # ── 本地 Skill ──────────────────────────────────────────────────────────────
+
+@router.post("/import", response_model=LocalSkillResponse)
+async def import_local_skill(file: UploadFile = File(...)) -> LocalSkillResponse:
+    """上传 zip 包并导入为本地 skill。"""
+    data = await file.read()
+    try:
+        result = get_local_skill_service().import_skill(data)
+    except AppError as e:
+        raise HTTPException(
+            status_code=_ERROR_STATUS.get(e.code, 400),
+            detail={"code": e.code, "message": e.message},
+        )
+    return LocalSkillResponse(**result)
+
 
 @router.get("", response_model=list[LocalSkillResponse])
 def list_local_skills() -> list[LocalSkillResponse]:
@@ -45,6 +64,20 @@ def delete_local_skill(skill_id: str) -> None:
 
 
 # ── 远端 Skill 拉取（路由须在 /{skill_id} 之前注册） ────────────────────────
+
+@router.post("/pull-server/import", response_model=PullSkillResponse)
+async def import_remote_skill(file: UploadFile = File(...)) -> PullSkillResponse:
+    """将 zip 包上传到远端 skill 服务器的 POST /skills/import。"""
+    data = await file.read()
+    try:
+        result = get_skill_pull_service().import_to_remote(data, file.filename or "skill.zip")
+    except AppError as e:
+        raise HTTPException(
+            status_code=_ERROR_STATUS.get(e.code, 500),
+            detail={"code": e.code, "message": e.message},
+        )
+    return PullSkillResponse(**result)
+
 
 @router.get("/pull-server/catalog", response_model=list[RemoteCatalogItem])
 def list_remote_catalog() -> list[RemoteCatalogItem]:

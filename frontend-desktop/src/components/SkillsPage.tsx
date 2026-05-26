@@ -1,6 +1,6 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon } from 'lucide-react'
+import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon, UploadIcon } from 'lucide-react'
 import { skillsApi } from '@/api/skills'
 import type { LocalSkill, RemoteCatalogItem } from '@/api/skills'
 import { Button } from '@/components/ui/button'
@@ -58,20 +58,60 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 function LocalPanel() {
   const qc = useQueryClient()
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
 
   const { data: skills = [], isLoading } = useQuery({
     queryKey: ['skills'],
     queryFn: skillsApi.list,
   })
 
+  useEffect(() => {
+    if (highlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [highlightId, skills])
+
   const deleteMut = useMutation({
     mutationFn: (skillId: string) => skillsApi.delete(skillId),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['skills'] }); setConfirmId(null) },
   })
 
+  const importMut = useMutation({
+    mutationFn: (file: File) => skillsApi.importLocal(file),
+    onSuccess: (skill) => {
+      qc.invalidateQueries({ queryKey: ['skills'] })
+      setImportError(null)
+      setHighlightId(skill.skill_id)
+      setTimeout(() => setHighlightId(null), 3000)
+    },
+    onError: (e: Error) => setImportError(e.message),
+  })
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) importMut.mutate(file)
+    e.target.value = ''
+  }
+
   return (
     <>
       <div className="p-5">
+        <div className="flex items-center justify-between mb-4">
+          <span />
+          <div className="flex flex-col items-end gap-1">
+            <Button variant="outline" size="sm" loading={importMut.isPending}
+              onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
+              <UploadIcon size={12} />导入 zip
+            </Button>
+            {importError && (
+              <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
+            )}
+          </div>
+          <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={handleFileChange} />
+        </div>
         {isLoading ? (
           <div className="flex flex-col gap-3">
             {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
@@ -81,7 +121,9 @@ function LocalPanel() {
         ) : (
           <div className="flex flex-col gap-2">
             {skills.map(s => (
-              <SkillCard key={s.skill_id} skill={s} onDelete={() => setConfirmId(s.skill_id)} />
+              <SkillCard key={s.skill_id} skill={s} highlighted={s.skill_id === highlightId}
+                containerRef={s.skill_id === highlightId ? highlightRef : undefined}
+                onDelete={() => setConfirmId(s.skill_id)} />
             ))}
           </div>
         )}
@@ -110,13 +152,22 @@ function LocalPanel() {
   )
 }
 
-function SkillCard({ skill, onDelete }: { skill: LocalSkill; onDelete: () => void }) {
-  const [expanded, setExpanded] = useState(false)
+function SkillCard({ skill, highlighted = false, containerRef, onDelete }: {
+  skill: LocalSkill; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement>; onDelete: () => void
+}) {
+  const [expanded, setExpanded] = useState(highlighted)
 
   return (
     <div
-      className="rounded-xl transition-shadow"
-      style={{ border: '1px solid var(--border)', background: 'var(--bg1)', overflow: 'hidden', boxShadow: 'var(--shadow)' }}
+      ref={containerRef}
+      className="rounded-xl"
+      style={{
+        border: `1px solid ${highlighted ? 'var(--blue)' : 'var(--border)'}`,
+        background: highlighted ? 'var(--blue-dim)' : 'var(--bg1)',
+        overflow: 'hidden',
+        boxShadow: 'var(--shadow)',
+        transition: 'border-color .4s, background .4s',
+      }}
     >
       <div
         className="flex items-center justify-between gap-3 px-4 py-3 cursor-pointer"
@@ -183,12 +234,22 @@ function SkillCard({ skill, onDelete }: { skill: LocalSkill; onDelete: () => voi
 function RemotePanel() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  const [highlightId, setHighlightId] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const highlightRef = useRef<HTMLDivElement>(null)
 
   const { data: catalog = [], isLoading, isError, error } = useQuery({
     queryKey: ['skill-catalog'],
     queryFn: skillsApi.catalog,
     retry: 1,
   })
+
+  useEffect(() => {
+    if (highlightId && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+    }
+  }, [highlightId, catalog])
 
   const pullMut = useMutation({
     mutationFn: ({ id, name }: { id: string; name: string }) => skillsApi.pull(id, name),
@@ -197,6 +258,23 @@ function RemotePanel() {
       qc.invalidateQueries({ queryKey: ['skill-catalog'] })
     },
   })
+
+  const importMut = useMutation({
+    mutationFn: (file: File) => skillsApi.importRemote(file),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['skill-catalog'] })
+      setImportError(null)
+      setHighlightId(result.skill_id)
+      setTimeout(() => setHighlightId(null), 3000)
+    },
+    onError: (e: Error) => setImportError(e.message),
+  })
+
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (file) importMut.mutate(file)
+    e.target.value = ''
+  }
 
   const filtered = useMemo(() => {
     if (!search.trim()) return catalog
@@ -210,6 +288,19 @@ function RemotePanel() {
 
   return (
     <div className="p-5">
+      {/* Toolbar */}
+      <div className="flex items-center justify-end gap-2 mb-4">
+        <div className="flex flex-col items-end gap-1">
+          <Button variant="outline" size="sm" loading={importMut.isPending}
+            onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
+            <UploadIcon size={12} />上传到远端
+          </Button>
+          {importError && (
+            <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
+          )}
+        </div>
+        <input ref={fileInputRef} type="file" accept=".zip" className="hidden" onChange={handleFileChange} />
+      </div>
       {/* Search bar */}
       {!isLoading && !isError && catalog.length > 0 && (
         <div className="relative mb-4">
@@ -251,6 +342,8 @@ function RemotePanel() {
             <CatalogCard
               key={item.id}
               item={item}
+              highlighted={item.id === highlightId}
+              containerRef={item.id === highlightId ? highlightRef : undefined}
               pulling={pullMut.isPending && pullMut.variables?.id === item.id}
               onPull={() => pullMut.mutate({ id: item.id, name: item.name })}
             />
@@ -261,26 +354,29 @@ function RemotePanel() {
   )
 }
 
-function CatalogCard({ item, pulling, onPull }: { item: RemoteCatalogItem; pulling: boolean; onPull: () => void }) {
+function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull }: {
+  item: RemoteCatalogItem; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement>; pulling: boolean; onPull: () => void
+}) {
   return (
     <div
+      ref={containerRef}
       className="rounded-xl flex flex-col"
       style={{
-        border: '1px solid var(--border)',
-        background: 'var(--bg1)',
+        border: `1px solid ${highlighted ? 'var(--blue)' : 'var(--border)'}`,
+        background: highlighted ? 'var(--blue-dim)' : 'var(--bg1)',
         boxShadow: 'var(--shadow)',
         overflow: 'hidden',
-        transition: 'box-shadow var(--tr), border-color var(--tr)',
+        transition: 'box-shadow var(--tr), border-color .4s, background .4s',
       }}
       onMouseEnter={e => {
         const el = e.currentTarget as HTMLElement
         el.style.boxShadow = 'var(--shadow2)'
-        el.style.borderColor = 'var(--border2)'
+        if (!highlighted) el.style.borderColor = 'var(--border2)'
       }}
       onMouseLeave={e => {
         const el = e.currentTarget as HTMLElement
         el.style.boxShadow = 'var(--shadow)'
-        el.style.borderColor = 'var(--border)'
+        el.style.borderColor = highlighted ? 'var(--blue)' : 'var(--border)'
       }}
     >
       {/* Card body */}

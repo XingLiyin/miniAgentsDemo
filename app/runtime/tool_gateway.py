@@ -16,6 +16,7 @@ from typing import Any
 
 from app.common.errors import AppError
 from app.common.utils import new_tool_call_id, now_iso
+from app.config.settings import get_settings
 from app.domain.models.agent import AgentCapability
 from app.domain.models.tool_call import ToolCall
 from app.runtime.policy_engine import PolicyEngine
@@ -137,6 +138,19 @@ class ToolGateway:
                 })
             except Exception:
                 pass
+
+        # ⑥ 截断过长的文本输出
+        if isinstance(result.content, str):
+            limit = get_settings().http_response_limit_bytes
+            encoded = result.content.encode("utf-8")
+            if len(encoded) > limit:
+                result = ToolResult(
+                    content=encoded[:limit].decode("utf-8", errors="replace")
+                            + f"\n[output truncated at {limit} bytes]",
+                    is_error=result.is_error,
+                    error_code=result.error_code,
+                    metadata=result.metadata,
+                )
 
         return result
 

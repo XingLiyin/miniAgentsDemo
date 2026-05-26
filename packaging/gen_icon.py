@@ -4,7 +4,7 @@ from PIL import Image
 import cairosvg
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-svg_path = os.path.join(root, 'resources', 'brand', 'icon.svg')
+svg_path = os.path.join(root, 'packaging', 'brand', 'icon.svg')
 out_path = os.path.join(root, 'electron', 'assets', 'icon.ico')
 os.makedirs(os.path.dirname(out_path), exist_ok=True)
 

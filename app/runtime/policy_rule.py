@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
@@ -61,17 +60,10 @@ class WhitelistRule(GlobalRule):
 
 
 class BashExecGuardRule(ToolRule):
-    """bash_exec 专用守卫：命令白名单 + HITL 用户审批。
+    """bash_exec 专用守卫：HITL 用户审批。
 
-    只允许 python/python3、uv、pip/pip3 及 .py 脚本。
     每次执行前通过 SSE 推送 bash_exec_confirm 事件，阻塞等待用户明确批准。
     """
-
-    _ALLOWED = re.compile(
-        r"^\s*(?:python3?|py)\b"   # python / python3 / py
-        r"|^\s*(?:uv|pip3?)\b"     # uv / pip / pip3
-        r"|^\s*\S+\.py(?:\s|$)",   # 直接运行 .py 文件
-    )
 
     def __init__(self, session_svc: "SessionService") -> None:  # type: ignore[name-defined]
         super().__init__("bash_exec")
@@ -80,14 +72,7 @@ class BashExecGuardRule(ToolRule):
     def check(self, capability: "AgentCapability", tool_name: str, arguments: dict, ctx: "CallContext | None") -> None:
         command = arguments.get("command", "").strip()
 
-        # Phase 1 — 命令白名单
-        if not self._ALLOWED.match(command):
-            raise AppError(
-                "TOOL_NOT_AUTHORIZED",
-                f"bash_exec: only python, uv, and pip commands are permitted. Got: {command!r}",
-            )
-
-        # Phase 2 — HITL 用户审批
+        # HITL 用户审批
         session_id = ctx.session_id if ctx else ""
         agent_id   = ctx.agent_id   if ctx else ""
         if not session_id:

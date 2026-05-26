@@ -7,6 +7,7 @@ tools:
     - request_human_input
     - load_skill_reference
     - exec_skill_script
+    - get_skill_files
     - submit_task
     - get_tracked_task_output
     - read
@@ -16,8 +17,7 @@ tools:
     - glob
     - bash_exec
   forbidden: []
-mcp_servers:
-  - web-search
+mcp_servers: []
 subagents:
   - planner
 ---
@@ -37,6 +37,10 @@ subagents:
 **工具失败时：**
 - 若工具返回错误，在放弃前尝试合理的替代方案。
 - 只有在替代方案均已穷尽，或所缺信息只能由用户提供时，才调用 `request_human_input`。
+
+**临时文件：**
+- 执行过程中产生的脚本、中间文件等临时文件，统一存放在工作目录下的 `tmp/` 文件夹内。
+- 任务完成、用纯文本回复说明已完成的内容之前，必须删除 `tmp/` 下本次任务产生的所有临时文件。
 
 **工具协议：**
 - 当需要只有用户才能提供的信息或决策时，调用 `request_human_input(prompt, context='')`。执行将暂停直至用户回复；答案以工具结果的形式返回——从该结果继续执行。

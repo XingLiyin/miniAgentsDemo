@@ -23,10 +23,12 @@ export interface PullSkillResponse {
 }
 
 export const skillsApi = {
-  list:   () => http.get<LocalSkill[]>('/skills'),
-  delete: (skillId: string) => http.delete<void>(`/skills/${skillId}`),
+  list:         () => http.get<LocalSkill[]>('/skills'),
+  delete:       (skillId: string) => http.delete<void>(`/skills/${skillId}`),
+  importLocal:  (file: File) => http.upload<LocalSkill>('/skills/import', file),
 
-  catalog: () => http.get<RemoteCatalogItem[]>('/skills/pull-server/catalog'),
-  pull:    (remoteId: string, name: string) =>
+  catalog:      () => http.get<RemoteCatalogItem[]>('/skills/pull-server/catalog'),
+  pull:         (remoteId: string, name: string) =>
     http.post<PullSkillResponse>(`/skills/pull-server/catalog/${remoteId}/pull`, { name }),
+  importRemote: (file: File) => http.upload<PullSkillResponse>('/skills/pull-server/import', file),
 }

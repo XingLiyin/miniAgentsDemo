@@ -7,6 +7,7 @@ from pathlib import Path
 
 from app.common.errors import AppError
 from app.skills.loader import SkillLoader
+from app.skills.zip_utils import extract_zip, sanitize_folder, validate_skill_zip
 from app.storage.file.skill_pull_store import SkillPullStore
 
 
@@ -47,3 +48,23 @@ class LocalSkillService:
             raise AppError("LOCAL_SKILL_DELETE_FAILED", f"Failed to delete skill '{skill_id}': {e}")
 
         self._pull_store.remove_pulled_by_folder(skill_id)
+
+    def import_skill(self, data: bytes) -> dict:
+        """校验并导入 zip 包，解压到 skills_dir，返回 skill 元数据。"""
+        name, _ = validate_skill_zip(data)
+        folder_name = sanitize_folder(name)
+        dest_dir = self._skills_dir / folder_name
+        try:
+            extract_zip(data, dest_dir)
+        except AppError:
+            raise
+        except Exception as e:
+            raise AppError("IMPORT_EXTRACT_FAILED", f"解压失败: {e}")
+        metadata = self._loader.load_metadata(dest_dir / "SKILL.md")
+        return {
+            "skill_id": folder_name,
+            "name": metadata.name,
+            "description": metadata.description,
+            "version": metadata.version,
+            "triggers": metadata.triggers,
+        }
