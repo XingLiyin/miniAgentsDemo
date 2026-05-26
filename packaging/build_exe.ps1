@@ -55,8 +55,8 @@ if (-not $SkipInstall) {
     uv sync --project $Root
     if ($LASTEXITCODE -ne 0) { Write-Err "uv sync 失败"; exit 1 }
 
-    Write-Step "安装 PyInstaller"
-    uv pip install pyinstaller
+    Write-Step "安装 PyInstaller 与 setuptools"
+    uv pip install setuptools pyinstaller
     if ($LASTEXITCODE -ne 0) { Write-Err "安装 PyInstaller 失败"; exit 1 }
     Write-OK "PyInstaller 已就绪"
 } else {

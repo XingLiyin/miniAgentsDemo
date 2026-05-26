@@ -68,7 +68,7 @@ if (-not $SkipBackend) {
   if (-not $SkipInstall) {
     uv sync --project $Root
     if ($LASTEXITCODE -ne 0) { Write-Err "uv sync 失败" }
-    uv pip install pyinstaller
+    uv pip install setuptools pyinstaller
     if ($LASTEXITCODE -ne 0) { Write-Err "安装 PyInstaller 失败" }
     Write-OK "Python 依赖就绪"
   }
