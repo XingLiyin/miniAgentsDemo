@@ -55,7 +55,11 @@ class MCPStdioProvider(_MCPProviderBase):
 
     def start(self) -> None:
         self._start_loop()
-        self._start_connect()
+        try:
+            self._start_connect()
+        except Exception:
+            self.stop()
+            raise
         self._finish_start()
         logger.info(
             "MCPStdioProvider '%s' started, %d tools loaded",

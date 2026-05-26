@@ -44,6 +44,10 @@ class _MCPProviderBase(ABC):
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._initialized = False
+        # _drain guards _initialized and _active_calls together; stop() waits
+        # for in-flight calls to finish before tearing down the transport.
+        self._drain = threading.Condition(threading.Lock())
+        self._active_calls = 0
 
     # ── 子类接口 ──────────────────────────────────────────────────────────
 
@@ -58,36 +62,46 @@ class _MCPProviderBase(ABC):
     # ── ToolProvider Protocol ──────────────────────────────────────────────
 
     def list_definitions(self) -> list[ToolDefinition]:
-        if not self._initialized:
-            raise AppError(
-                "MCP_NOT_STARTED",
-                f"{type(self).__name__}.start() has not been called",
-            )
+        with self._drain:
+            if not self._initialized:
+                raise AppError(
+                    "MCP_NOT_STARTED",
+                    f"{type(self).__name__}.start() has not been called",
+                )
         return [self._map_tool(t) for t in self._tools]
 
     def reload_tools(self) -> list[ToolDefinition]:
-        if not self._initialized:
-            raise AppError(
-                "MCP_NOT_STARTED",
-                f"{type(self).__name__}.start() has not been called",
-            )
+        with self._drain:
+            if not self._initialized:
+                raise AppError(
+                    "MCP_NOT_STARTED",
+                    f"{type(self).__name__}.start() has not been called",
+                )
         self._run_sync(self._load_tools())
         return self.list_definitions()
 
     def call(self, tool_name: str, arguments: dict, ctx: CallContext | None = None) -> ToolResult:
-        if not self._initialized:
-            raise AppError(
-                "MCP_NOT_STARTED",
-                f"{type(self).__name__}.start() has not been called",
-            )
+        with self._drain:
+            if not self._initialized:
+                raise AppError(
+                    "MCP_NOT_STARTED",
+                    f"{type(self).__name__}.start() has not been called",
+                )
+            self._active_calls += 1
         meta = {"netcowork/sessionId": ctx.session_id} if ctx else None
         try:
             return self._do_call(tool_name, arguments, meta)
         except Exception as e:
             if _is_session_terminated(e):
-                self._initialized = False
+                with self._drain:
+                    self._initialized = False
                 logger.warning("MCP session terminated while calling '%s', marked as disconnected", tool_name)
             raise
+        finally:
+            with self._drain:
+                self._active_calls -= 1
+                if self._active_calls == 0:
+                    self._drain.notify_all()
 
     def _do_call(self, tool_name: str, arguments: dict, meta: dict | None) -> ToolResult:
         logger.debug("Calling MCP tool '%s' with arguments %s", tool_name, arguments)
@@ -97,12 +111,17 @@ class _MCPProviderBase(ABC):
 
     def _finish_start(self) -> None:
         """Called by subclasses at the end of start() to record a successful connection."""
-        self._initialized = True
+        with self._drain:
+            self._initialized = True
 
     # ── 生命周期（共享） ───────────────────────────────────────────────────
 
     def stop(self) -> None:
-        self._initialized = False
+        with self._drain:
+            self._initialized = False
+            # Wait for any in-flight calls to finish before tearing down the
+            # transport, so they don't race against _close() on the same stream.
+            self._drain.wait_for(lambda: self._active_calls == 0, timeout=10)
         if self._loop is not None:
             try:
                 self._run_sync(self._close())
@@ -239,5 +258,11 @@ def _parse_mcp_tool_result(result: types.CallToolResult) -> str:
 
 
 def _is_session_terminated(exc: Exception) -> bool:
+    try:
+        from anyio import ClosedResourceError as _CRE
+        if isinstance(exc, _CRE):
+            return True
+    except ImportError:
+        pass
     msg = str(exc)
     return "Session terminated" in msg or "session terminated" in msg
