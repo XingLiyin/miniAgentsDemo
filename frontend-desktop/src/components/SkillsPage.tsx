@@ -153,7 +153,7 @@ function LocalPanel() {
 }
 
 function SkillCard({ skill, highlighted = false, containerRef, onDelete }: {
-  skill: LocalSkill; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement>; onDelete: () => void
+  skill: LocalSkill; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement | null>; onDelete: () => void
 }) {
   const [expanded, setExpanded] = useState(highlighted)
 
@@ -355,7 +355,7 @@ function RemotePanel() {
 }
 
 function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull }: {
-  item: RemoteCatalogItem; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement>; pulling: boolean; onPull: () => void
+  item: RemoteCatalogItem; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement | null>; pulling: boolean; onPull: () => void
 }) {
   return (
     <div
