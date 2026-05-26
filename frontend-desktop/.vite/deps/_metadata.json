@@ -1,0 +1,192 @@
+{
+  "hash": "e7fe0fe5",
+  "configHash": "f27b4026",
+  "lockfileHash": "1e132488",
+  "browserHash": "0b7b4e77",
+  "optimized": {
+    "@tanstack/react-query": {
+      "src": "../../node_modules/@tanstack/react-query/build/modern/index.js",
+      "file": "@tanstack_react-query.js",
+      "fileHash": "39028d78",
+      "needsInterop": false
+    },
+    "lucide-react": {
+      "src": "../../node_modules/lucide-react/dist/esm/lucide-react.mjs",
+      "file": "lucide-react.js",
+      "fileHash": "d6eabac2",
+      "needsInterop": false
+    },
+    "mammoth": {
+      "src": "../../node_modules/mammoth/lib/index.js",
+      "file": "mammoth.js",
+      "fileHash": "5dee4edd",
+      "needsInterop": true
+    },
+    "react-dom/client": {
+      "src": "../../node_modules/react-dom/client.js",
+      "file": "react-dom_client.js",
+      "fileHash": "fa3e8ff6",
+      "needsInterop": true
+    },
+    "react-markdown": {
+      "src": "../../node_modules/react-markdown/index.js",
+      "file": "react-markdown.js",
+      "fileHash": "696ae26c",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/bash": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/bash.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_bash.js",
+      "fileHash": "dd0ee085",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/cpp": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/cpp.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_cpp.js",
+      "fileHash": "2557733c",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/css": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/css.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_css.js",
+      "fileHash": "db5f1e0b",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/go": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/go.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_go.js",
+      "fileHash": "340146f6",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/java": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/java.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_java.js",
+      "fileHash": "fcb67351",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/javascript": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/javascript.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_javascript.js",
+      "fileHash": "0f8b414d",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/json": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/json.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_json.js",
+      "fileHash": "8af14477",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/jsx": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/jsx.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_jsx.js",
+      "fileHash": "a1d7a380",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/python": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/python.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_python.js",
+      "fileHash": "b2997a95",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/rust": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/rust.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_rust.js",
+      "fileHash": "627e570f",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/toml": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/toml.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_toml.js",
+      "fileHash": "53bb7a5d",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/tsx": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/tsx.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_tsx.js",
+      "fileHash": "546f197c",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/typescript": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/typescript.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_typescript.js",
+      "fileHash": "3113cc6d",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/languages/prism/yaml": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/languages/prism/yaml.js",
+      "file": "react-syntax-highlighter_dist_esm_languages_prism_yaml.js",
+      "fileHash": "9a2c4abe",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/prism-light": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/prism-light.js",
+      "file": "react-syntax-highlighter_dist_esm_prism-light.js",
+      "fileHash": "a9438201",
+      "needsInterop": false
+    },
+    "react-syntax-highlighter/dist/esm/styles/prism": {
+      "src": "../../node_modules/react-syntax-highlighter/dist/esm/styles/prism/index.js",
+      "file": "react-syntax-highlighter_dist_esm_styles_prism.js",
+      "fileHash": "fb19a87e",
+      "needsInterop": false
+    },
+    "react": {
+      "src": "../../node_modules/react/index.js",
+      "file": "react.js",
+      "fileHash": "d863a71d",
+      "needsInterop": true
+    },
+    "react/jsx-dev-runtime": {
+      "src": "../../node_modules/react/jsx-dev-runtime.js",
+      "file": "react_jsx-dev-runtime.js",
+      "fileHash": "a9748e7e",
+      "needsInterop": true
+    },
+    "remark-gfm": {
+      "src": "../../node_modules/remark-gfm/index.js",
+      "file": "remark-gfm.js",
+      "fileHash": "42bca087",
+      "needsInterop": false
+    },
+    "xlsx": {
+      "src": "../../node_modules/xlsx/xlsx.mjs",
+      "file": "xlsx.js",
+      "fileHash": "bd06034b",
+      "needsInterop": false
+    }
+  },
+  "chunks": {
+    "blank-line-DK_7qVTr": {
+      "file": "blank-line-DK_7qVTr.js",
+      "isDynamicEntry": false
+    },
+    "chunk-Cf1989ZW": {
+      "file": "chunk-Cf1989ZW.js",
+      "isDynamicEntry": false
+    },
+    "clike-CSktrxtf": {
+      "file": "clike-CSktrxtf.js",
+      "isDynamicEntry": false
+    },
+    "javascript-CHuA3idV": {
+      "file": "javascript-CHuA3idV.js",
+      "isDynamicEntry": false
+    },
+    "jsx-qzcfdqSK": {
+      "file": "jsx-qzcfdqSK.js",
+      "isDynamicEntry": false
+    },
+    "jsx-runtime-D0oqSnOz": {
+      "file": "jsx-runtime-D0oqSnOz.js",
+      "isDynamicEntry": false
+    },
+    "space-separated-tokens-DgEtoQgH": {
+      "file": "space-separated-tokens-DgEtoQgH.js",
+      "isDynamicEntry": false
+    },
+    "typescript-CM89_DFx": {
+      "file": "typescript-CM89_DFx.js",
+      "isDynamicEntry": false
+    }
+  }
+}
