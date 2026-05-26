@@ -16,7 +16,7 @@ def init_logging(level: str = "INFO", log_dir: str = "") -> None:
     from uvicorn.logging import DefaultFormatter
 
     log_level = getattr(logging, level.upper(), logging.INFO)
-    formatter = DefaultFormatter("%(levelprefix)s %(message)s", use_colors=False)
+    formatter = DefaultFormatter("%(asctime)s %(levelprefix)s %(message)s", use_colors=False, datefmt="%Y-%m-%d %H:%M:%S")
 
     root = logging.getLogger()
     root.setLevel(log_level)

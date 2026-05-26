@@ -76,7 +76,7 @@ def main() -> None:
         application.mount("/", _SPAFiles(directory=frontend_dist, html=True), name="frontend")
 
     print(f"[miniAgents] Starting on http://0.0.0.0:{port}")
-    uvicorn.run(application, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(application, host="0.0.0.0", port=port, log_level="info", log_config=None)
 
 
 if __name__ == "__main__":
