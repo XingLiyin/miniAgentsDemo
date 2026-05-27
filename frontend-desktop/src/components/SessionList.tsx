@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, FolderIcon, Wand2Icon, ZapIcon } from 'lucide-react'
+import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon } from 'lucide-react'
 import { sessionsApi } from '@/api/sessions'
 import type { Session, PendingSession } from '@/types'
 import { StatusBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { formatTime } from '@/lib/utils'
 import { NewSessionDialog } from './NewSessionDialog'
+import { useProjectGroups, NO_PROJECT_ID, type Project } from '@/hooks/useProjectGroups'
 import type { CenterView } from '@/App'
 
 interface Props {
@@ -17,18 +18,24 @@ interface Props {
   onSelect: (id: string) => void
   onNewSession: (pending: PendingSession) => void
   onPendingSelect: () => void
+  onDismissDraft: () => void
 }
 
-export function SessionList({ selectedId, pendingSession, centerView, onViewChange, onSelect, onNewSession, onPendingSelect }: Props) {
+export function SessionList({ selectedId, pendingSession, centerView, onViewChange, onSelect, onNewSession, onPendingSelect, onDismissDraft }: Props) {
   const qc = useQueryClient()
   const [showNew, setShowNew] = useState(false)
+  const [createInitialWd, setCreateInitialWd] = useState<string>('')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  // 折叠状态：默认全展开；"未指定目录" 默认折叠
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set([NO_PROJECT_ID]))
 
   const { data: sessions = [] } = useQuery({
     queryKey: ['sessions'],
     queryFn: sessionsApi.list,
     refetchInterval: 3000,
   })
+
+  const projects = useProjectGroups(sessions)
 
   const deleteMut = useMutation({
     mutationFn: (id: string) => sessionsApi.delete(id),
@@ -40,7 +47,22 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
 
   function handleNewSession(pending: PendingSession) {
     setShowNew(false)
+    setCreateInitialWd('')
     onNewSession(pending)
+  }
+
+  function openCreate(initialWd: string = '') {
+    setCreateInitialWd(initialWd)
+    setShowNew(true)
+  }
+
+  function toggleProject(id: string) {
+    setCollapsedProjects(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   return (
@@ -83,7 +105,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
           <div className="flex items-center justify-between px-3 py-1.5">
             <span className="text-xs font-semibold" style={{ color: 'var(--t3)', letterSpacing: '1px', textTransform: 'uppercase' }}>会话</span>
             <button
-              onClick={() => setShowNew(true)}
+              onClick={() => openCreate('')}
               title="新建会话"
               style={{
                 width: 20, height: 20, borderRadius: '50%', border: 'none',
@@ -100,6 +122,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
               pending={pendingSession}
               selected={selectedId === null && centerView === 'chat'}
               onClick={onPendingSelect}
+              onDismiss={onDismissDraft}
             />
           )}
 
@@ -107,15 +130,28 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
             <p className="px-3 py-4 text-center text-xs" style={{ color: 'var(--t3)' }}>暂无会话，点击 + 新建</p>
           )}
 
-          {sessions.map(s => (
-            <SessionItem
-              key={s.id}
-              session={s}
-              selected={s.id === selectedId && centerView === 'chat'}
-              onSelect={() => onSelect(s.id)}
-              onDelete={() => setConfirmDelete(s.id)}
-            />
-          ))}
+          {projects.map(project => {
+            const collapsed = collapsedProjects.has(project.id)
+            return (
+              <div key={project.id}>
+                <ProjectGroupHeader
+                  project={project}
+                  collapsed={collapsed}
+                  onToggle={() => toggleProject(project.id)}
+                  onCreateInProject={() => openCreate(project.working_dir)}
+                />
+                {!collapsed && project.sessions.map(s => (
+                  <SessionItem
+                    key={s.id}
+                    session={s}
+                    selected={s.id === selectedId && centerView === 'chat'}
+                    onSelect={() => onSelect(s.id)}
+                    onDelete={() => setConfirmDelete(s.id)}
+                  />
+                ))}
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -132,8 +168,58 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
         </div>
       )}
 
-      <NewSessionDialog open={showNew} onClose={() => setShowNew(false)} onCreated={handleNewSession} />
+      <NewSessionDialog
+        open={showNew}
+        initialWorkingDir={createInitialWd}
+        recentSessions={sessions}
+        onClose={() => { setShowNew(false); setCreateInitialWd('') }}
+        onCreated={handleNewSession}
+      />
     </>
+  )
+}
+
+// ── ProjectGroupHeader ────────────────────────────────────────────────────────
+
+function ProjectGroupHeader({ project, collapsed, onToggle, onCreateInProject }: {
+  project: Project; collapsed: boolean; onToggle: () => void; onCreateInProject: () => void
+}) {
+  const isNoProject = project.id === NO_PROJECT_ID
+  const Icon = isNoProject ? FolderIcon : FolderOpenIcon
+  return (
+    <div
+      className="group flex cursor-pointer items-center gap-1"
+      onClick={onToggle}
+      style={{
+        padding: '5px 9px', margin: '0 4px 1px',
+        transition: 'var(--tr)',
+      }}
+      title={project.working_dir || '未指定工作目录的会话'}
+      onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)' }}
+      onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '' }}
+    >
+      {collapsed ? <ChevronRightIcon size={11} style={{ color: 'var(--t3)' }} /> : <ChevronDownIcon size={11} style={{ color: 'var(--t3)' }} />}
+      <Icon size={11} style={{ color: isNoProject ? 'var(--t3)' : '#eab308' }} />
+      <span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)' }}>
+        {project.display_name}
+      </span>
+      <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'monospace' }}>{project.session_count}</span>
+      {!isNoProject && (
+        <button
+          onClick={e => { e.stopPropagation(); onCreateInProject() }}
+          className="invisible group-hover:visible"
+          title={`在 ${project.display_name} 项目内新建会话`}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            color: 'var(--t3)', padding: 0, display: 'grid', placeItems: 'center',
+          }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--blue)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
+        >
+          <PlusIcon size={11} />
+        </button>
+      )}
+    </div>
   )
 }
 
@@ -157,11 +243,12 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
   )
 }
 
-function PendingSessionItem({ pending, selected, onClick }: { pending: PendingSession; selected: boolean; onClick: () => void }) {
+function PendingSessionItem({ pending, selected, onClick, onDismiss }: { pending: PendingSession; selected: boolean; onClick: () => void; onDismiss: () => void }) {
   const dirName = pending.workingDir.split(/[\\/]/).filter(Boolean).pop() ?? pending.workingDir
   return (
     <div
       onClick={onClick}
+      className="group"
       style={{
         cursor: 'pointer', padding: '6px 12px', transition: 'var(--tr)',
         background: selected ? 'var(--blue-dim)' : undefined,
@@ -173,6 +260,16 @@ function PendingSessionItem({ pending, selected, onClick }: { pending: PendingSe
       <div className="flex items-center gap-1.5">
         <FolderIcon size={12} className="flex-shrink-0 text-yellow-500" />
         <p className="min-w-0 flex-1 truncate text-sm" style={{ color: 'var(--t1)' }}>{dirName}</p>
+        <button
+          onClick={e => { e.stopPropagation(); onDismiss() }}
+          className="invisible flex-shrink-0 group-hover:visible"
+          title="放弃这个未发送的草稿"
+          style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'grid', placeItems: 'center' }}
+          onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--red)' }}
+          onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
+        >
+          <XIcon size={11} />
+        </button>
       </div>
       <p className="mt-0.5 text-[10px]" style={{ color: 'var(--t3)' }}>等待第一条消息…</p>
     </div>

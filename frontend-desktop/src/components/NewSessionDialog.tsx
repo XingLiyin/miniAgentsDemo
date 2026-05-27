@@ -1,10 +1,11 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { XIcon, FolderOpenIcon } from 'lucide-react'
 import { llmsApi } from '@/api/llms'
 import { ModelPickerButton } from '@/components/ui/ModelPickerButton'
 import { Button } from '@/components/ui/button'
-import type { PendingSession } from '@/types'
+import type { PendingSession, Session } from '@/types'
+import { pickDefaultsFromRecentSession } from '@/hooks/useProjectGroups'
 
 declare global {
   interface Window {
@@ -17,24 +18,80 @@ declare global {
 
 interface Props {
   open: boolean
+  initialWorkingDir?: string         // 从某项目"新建会话"时预填
+  recentSessions?: Session[]         // 用于按工作目录套用最近使用的 provider/model
   onClose: () => void
   onCreated: (pending: PendingSession) => void
 }
 
-export function NewSessionDialog({ open, onClose, onCreated }: Props) {
+export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions = [], onClose, onCreated }: Props) {
   const [workingDir, setWorkingDir] = useState('')
   const [selProvider, setSelProvider] = useState('')
   const [selModel, setSelModel] = useState('')
+  // 提示：套用了来自哪个会话的设置
+  const [appliedFromSession, setAppliedFromSession] = useState<string>('')
+  // 跟踪用户是否手动改过 provider/model，避免覆盖
+  const [providerTouched, setProviderTouched] = useState(false)
 
   const { data: providers = [] } = useQuery({ queryKey: ['llms'], queryFn: llmsApi.list })
+
+  // 工作目录变化时，从最近一次用过该 wd 的会话提取 provider/model
+  function applyDefaultsFor(wd: string) {
+    if (!wd) {
+      setAppliedFromSession('')
+      return
+    }
+    const pick = pickDefaultsFromRecentSession(recentSessions, wd)
+    if (!pick) {
+      setAppliedFromSession('')
+      return
+    }
+    if (!providerTouched) {
+      if (pick.defaults.llm_provider) setSelProvider(pick.defaults.llm_provider)
+      if (pick.defaults.llm_model) setSelModel(pick.defaults.llm_model)
+      setAppliedFromSession(pick.session.id)
+    }
+  }
+
+  // 打开时重置 + 应用 initialWorkingDir
+  useEffect(() => {
+    if (open) {
+      setWorkingDir(initialWorkingDir)
+      setSelProvider('')
+      setSelModel('')
+      setProviderTouched(false)
+      setAppliedFromSession('')
+      if (initialWorkingDir) {
+        // 套用最近设置；这里 providerTouched 还是 false
+        const pick = pickDefaultsFromRecentSession(recentSessions, initialWorkingDir)
+        if (pick) {
+          if (pick.defaults.llm_provider) setSelProvider(pick.defaults.llm_provider)
+          if (pick.defaults.llm_model) setSelModel(pick.defaults.llm_model)
+          setAppliedFromSession(pick.session.id)
+        }
+      }
+    }
+    // 故意只依赖 open / initialWorkingDir，避免 recentSessions 引用变化反复重置
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialWorkingDir])
 
   async function pickDirectory() {
     if (window.electronAPI) {
       const dir = await window.electronAPI.selectDirectory()
-      if (dir) setWorkingDir(dir)
+      if (dir) {
+        setWorkingDir(dir)
+        applyDefaultsFor(dir)
+      }
     } else {
       alert('目录选择需要在 Electron 客户端中使用')
     }
+  }
+
+  function handleProviderModelChange(p: string, m: string) {
+    setProviderTouched(true)
+    setSelProvider(p)
+    setSelModel(m)
+    setAppliedFromSession('')   // 用户已手动改，套用提示失效
   }
 
   function handleCreate() {
@@ -43,6 +100,8 @@ export function NewSessionDialog({ open, onClose, onCreated }: Props) {
     setWorkingDir('')
     setSelProvider('')
     setSelModel('')
+    setProviderTouched(false)
+    setAppliedFromSession('')
   }
 
   if (!open) return null
@@ -87,9 +146,14 @@ export function NewSessionDialog({ open, onClose, onCreated }: Props) {
               providers={providers}
               selectedProvider={selProvider}
               selectedModel={selModel}
-              onChange={(p, m) => { setSelProvider(p); setSelModel(m) }}
+              onChange={handleProviderModelChange}
               placeholder="使用默认"
             />
+            {appliedFromSession && (
+              <p className="text-[11px]" style={{ color: 'var(--blue)' }}>
+                已套用此目录最近会话的模型（{appliedFromSession.slice(0, 12)}…）
+              </p>
+            )}
           </div>
         </div>
 

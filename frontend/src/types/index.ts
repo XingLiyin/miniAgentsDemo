@@ -26,8 +26,34 @@ export interface Session {
   failure_counter: number
   llm_provider: string | null
   llm_model: string | null
+  working_dir: string
   created_at: string
   updated_at: string
+}
+
+// ─── Project（Smart B：前端聚合，无后端实体）────────────────────────────────
+// 为方案 C 升级预留：C 阶段只换 useProjectGroups hook 的数据源，UI 不动。
+
+export const NO_PROJECT_ID = '_no_project'
+
+export interface ProjectDefaults {
+  llm_provider?: string | null
+  llm_model?: string | null
+  template_id?: string | null
+  token_budget?: number
+}
+
+export interface Project {
+  id: string                    // Smart B：= working_dir 或 NO_PROJECT_ID；C 阶段：UUID
+  display_name: string          // Smart B：basename；C 阶段：用户可改
+  working_dir: string
+  sessions: Session[]
+  session_count: number
+  last_accessed_at: string
+  // C-prep 字段：Smart B 始终 undefined
+  description?: string
+  pinned?: boolean
+  defaults?: ProjectDefaults
 }
 
 export interface InitialTaskConfig {

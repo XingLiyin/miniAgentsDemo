@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { SessionList } from '@/components/SessionList'
 import { ChatPanel } from '@/components/ChatPanel'
@@ -7,6 +7,40 @@ import { SkillsPage } from '@/components/SkillsPage'
 import { LLMSettingsPage } from '@/components/LLMSettingsPage'
 import { useSessionSSE } from '@/hooks/useSessionSSE'
 import type { PendingSession } from '@/types'
+
+// ── 草稿持久化 ────────────────────────────────────────────────────────────────
+// pendingSession 是 Smart B 阶段唯一不入后端的状态，关掉 app 就丢。
+// 用 localStorage 落盘（Electron 下落在 %APPDATA%\NetLIVE-CoWork\Local Storage\）。
+
+const PENDING_STORAGE_KEY = 'netlive.pendingSession.v1'
+
+function loadPendingSession(): PendingSession | null {
+  try {
+    const raw = localStorage.getItem(PENDING_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    // 容错：确保关键字段存在
+    if (typeof parsed?.workingDir === 'string' && parsed.workingDir) {
+      return {
+        workingDir: parsed.workingDir,
+        provider: typeof parsed.provider === 'string' ? parsed.provider : '',
+        model: typeof parsed.model === 'string' ? parsed.model : '',
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+function savePendingSession(p: PendingSession | null): void {
+  try {
+    if (p) localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(p))
+    else localStorage.removeItem(PENDING_STORAGE_KEY)
+  } catch {
+    // localStorage 不可用或配额满 —— 忽略，不阻断 UI
+  }
+}
 
 export type CenterView = 'chat' | 'skills' | 'llm'
 
@@ -24,16 +58,27 @@ export default function App() {
 
 function Desktop() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [pendingSession, setPendingSession] = useState<PendingSession | null>(null)
+  // 启动时从 localStorage 恢复草稿
+  const [pendingSession, setPendingSession] = useState<PendingSession | null>(loadPendingSession)
   const [centerView, setCenterView] = useState<CenterView>('chat')
   const [nextProvider, setNextProvider] = useState('')
   const [nextModel, setNextModel] = useState('')
 
-  const sse = useSessionSSE(centerView === 'chat' ? selectedId : null)
-  const workingDir = pendingSession?.workingDir ?? sse.session?.working_dir ?? ''
+  // 草稿任何变更都落盘
+  useEffect(() => {
+    savePendingSession(pendingSession)
+  }, [pendingSession])
 
+  const sse = useSessionSSE(centerView === 'chat' ? selectedId : null)
+  // 草稿优先取自己的 workingDir；否则取选中会话的；都没有就空
+  const draftActive = selectedId === null && pendingSession !== null
+  const workingDir = draftActive
+    ? pendingSession?.workingDir ?? ''
+    : sse.session?.working_dir ?? ''
+
+  // 切到已有会话：保留 pendingSession 不清空（修草稿丢失 bug）
+  // 用户可通过 PendingSessionItem 切回草稿，或 X 显式取消
   function handleSelect(id: string) {
-    setPendingSession(null)
     setSelectedId(id)
     setCenterView('chat')
   }
@@ -51,6 +96,17 @@ function Desktop() {
   function handleSessionCreated(id: string) {
     setPendingSession(null)
     setSelectedId(id)
+  }
+
+  // 点 PendingSessionItem：切回草稿视图（清 selectedId）
+  function handlePendingSelect() {
+    setSelectedId(null)
+    setCenterView('chat')
+  }
+
+  // 显式取消草稿（X 按钮）
+  function handleDismissDraft() {
+    setPendingSession(null)
   }
 
   function handleNextLLMChange(provider: string, model: string) {
@@ -72,7 +128,8 @@ function Desktop() {
           onViewChange={setCenterView}
           onSelect={handleSelect}
           onNewSession={handleNewSession}
-          onPendingSelect={() => setCenterView('chat')}
+          onPendingSelect={handlePendingSelect}
+          onDismissDraft={handleDismissDraft}
         />
       </div>
 
@@ -86,7 +143,8 @@ function Desktop() {
           <ChatPanel
             sessionId={selectedId}
             sse={sse}
-            pendingSession={pendingSession}
+            // 仅当未选中已有会话时才传 pendingSession，避免 ChatPanel 在选中会话状态下进入 pending 渲染
+            pendingSession={draftActive ? pendingSession : null}
             onSessionCreated={handleSessionCreated}
             nextProvider={nextProvider}
             nextModel={nextModel}

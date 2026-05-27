@@ -1,5 +1,5 @@
 import { clsx } from 'clsx'
-import { Trash2 } from 'lucide-react'
+import { Trash2, FolderOpen } from 'lucide-react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { Session } from '@/types'
 import { SessionStatusBadge } from './StatusBadge'
@@ -11,9 +11,17 @@ interface SessionCardProps {
   selected: boolean
   onClick: () => void
   onDeleted: () => void
+  /** 是否显示项目徽章。分组视图下传 false 避免冗余 */
+  showProjectBadge?: boolean
 }
 
-export function SessionCard({ session, selected, onClick, onDeleted }: SessionCardProps) {
+function projectBasename(wd: string): string {
+  if (!wd) return ''
+  const parts = wd.split(/[\\/]/).filter(Boolean)
+  return parts[parts.length - 1] ?? ''
+}
+
+export function SessionCard({ session, selected, onClick, onDeleted, showProjectBadge = true }: SessionCardProps) {
   const queryClient = useQueryClient()
   const tokenUsed = session.output_tokens_used
   const tokenPct = session.token_budget > 0
@@ -66,6 +74,18 @@ export function SessionCard({ session, selected, onClick, onDeleted }: SessionCa
         <span className="text-xs text-gray-400">
           {formatRelativeTime(session.created_at)}
         </span>
+        {showProjectBadge && session.working_dir && (
+          <>
+            <span className="text-xs text-gray-300">·</span>
+            <span
+              className="flex items-center gap-0.5 text-xs text-gray-400 max-w-[120px]"
+              title={session.working_dir}
+            >
+              <FolderOpen size={10} className="flex-shrink-0" />
+              <span className="truncate">{projectBasename(session.working_dir)}</span>
+            </span>
+          </>
+        )}
       </div>
       {tokenPct > 0 && (
         <div className="mt-2 h-0.5 bg-gray-200 rounded-full overflow-hidden">
