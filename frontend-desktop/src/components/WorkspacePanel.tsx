@@ -2,23 +2,26 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   FolderIcon, FileIcon, FileCodeIcon, FileTextIcon, FileImageIcon,
-  ChevronRightIcon, RefreshCwIcon, FolderOpenIcon, ArrowLeftIcon, FolderInputIcon,
+  ChevronRightIcon, RefreshCwIcon, FolderOpenIcon, ArrowLeftIcon, FolderInputIcon, XIcon,
 } from 'lucide-react'
 
 import { workspaceApi } from '@/api/workspace'
 import { Spinner } from '@/components/ui/spinner'
 import { FilePreviewModal } from '@/components/FilePreviewModal'
 import { formatBytes } from '@/lib/utils'
+import { useI18n } from '@/i18n'
 
 interface Props {
   workingDir: string
+  onClose?: () => void
 }
 
 function normalizeSep(p: string) {
   return p.replace(/\\/g, '/')
 }
 
-export function WorkspacePanel({ workingDir }: Props) {
+export function WorkspacePanel({ workingDir, onClose }: Props) {
+  const { t } = useI18n()
   const [browsePath, setBrowsePath] = useState(workingDir || '')
   const [previewFile, setPreviewFile] = useState<string | null>(null)
 
@@ -70,26 +73,31 @@ export function WorkspacePanel({ workingDir }: Props) {
   const totalCount = entries.length
 
   return (
-    <div className="flex h-full flex-col text-xs" style={{ background: '#f8fafd' }}>
-      {/* Header */}
-      <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border)' }}>
+    <div className="flex h-full flex-col text-xs">
+      {/* Header —— 透明无边线，跟卡片白底一体 */}
+      <div>
         <div className="flex items-center justify-between px-4 pt-4 pb-3">
           <div className="flex items-center gap-2">
             <FolderOpenIcon size={16} style={{ color: 'var(--blue)' }} />
-            <span className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>工作区</span>
+            <span className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>{t('workspace.title')}</span>
           </div>
           <div className="flex items-center gap-1">
             {!isLoading && listing && (
-              <span className="text-[10px] mr-1" style={{ color: 'var(--t3)' }}>{totalCount} 项</span>
+              <span className="text-[10px] mr-1" style={{ color: 'var(--t3)' }}>{t('workspace.items', { count: totalCount })}</span>
             )}
             {window.electronAPI?.openPath && rootPath && (
-              <IconBtn title="在文件管理器中打开" onClick={() => window.electronAPI!.openPath!(rootPath)}>
+              <IconBtn title={t('workspace.openInExplorer')} onClick={() => window.electronAPI!.openPath!(rootPath)}>
                 <FolderInputIcon size={12} />
               </IconBtn>
             )}
-            <IconBtn title="刷新" onClick={() => refetch()}>
+            <IconBtn title={t('workspace.refresh')} onClick={() => refetch()}>
               <RefreshCwIcon size={12} />
             </IconBtn>
+            {onClose && (
+              <IconBtn title={t('workspace.close')} onClick={onClose}>
+                <XIcon size={13} />
+              </IconBtn>
+            )}
           </div>
         </div>
 
@@ -131,7 +139,7 @@ export function WorkspacePanel({ workingDir }: Props) {
             onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = ''; (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
           >
             <ArrowLeftIcon size={12} />
-            <span className="text-xs">返回上级</span>
+            <span className="text-xs">{t('workspace.backToParent')}</span>
           </div>
         )}
 
@@ -139,13 +147,13 @@ export function WorkspacePanel({ workingDir }: Props) {
         {!isLoading && listing && entries.length === 0 && (
           <div className="flex flex-col items-center justify-center py-10 gap-2">
             <FolderOpenIcon size={28} style={{ color: 'var(--t3)', opacity: .5 }} />
-            <p style={{ color: 'var(--t3)' }}>目录为空</p>
+            <p style={{ color: 'var(--t3)' }}>{t('workspace.empty')}</p>
           </div>
         )}
         {!listing && !isLoading && (
           <div className="flex flex-col items-center justify-center py-10 gap-2">
             <FolderIcon size={28} style={{ color: 'var(--t3)', opacity: .5 }} />
-            <p style={{ color: 'var(--t3)' }}>工作区未配置</p>
+            <p style={{ color: 'var(--t3)' }}>{t('workspace.notConfigured')}</p>
           </div>
         )}
 
@@ -171,15 +179,15 @@ export function WorkspacePanel({ workingDir }: Props) {
         ))}
       </div>
 
-      {/* Footer */}
+      {/* Footer —— 透明无边线 */}
       {listing && entries.length > 0 && (
         <div
           className="flex items-center justify-center gap-2 px-3 py-2 text-[10px]"
-          style={{ borderTop: '1px solid var(--border)', color: 'var(--t3)', background: 'var(--bg1)' }}
+          style={{ color: 'var(--t3)' }}
         >
-          <span>{dirs.length} 个文件夹</span>
+          <span>{t('workspace.folders', { count: dirs.length })}</span>
           <span style={{ color: 'var(--border2)' }}>·</span>
-          <span>{files.length} 个文件</span>
+          <span>{t('workspace.files', { count: files.length })}</span>
         </div>
       )}
 

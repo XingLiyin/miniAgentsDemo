@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
@@ -268,6 +268,15 @@ async function createWindow() {
     title: 'NetLIVE-CoWork',
     show: false,
     backgroundColor: '#09090b',
+    // 隐藏原生标题栏（包含左上角的应用图标）；保留 min/max/close 控件作为 overlay
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#f5f8fe',       // 跟顶部条 / 灰色边框 var(--bg2) 一致
+      symbolColor: '#3d5a80', // 跟字色 var(--t2) 一致
+      height: 36,             // 跟顶部条高度对齐
+    },
+    // 隐藏 File/Edit/View/Window/Help 原生菜单栏
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -275,6 +284,9 @@ async function createWindow() {
       sandbox: true,
     },
   });
+
+  // 移除应用菜单，连 Alt 键唤起也禁掉
+  mainWindow.setMenuBarVisibility(false);
 
   mainWindow.loadURL(LOADING_HTML);
   mainWindow.show();
@@ -336,6 +348,8 @@ ipcMain.handle('open-path', async (_, p) => {
   await shell.openPath(p);
 });
 
+ipcMain.handle('app-version', () => app.getVersion());
+
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
@@ -345,6 +359,9 @@ ipcMain.handle('select-directory', async () => {
 });
 
 app.whenReady().then(async () => {
+  // 全局移除应用菜单（File/Edit/View/Window/Help）
+  Menu.setApplicationMenu(null);
+
   openElectronLog();
   elog(`Electron version: ${process.versions.electron}`);
   elog(`App path: ${app.getAppPath()}`);

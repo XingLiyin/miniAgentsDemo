@@ -1,13 +1,15 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon, UploadIcon } from 'lucide-react'
+import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon, UploadIcon, XIcon } from 'lucide-react'
 import { skillsApi } from '@/api/skills'
 import type { LocalSkill, RemoteCatalogItem } from '@/api/skills'
 import { Button } from '@/components/ui/button'
+import { useI18n } from '@/i18n'
 
 type Tab = 'local' | 'remote'
 
-export function SkillsPage() {
+export function SkillsPage({ onClose }: { onClose?: () => void }) {
+  const { t } = useI18n()
   const [tab, setTab] = useState<Tab>('local')
 
   return (
@@ -15,14 +17,17 @@ export function SkillsPage() {
       {/* Header */}
       <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border)' }}>
         <div className="px-6 pt-5 pb-0">
-          <div className="flex items-center gap-2 mb-4">
-            <ZapIcon size={18} style={{ color: 'var(--blue)' }} />
-            <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>Skills</h1>
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-2">
+              <ZapIcon size={18} style={{ color: 'var(--blue)' }} />
+              <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>Skills</h1>
+            </div>
+            {onClose && <CloseButton onClick={onClose} title={t('common.close')} />}
           </div>
           {/* Tabs */}
           <div className="flex gap-0">
-            <TabButton active={tab === 'local'} onClick={() => setTab('local')}>本地 Skills</TabButton>
-            <TabButton active={tab === 'remote'} onClick={() => setTab('remote')}>Skill 市场</TabButton>
+            <TabButton active={tab === 'local'} onClick={() => setTab('local')}>{t('skills.localTab')}</TabButton>
+            <TabButton active={tab === 'remote'} onClick={() => setTab('remote')}>{t('skills.marketTab')}</TabButton>
           </div>
         </div>
       </div>
@@ -57,6 +62,7 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
 
 function LocalPanel() {
   const qc = useQueryClient()
+  const { t } = useI18n()
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [importError, setImportError] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
@@ -104,7 +110,7 @@ function LocalPanel() {
           <div className="flex flex-col items-end gap-1">
             <Button variant="outline" size="sm" loading={importMut.isPending}
               onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
-              <UploadIcon size={12} />导入 zip
+              <UploadIcon size={12} />{t('skills.importZip')}
             </Button>
             {importError && (
               <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
@@ -117,7 +123,7 @@ function LocalPanel() {
             {[1, 2, 3].map(i => <SkeletonCard key={i} />)}
           </div>
         ) : skills.length === 0 ? (
-          <EmptyState icon={<PackageIcon size={32} />} title="暂无本地 Skill" desc="前往 Skill 市场下载 Skills 到本地使用" />
+          <EmptyState icon={<PackageIcon size={32} />} title={t('skills.emptyLocalTitle')} desc={t('skills.emptyLocalDesc')} />
         ) : (
           <div className="flex flex-col gap-2">
             {skills.map(s => (
@@ -134,16 +140,16 @@ function LocalPanel() {
           <div className="w-80 p-5" style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: '0 24px 80px rgba(15,31,61,.2)' }}>
             <div className="flex items-center gap-2 mb-1">
               <Trash2Icon size={15} style={{ color: 'var(--red)' }} />
-              <p className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>删除 Skill</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>{t('skills.deleteTitle')}</p>
             </div>
             <p className="mt-2 mb-5 text-xs leading-relaxed" style={{ color: 'var(--t2)' }}>
-              确认删除 <span className="font-mono font-semibold" style={{ color: 'var(--t1)' }}>{confirmId}</span>？<br />
-              将同时删除对应目录，此操作不可撤销。
+              {t('skills.deleteConfirmPre')}<span className="font-mono font-semibold" style={{ color: 'var(--t1)' }}>{confirmId}</span>{t('skills.deleteConfirmPost')}<br />
+              {t('skills.deleteConfirmNote')}
             </p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setConfirmId(null)}>取消</Button>
+              <Button variant="outline" size="sm" onClick={() => setConfirmId(null)}>{t('common.cancel')}</Button>
               <Button variant="danger" size="sm" loading={deleteMut.isPending}
-                onClick={() => deleteMut.mutate(confirmId)}>删除</Button>
+                onClick={() => deleteMut.mutate(confirmId)}>{t('common.delete')}</Button>
             </div>
           </div>
         </div>
@@ -155,6 +161,7 @@ function LocalPanel() {
 function SkillCard({ skill, highlighted = false, containerRef, onDelete }: {
   skill: LocalSkill; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement | null>; onDelete: () => void
 }) {
+  const { t } = useI18n()
   const [expanded, setExpanded] = useState(highlighted)
 
   return (
@@ -220,7 +227,7 @@ function SkillCard({ skill, highlighted = false, containerRef, onDelete }: {
                 el.style.borderColor = 'transparent'
               }}
             >
-              <Trash2Icon size={12} />删除
+              <Trash2Icon size={12} />{t('common.delete')}
             </button>
           </div>
         </div>
@@ -233,6 +240,7 @@ function SkillCard({ skill, highlighted = false, containerRef, onDelete }: {
 
 function RemotePanel() {
   const qc = useQueryClient()
+  const { t } = useI18n()
   const [search, setSearch] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
   const [highlightId, setHighlightId] = useState<string | null>(null)
@@ -293,7 +301,7 @@ function RemotePanel() {
         <div className="flex flex-col items-end gap-1">
           <Button variant="outline" size="sm" loading={importMut.isPending}
             onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
-            <UploadIcon size={12} />上传到远端
+            <UploadIcon size={12} />{t('skills.uploadRemote')}
           </Button>
           {importError && (
             <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
@@ -308,7 +316,7 @@ function RemotePanel() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="搜索 Skill 名称、描述或分类…"
+            placeholder={t('skills.searchPlaceholder')}
             className="w-full rounded-xl pl-9 pr-3 py-2.5 text-sm outline-none transition-colors"
             style={{
               background: 'var(--bg1)',
@@ -328,14 +336,14 @@ function RemotePanel() {
       ) : isError ? (
         <EmptyState
           icon={<span style={{ fontSize: 32 }}>⚠️</span>}
-          title="获取失败"
-          desc={(error as Error)?.message ?? '无法连接到 Skill 服务器，请检查网络连接'}
+          title={t('skills.fetchFailed')}
+          desc={(error as Error)?.message ?? t('skills.fetchFailedDesc')}
           variant="error"
         />
       ) : catalog.length === 0 ? (
-        <EmptyState icon={<PackageIcon size={32} />} title="远端暂无可用 Skill" desc="稍后再来查看" />
+        <EmptyState icon={<PackageIcon size={32} />} title={t('skills.emptyRemoteTitle')} desc={t('skills.emptyRemoteDesc')} />
       ) : filtered.length === 0 ? (
-        <EmptyState icon={<SearchIcon size={32} />} title="未找到匹配的 Skill" desc={`没有与 "${search}" 相关的结果`} />
+        <EmptyState icon={<SearchIcon size={32} />} title={t('skills.noMatchTitle')} desc={t('skills.noMatchDesc', { q: search })} />
       ) : (
         <div className="grid grid-cols-2 gap-3">
           {filtered.map(item => (
@@ -357,6 +365,7 @@ function RemotePanel() {
 function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull }: {
   item: RemoteCatalogItem; highlighted?: boolean; containerRef?: React.RefObject<HTMLDivElement | null>; pulling: boolean; onPull: () => void
 }) {
+  const { t } = useI18n()
   return (
     <div
       ref={containerRef}
@@ -388,7 +397,7 @@ function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull 
         {item.description ? (
           <p className="text-xs leading-relaxed" style={{ color: 'var(--t2)' }}>{item.description}</p>
         ) : (
-          <p className="text-xs italic" style={{ color: 'var(--t3)' }}>暂无描述</p>
+          <p className="text-xs italic" style={{ color: 'var(--t3)' }}>{t('skills.noDescription')}</p>
         )}
       </div>
 
@@ -402,11 +411,11 @@ function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull 
         <div className="ml-auto">
           {item.is_pulled ? (
             <span className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1 rounded-full" style={{ color: 'var(--green)', background: 'rgba(22,163,74,.08)' }}>
-              <CheckCircle2Icon size={12} />已安装
+              <CheckCircle2Icon size={12} />{t('skills.installed')}
             </span>
           ) : (
             <Button size="sm" variant="default" loading={pulling} onClick={onPull}>
-              <DownloadIcon size={11} />安装
+              <DownloadIcon size={11} />{t('skills.install')}
             </Button>
           )}
         </div>
@@ -429,6 +438,21 @@ function EmptyState({ icon, title, desc, variant = 'default' }: {
       <p className="text-sm font-medium" style={{ color: variant === 'error' ? 'var(--red)' : 'var(--t2)' }}>{title}</p>
       <p className="text-xs text-center max-w-xs" style={{ color: 'var(--t3)' }}>{desc}</p>
     </div>
+  )
+}
+
+function CloseButton({ onClick, title }: { onClick: () => void; title?: string }) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="w-7 h-7 flex items-center justify-center rounded-md transition-colors"
+      style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}
+      onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'var(--bg3)'; el.style.color = 'var(--t1)' }}
+      onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'none'; el.style.color = 'var(--t3)' }}
+    >
+      <XIcon size={16} />
+    </button>
   )
 }
 

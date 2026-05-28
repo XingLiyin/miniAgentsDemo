@@ -361,14 +361,24 @@ def _map_anthropic_tools(tools: list[LLMTool]) -> list[dict]:
 def _format_api_error(exc: RuntimeError, model: str, url: str) -> str:
     """从 RuntimeError 中提取 Anthropic API 错误详情，拼成可读字符串。"""
     raw = str(exc)
+    api_msg = ''
+    error_type = ''
     try:
         brace = raw.index('{')
         body = json.loads(raw[brace:])
-        api_msg = body.get('error', {}).get('message') or body.get('message') or ''
-        error_type = body.get('error', {}).get('type') or ''
-    except (ValueError, json.JSONDecodeError):
+        if isinstance(body, dict):
+            err = body.get('error')
+            if isinstance(err, dict):
+                api_msg = err.get('message') or ''
+                error_type = err.get('type') or ''
+            elif isinstance(err, str):
+                api_msg = err
+            api_msg = api_msg or body.get('message') or ''
+    except (ValueError, json.JSONDecodeError, AttributeError, TypeError):
         api_msg = ''
         error_type = ''
+    api_msg = str(api_msg) if api_msg else ''
+    error_type = str(error_type) if error_type else ''
 
     parts = [raw]
     if api_msg and api_msg not in raw:

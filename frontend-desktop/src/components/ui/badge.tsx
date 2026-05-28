@@ -1,5 +1,6 @@
 import { cn } from '@/lib/utils'
 import type { SessionStatus } from '@/types'
+import { useI18n } from '@/i18n'
 
 const STATUS_STYLES: Record<SessionStatus, string> = {
   QUEUED:        'bg-[#eaf0fb] text-[#8aa3bf]',
@@ -12,21 +13,11 @@ const STATUS_STYLES: Record<SessionStatus, string> = {
   INTERRUPTED:   'bg-[#eaf0fb] text-[#8aa3bf]',
 }
 
-const STATUS_LABELS: Record<SessionStatus, string> = {
-  QUEUED:        '等待中',
-  RUNNING:       '运行中',
-  WAITING_INPUT: '等待输入',
-  PAUSED_HITL:   '暂停',
-  SUCCEEDED:     '完成',
-  FAILED:        '失败',
-  CANCELED:      '已取消',
-  INTERRUPTED:   '已中断',
-}
-
 export function StatusBadge({ status, className }: { status: SessionStatus; className?: string }) {
+  const { t } = useI18n()
   return (
     <span className={cn('inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-medium', STATUS_STYLES[status], className)}>
-      {STATUS_LABELS[status]}
+      {t('status.' + status)}
     </span>
   )
 }
