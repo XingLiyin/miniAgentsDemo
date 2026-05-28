@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { XIcon, PlusIcon, Trash2Icon, StarIcon, Wand2Icon, ChevronLeftIcon, KeyRoundIcon, ServerIcon, CheckCircle2Icon, AlertCircleIcon, WifiIcon, ListIcon } from 'lucide-react'
+import { XIcon, PlusIcon, Trash2Icon, StarIcon, Wand2Icon, ChevronLeftIcon, KeyRoundIcon, ServerIcon, CheckCircle2Icon, AlertCircleIcon, WifiIcon } from 'lucide-react'
 import { llmsApi } from '@/api/llms'
 import type { LLMProvider } from '@/types'
 import { Button } from '@/components/ui/button'
@@ -26,34 +26,24 @@ export function LLMSettingsPage({ onClose }: { onClose?: () => void }) {
       <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border)' }}>
         <div className="px-6 pt-5 pb-4">
           {view === 'list' ? (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Wand2Icon size={16} style={{ color: 'var(--blue)' }} />
-                <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>{t('llm.title')}</h1>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" onClick={() => setView('add')}>
-                  <PlusIcon size={13} />{t('llm.addProvider')}
-                </Button>
-                {onClose && <CloseButton onClick={onClose} title={t('common.close')} />}
-              </div>
+            <div className="flex items-center gap-2">
+              {onClose && <CloseButton onClick={onClose} title={t('common.close')} />}
+              <Wand2Icon size={16} style={{ color: 'var(--blue)' }} />
+              <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>{t('llm.title')}</h1>
             </div>
           ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setView('list')}
-                  className="flex items-center gap-1 text-xs transition-colors"
-                  style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}
-                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t1)' }}
-                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
-                >
-                  <ChevronLeftIcon size={14} />{t('common.back')}
-                </button>
-                <span style={{ color: 'var(--border2)', fontSize: 12 }}>|</span>
-                <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>{t('llm.addProvider')}</h1>
-              </div>
-              {onClose && <CloseButton onClick={onClose} title={t('common.close')} />}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setView('list')}
+                className="flex items-center gap-1 text-xs transition-colors"
+                style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t1)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
+              >
+                <ChevronLeftIcon size={14} />{t('common.back')}
+              </button>
+              <span style={{ color: 'var(--border2)', fontSize: 12 }}>|</span>
+              <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>{t('llm.addProvider')}</h1>
             </div>
           )}
         </div>
@@ -63,21 +53,27 @@ export function LLMSettingsPage({ onClose }: { onClose?: () => void }) {
       <div className="flex-1 overflow-y-auto p-5">
         {view === 'add' ? (
           <AddProviderForm onDone={() => setView('list')} />
-        ) : providers.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 gap-3">
-            <Wand2Icon size={32} style={{ color: 'var(--t3)', opacity: .4 }} />
-            <p className="text-sm font-medium" style={{ color: 'var(--t2)' }}>{t('llm.emptyTitle')}</p>
-            <p className="text-xs" style={{ color: 'var(--t3)' }}>{t('llm.emptyDesc')}</p>
-            <Button size="sm" onClick={() => setView('add')} className="mt-1">
-              <PlusIcon size={13} />{t('llm.addProvider')}
-            </Button>
-          </div>
         ) : (
-          <div className="flex flex-col gap-2.5">
-            {providers.map(p => (
-              <ProviderCard key={p.name} provider={p} onDelete={() => setConfirmDelete(p.name)} />
-            ))}
-          </div>
+          <>
+            <div className="flex justify-end mb-4">
+              <Button size="sm" style={{ width: 150 }} onClick={() => setView('add')}>
+                <PlusIcon size={13} />{t('llm.addProvider')}
+              </Button>
+            </div>
+            {providers.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 gap-3">
+                <Wand2Icon size={32} style={{ color: 'var(--t3)', opacity: .4 }} />
+                <p className="text-sm font-medium" style={{ color: 'var(--t2)' }}>{t('llm.emptyTitle')}</p>
+                <p className="text-xs" style={{ color: 'var(--t3)' }}>{t('llm.emptyDesc')}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2.5">
+                {providers.map(p => (
+                  <ProviderCard key={p.name} provider={p} onDelete={() => setConfirmDelete(p.name)} />
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -114,7 +110,7 @@ function CloseButton({ onClick, title }: { onClick: () => void; title?: string }
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'var(--bg3)'; el.style.color = 'var(--t1)' }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'none'; el.style.color = 'var(--t3)' }}
     >
-      <XIcon size={16} />
+      <ChevronLeftIcon size={18} />
     </button>
   )
 }
@@ -129,8 +125,6 @@ function ProviderCard({ provider: p, onDelete }: { provider: LLMProvider; onDele
   const [newModel, setNewModel] = useState('')
   const [addError, setAddError] = useState('')
   const [modelPings, setModelPings] = useState<ModelPingMap>({})
-  const [availableModels, setAvailableModels] = useState<string[] | null>(null)
-  const [listError, setListError] = useState('')
 
   // 添加模型：先 ping，成功再持久化
   const addMut = useMutation({
@@ -163,12 +157,6 @@ function ProviderCard({ provider: p, onDelete }: { provider: LLMProvider; onDele
     onMutate: (model) => setModelPings(prev => ({ ...prev, [model]: { state: 'loading' } })),
     onSuccess: (data, model) => setModelPings(prev => ({ ...prev, [model]: { state: 'ok', latency: data.latency_ms } })),
     onError: (err: Error, model) => setModelPings(prev => ({ ...prev, [model]: { state: 'error', error: err.message || t('llm.connectFailed') } })),
-  })
-  const listMut = useMutation({
-    mutationFn: () => llmsApi.listAvailableModelsOf(p.name),
-    onMutate: () => { setListError(''); setAvailableModels(null) },
-    onSuccess: (data) => setAvailableModels(data.models),
-    onError: (err: Error) => setListError(err.message || t('llm.fetchFailed')),
   })
 
   const isOpenAI = p.style === 'openai'
@@ -208,15 +196,15 @@ function ProviderCard({ provider: p, onDelete }: { provider: LLMProvider; onDele
         <p className="text-[11px] font-semibold mt-2.5 mb-2" style={{ color: 'var(--t3)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{t('llm.models')}</p>
 
         {p.models.length > 0 && (
-          <div className="flex flex-col gap-1.5 mb-2">
+          <div className="flex flex-wrap items-start gap-1.5 mb-2">
             {p.models.map(m => {
               const isDefault = m.name === p.default_model
               const ping = modelPings[m.name] ?? { state: 'idle' }
               const isPinging = ping.state === 'loading' && pingMut.variables === m.name && pingMut.isPending
               return (
-                <div key={m.name} className="flex flex-col gap-1">
+                <div key={m.name} className="flex flex-col gap-1" style={{ width: 184, flexShrink: 0 }}>
                   <div
-                    className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs self-start"
+                    className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs w-full min-w-0"
                     style={{
                       background: isDefault ? 'rgba(37,99,235,.07)' : 'var(--bg2)',
                       border: `1px solid ${ping.state === 'ok' ? 'rgba(22,163,74,.25)' : ping.state === 'error' ? 'rgba(220,38,38,.25)' : isDefault ? 'rgba(37,99,235,.18)' : 'var(--border)'}`,
@@ -230,7 +218,7 @@ function ProviderCard({ provider: p, onDelete }: { provider: LLMProvider; onDele
                       style={{ color: isDefault ? 'var(--amber)' : 'var(--t3)' }}
                       onClick={() => !isDefault && setDefaultMut.mutate(m.name)}
                     />
-                    <span className="font-mono text-xs">{m.name}</span>
+                    <span className="font-mono text-xs truncate flex-1 min-w-0" title={m.name}>{m.name}</span>
                     {/* Ping 状态 */}
                     {ping.state === 'ok' && (
                       <span className="flex items-center gap-0.5 ml-0.5" style={{ color: 'var(--green, #16a34a)' }}>
@@ -295,60 +283,13 @@ function ProviderCard({ provider: p, onDelete }: { provider: LLMProvider; onDele
             >
               <PlusIcon size={11} />{t('llm.verifyAndAdd')}
             </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              loading={listMut.isPending}
-              onClick={() => listMut.mutate()}
-              title={t('llm.fetchModelsList')}
-            >
-              <ListIcon size={11} />
-            </Button>
           </div>
           {addError && (
-            <p className="text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
-              {addError}
-            </p>
-          )}
-          {listError && (
-            <p className="text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
-              {listError}
-            </p>
-          )}
-          {availableModels && (
-            <div className="rounded-md p-2 flex flex-col gap-1.5" style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}>
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--t3)' }}>{t('llm.availableModels')}</span>
-                <button onClick={() => setAvailableModels(null)} style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 0, padding: 0 }}>
-                  <XIcon size={11} />
-                </button>
-              </div>
-              <div className="flex flex-wrap gap-1">
-                {availableModels.map(id => {
-                  const already = p.models.some(m => m.name === id)
-                  const isAdding = addMut.isPending && addMut.variables === id
-                  return (
-                    <button
-                      key={id}
-                      disabled={already || isAdding}
-                      onClick={() => { if (!already) addMut.mutate(id) }}
-                      className="rounded px-2 py-0.5 text-xs transition-colors"
-                      style={{
-                        background: already ? 'var(--bg1)' : 'var(--bg1)',
-                        border: `1px solid ${already ? 'var(--border)' : 'var(--border)'}`,
-                        color: already ? 'var(--t3)' : 'var(--t2)',
-                        cursor: already ? 'default' : isAdding ? 'wait' : 'pointer',
-                        opacity: already ? 0.5 : 1,
-                        fontFamily: 'monospace',
-                      }}
-                      onMouseEnter={e => { if (!already && !isAdding) { const el = e.currentTarget as HTMLElement; el.style.background = 'rgba(37,99,235,.07)'; el.style.borderColor = 'rgba(37,99,235,.3)'; el.style.color = 'var(--blue)' } }}
-                      onMouseLeave={e => { if (!already && !isAdding) { const el = e.currentTarget as HTMLElement; el.style.background = 'var(--bg1)'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--t2)' } }}
-                    >
-                      {already ? `✓ ${id}` : isAdding ? `… ${id}` : id}
-                    </button>
-                  )
-                })}
-              </div>
+            <div className="flex items-start gap-2 text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
+              <span className="flex-1 min-w-0 break-words">{addError}</span>
+              <button onClick={() => setAddError('')} title={t('common.close')} className="flex-shrink-0" style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 0, padding: 0, opacity: 0.7 }}>
+                <XIcon size={12} />
+              </button>
             </div>
           )}
         </div>
@@ -367,8 +308,6 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
   const [newModel, setNewModel] = useState('')
   const [modelPings, setModelPings] = useState<ModelPingMap>({})
   const [addError, setAddError] = useState('')
-  const [availableModels, setAvailableModels] = useState<string[] | null>(null)
-  const [listError, setListError] = useState('')
 
   const set = (k: keyof typeof form, v: string) => {
     setForm(f => ({ ...f, [k]: v }))
@@ -376,8 +315,6 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
       setModels([])
       setModelPings({})
       setAddError('')
-      setAvailableModels(null)
-      setListError('')
     }
   }
 
@@ -392,17 +329,6 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
 
   const setDefault = (name: string) =>
     setModels(prev => prev.map(m => ({ ...m, isDefault: m.name === name })))
-
-  const listMut = useMutation({
-    mutationFn: () => llmsApi.listAvailableModels({
-      style: form.style,
-      api_key: form.api_key.trim(),
-      base_url: form.base_url.trim() || undefined,
-    }),
-    onMutate: () => { setListError(''); setAvailableModels(null) },
-    onSuccess: (data) => setAvailableModels(data.models),
-    onError: (err: Error) => setListError(err.message || t('llm.fetchFailed')),
-  })
 
   // 添加时先 ping，成功才入列表
   const addMut = useMutation({
@@ -467,14 +393,16 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
         <div className="p-4 flex flex-col gap-3">
           <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--t3)' }}>{t('llm.models')}</span>
           {models.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap items-start gap-1.5">
               {models.map(m => {
                 const ping = modelPings[m.name] ?? { state: 'idle' }
                 return (
                   <div
                     key={m.name}
-                    className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs"
+                    className="group flex items-center gap-1 rounded-md px-2 py-1 text-xs min-w-0"
                     style={{
+                      width: 184,
+                      flexShrink: 0,
                       background: m.isDefault ? 'rgba(37,99,235,.07)' : 'var(--bg2)',
                       border: `1px solid ${m.isDefault ? 'rgba(37,99,235,.18)' : 'var(--border)'}`,
                       color: m.isDefault ? 'var(--blue)' : 'var(--t2)',
@@ -487,7 +415,7 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
                       style={{ color: m.isDefault ? 'var(--amber)' : 'var(--t3)' }}
                       onClick={() => !m.isDefault && setDefault(m.name)}
                     />
-                    <span className="font-mono text-xs">{m.name}</span>
+                    <span className="font-mono text-xs truncate flex-1 min-w-0" title={m.name}>{m.name}</span>
                     <span className="flex items-center gap-0.5 ml-0.5" style={{ color: 'var(--green, #16a34a)' }}>
                       <CheckCircle2Icon size={9} />
                       <span style={{ fontSize: 10 }}>{ping.latency}ms</span>
@@ -529,61 +457,13 @@ function AddProviderForm({ onDone }: { onDone: () => void }) {
               >
                 <PlusIcon size={11} />{t('llm.verifyAndAdd')}
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                loading={listMut.isPending}
-                disabled={!form.api_key.trim()}
-                onClick={() => listMut.mutate()}
-                title={t('llm.fetchModelsList')}
-              >
-                <ListIcon size={11} />
-              </Button>
             </div>
             {addError && (
-              <p className="text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
-                {addError}
-              </p>
-            )}
-            {listError && (
-              <p className="text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
-                {listError}
-              </p>
-            )}
-            {availableModels && (
-              <div className="rounded-md p-2 flex flex-col gap-1.5" style={{ background: 'var(--bg2)', border: '1px solid var(--border)' }}>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--t3)' }}>{t('llm.availableModels')}</span>
-                  <button onClick={() => setAvailableModels(null)} style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 0, padding: 0 }}>
-                    <XIcon size={11} />
-                  </button>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {availableModels.map(id => {
-                    const already = models.some(m => m.name === id)
-                    const isAdding = addMut.isPending && addMut.variables === id
-                    return (
-                      <button
-                        key={id}
-                        disabled={already || isAdding}
-                        onClick={() => { if (!already) addMut.mutate(id) }}
-                        className="rounded px-2 py-0.5 text-xs transition-colors"
-                        style={{
-                          background: 'var(--bg1)',
-                          border: '1px solid var(--border)',
-                          color: already ? 'var(--t3)' : 'var(--t2)',
-                          cursor: already ? 'default' : isAdding ? 'wait' : 'pointer',
-                          opacity: already ? 0.5 : 1,
-                          fontFamily: 'monospace',
-                        }}
-                        onMouseEnter={e => { if (!already && !isAdding) { const el = e.currentTarget as HTMLElement; el.style.background = 'rgba(37,99,235,.07)'; el.style.borderColor = 'rgba(37,99,235,.3)'; el.style.color = 'var(--blue)' } }}
-                        onMouseLeave={e => { if (!already && !isAdding) { const el = e.currentTarget as HTMLElement; el.style.background = 'var(--bg1)'; el.style.borderColor = 'var(--border)'; el.style.color = 'var(--t2)' } }}
-                      >
-                        {already ? `✓ ${id}` : isAdding ? `… ${id}` : id}
-                      </button>
-                    )
-                  })}
-                </div>
+              <div className="flex items-start gap-2 text-xs rounded px-2 py-1 leading-relaxed" style={{ color: 'var(--red)', background: 'rgba(220,38,38,.06)', border: '1px solid rgba(220,38,38,.12)' }}>
+                <span className="flex-1 min-w-0 break-words">{addError}</span>
+                <button onClick={() => setAddError('')} title={t('common.close')} className="flex-shrink-0" style={{ color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 0, padding: 0, opacity: 0.7 }}>
+                  <XIcon size={12} />
+                </button>
               </div>
             )}
           </div>

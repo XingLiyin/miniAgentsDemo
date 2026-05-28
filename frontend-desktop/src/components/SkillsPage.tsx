@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon, UploadIcon, XIcon } from 'lucide-react'
+import { Trash2Icon, TagIcon, DownloadIcon, CheckCircle2Icon, SearchIcon, PackageIcon, ZapIcon, UploadIcon, ChevronLeftIcon } from 'lucide-react'
 import { skillsApi } from '@/api/skills'
 import type { LocalSkill, RemoteCatalogItem } from '@/api/skills'
 import { Button } from '@/components/ui/button'
@@ -17,12 +17,10 @@ export function SkillsPage({ onClose }: { onClose?: () => void }) {
       {/* Header */}
       <div style={{ background: 'var(--bg1)', borderBottom: '1px solid var(--border)' }}>
         <div className="px-6 pt-5 pb-0">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <ZapIcon size={18} style={{ color: 'var(--blue)' }} />
-              <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>Skills</h1>
-            </div>
+          <div className="flex items-center gap-2 mb-4">
             {onClose && <CloseButton onClick={onClose} title={t('common.close')} />}
+            <ZapIcon size={18} style={{ color: 'var(--blue)' }} />
+            <h1 className="text-base font-semibold" style={{ color: 'var(--t1)' }}>Skills</h1>
           </div>
           {/* Tabs */}
           <div className="flex gap-0">
@@ -108,9 +106,9 @@ function LocalPanel() {
         <div className="flex items-center justify-between mb-4">
           <span />
           <div className="flex flex-col items-end gap-1">
-            <Button variant="outline" size="sm" loading={importMut.isPending}
+            <Button size="sm" style={{ width: 150 }} loading={importMut.isPending}
               onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
-              <UploadIcon size={12} />{t('skills.importZip')}
+              <UploadIcon size={13} />{t('skills.importZip')}
             </Button>
             {importError && (
               <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
@@ -299,9 +297,9 @@ function RemotePanel() {
       {/* Toolbar */}
       <div className="flex items-center justify-end gap-2 mb-4">
         <div className="flex flex-col items-end gap-1">
-          <Button variant="outline" size="sm" loading={importMut.isPending}
+          <Button size="sm" style={{ width: 150 }} loading={importMut.isPending}
             onClick={() => { setImportError(null); fileInputRef.current?.click() }}>
-            <UploadIcon size={12} />{t('skills.uploadRemote')}
+            <UploadIcon size={13} />{t('skills.uploadRemote')}
           </Button>
           {importError && (
             <p className="text-[11px]" style={{ color: 'var(--red)' }}>{importError}</p>
@@ -451,7 +449,7 @@ function CloseButton({ onClick, title }: { onClick: () => void; title?: string }
       onMouseEnter={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'var(--bg3)'; el.style.color = 'var(--t1)' }}
       onMouseLeave={e => { const el = e.currentTarget as HTMLElement; el.style.background = 'none'; el.style.color = 'var(--t3)' }}
     >
-      <XIcon size={16} />
+      <ChevronLeftIcon size={18} />
     </button>
   )
 }
