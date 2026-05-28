@@ -8,7 +8,7 @@
     "dev": "cross-env ELECTRON_DEV=1 electron .",
     "build": "electron-builder build --win",
     "build:dir": "electron-builder build --win --dir",
-    "test": "node --test test/"
+    "test": "node --test test/*.test.js"
   },
   "devDependencies": {
     "cross-env": "^10.1.0",
