@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
+const crypto = require('crypto');
 const { resolveUpdateConfig, shouldCheckForUpdates, shouldReportTelemetry } = require('./lib/update-config');
 const { planSeedMigration } = require('./lib/seed-migration');
 const { createReporter } = require('./telemetry');
@@ -54,7 +55,7 @@ function getOrCreateInstallId() {
   const p = path.join(getAppDataDir(), 'install-id');
   try {
     if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8').trim();
-    const id = require('crypto').randomUUID();
+    const id = crypto.randomUUID();
     fs.mkdirSync(getAppDataDir(), { recursive: true });
     fs.writeFileSync(p, id, 'utf8');
     return id;
@@ -194,7 +195,12 @@ function applyVersionAwareSeed() {
     });
     if (!versionChanged) continue;
     fs.mkdirSync(dst, { recursive: true });
-    for (const f of filesToCopy) { fs.copyFileSync(path.join(src, f), path.join(dst, f)); elog(`seed(upgrade): ${subdir}/${f}`); }
+    for (const f of filesToCopy) {
+      try {
+        fs.copyFileSync(path.join(src, f), path.join(dst, f));
+        elog(`seed(upgrade): ${subdir}/${f}`);
+      } catch (e) { elog(`seed(upgrade): failed to copy ${subdir}/${f}: ${e.message}`); }
+    }
   }
   try { fs.writeFileSync(markerPath, currentVersion, 'utf8'); } catch (e) { elog('write installed-version failed: ' + e.message); }
 }
@@ -290,7 +296,7 @@ function stopBackend() {
       if (done) return;
       try {
         if (process.platform === 'win32' && pid) {
-          spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+          spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
         } else { proc.kill('SIGKILL'); }
       } catch (e) { elog('force kill failed: ' + e.message); }
       setTimeout(finish, 1500);
@@ -466,6 +472,17 @@ ipcMain.handle('update-check', async () => {
 
 ipcMain.handle('update-install', async () => {
   await stopBackend();
+  // Catch any orphan backend (e.g. one reused from a prior session that this
+  // process never spawned) so it can't hold a lock on the exe during install.
+  if (process.platform === 'win32') {
+    await new Promise((resolve) => {
+      try {
+        const tk = spawn('taskkill', ['/F', '/IM', 'netlive-cowork.exe', '/T'], { windowsHide: true, stdio: 'ignore' });
+        tk.on('exit', resolve);
+        tk.on('error', resolve);
+      } catch (_) { resolve(); }
+    });
+  }
   if (autoUpdaterRef) autoUpdaterRef.quitAndInstall(false, true);
 });
 
