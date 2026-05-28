@@ -32,7 +32,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set([NO_PROJECT_ID]))
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
-  const [update, setUpdate] = useState<{ status: string; percent?: number; version?: string } | null>(null)
+  const [update, setUpdate] = useState<{ status: string; percent?: number; version?: string; message?: string } | null>(null)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
 
   // 取应用版本号（Electron 下）

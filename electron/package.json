@@ -10,11 +10,13 @@
     "build:dir": "electron-builder build --win --dir",
     "test": "node --test test/*.test.js"
   },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "cross-env": "^10.1.0",
     "electron": "^34.3.0",
-    "electron-builder": "^25.1.8",
-    "electron-updater": "^6.3.9"
+    "electron-builder": "^25.1.8"
   },
   "build": {
     "appId": "com.netlive-cowork.desktop",
@@ -35,6 +37,9 @@
       "assets/**/*",
       "main.js",
       "preload.js",
+      "telemetry.js",
+      "updater.js",
+      "lib/**/*.js",
       "package.json",
       "node_modules/**/*"
     ],

@@ -471,6 +471,7 @@ ipcMain.handle('update-check', async () => {
 });
 
 ipcMain.handle('update-install', async () => {
+  if (!autoUpdaterRef) return;   // updater inactive (dev mode or no feed configured)
   await stopBackend();
   // Catch any orphan backend (e.g. one reused from a prior session that this
   // process never spawned) so it can't hold a lock on the exe during install.
