@@ -53,6 +53,14 @@ const zh: Dict = {
   // settings popup
   'settings.language': '语言',
   'settings.version': '版本',
+  'update.check': '检查更新',
+  'update.checking': '检查中…',
+  'update.available': '发现新版本',
+  'update.downloading': '下载中',
+  'update.downloaded': '已下载，重启以更新',
+  'update.restart': '立即重启更新',
+  'update.uptodate': '已是最新',
+  'update.error': '更新检查失败',
 
   // session status
   'status.QUEUED': '等待中',
@@ -197,6 +205,14 @@ const en: Dict = {
   // settings popup
   'settings.language': 'Language',
   'settings.version': 'Version',
+  'update.check': 'Check for updates',
+  'update.checking': 'Checking…',
+  'update.available': 'Update available',
+  'update.downloading': 'Downloading',
+  'update.downloaded': 'Downloaded — restart to update',
+  'update.restart': 'Restart to update',
+  'update.uptodate': 'Up to date',
+  'update.error': 'Update check failed',
 
   // session status
   'status.QUEUED': 'Queued',

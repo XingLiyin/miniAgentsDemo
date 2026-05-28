@@ -14,6 +14,9 @@ declare global {
       selectDirectory: () => Promise<string | null>
       openPath: (p: string) => Promise<void>
       getVersion?: () => Promise<string>
+      checkForUpdates?: () => Promise<void>
+      installUpdate?: () => Promise<void>
+      onUpdateStatus?: (cb: (p: { status: string; version?: string; percent?: number; message?: string }) => void) => (() => void)
     }
   }
 }

@@ -32,11 +32,17 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set([NO_PROJECT_ID]))
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
+  const [update, setUpdate] = useState<{ status: string; percent?: number; version?: string } | null>(null)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
 
   // 取应用版本号（Electron 下）
   useEffect(() => {
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    const off = window.electronAPI?.onUpdateStatus?.((p) => setUpdate(p))
+    return () => { off?.() }
   }, [])
 
   // 点设置区外面自动收起
@@ -210,10 +216,36 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
               </div>
 
               {/* 版本号 */}
-              <div className="flex items-center justify-between px-3 pb-2" style={{ fontSize: 11, color: 'var(--t3)' }}>
+              <div className="flex items-center justify-between px-3 pb-1" style={{ fontSize: 11, color: 'var(--t3)' }}>
                 <span>{t('settings.version')}</span>
                 <span style={{ fontFamily: 'monospace' }}>{version ? `V${version}` : '—'}</span>
               </div>
+
+              {/* 更新 */}
+              {window.electronAPI?.checkForUpdates && (
+                <div className="flex items-center justify-between px-3 pb-2" style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--t3)' }}>
+                    {update?.status === 'checking' && t('update.checking')}
+                    {update?.status === 'available' && `${t('update.available')} ${update.version ?? ''}`}
+                    {update?.status === 'downloading' && `${t('update.downloading')} ${update.percent ?? 0}%`}
+                    {update?.status === 'downloaded' && t('update.downloaded')}
+                    {update?.status === 'not-available' && t('update.uptodate')}
+                    {update?.status === 'error' && t('update.error')}
+                    {!update && ' '}
+                  </span>
+                  {update?.status === 'downloaded' ? (
+                    <button onClick={() => window.electronAPI?.installUpdate?.()}
+                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: 'none', cursor: 'pointer', background: 'var(--blue)', color: '#fff' }}>
+                      {t('update.restart')}
+                    </button>
+                  ) : (
+                    <button onClick={() => window.electronAPI?.checkForUpdates?.()}
+                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--bg3)', color: 'var(--t2)' }}>
+                      {t('update.check')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <button
