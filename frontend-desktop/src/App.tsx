@@ -63,6 +63,8 @@ function Desktop() {
   const [centerView, setCenterView] = useState<CenterView>('chat')
   const [nextProvider, setNextProvider] = useState('')
   const [nextModel, setNextModel] = useState('')
+  // 工作区面板显隐（全局偏好，跨会话保持；用户可在 chat 头部切换、在面板里关闭）
+  const [workspaceOpen, setWorkspaceOpen] = useState(true)
 
   // 草稿任何变更都落盘
   useEffect(() => {
@@ -117,48 +119,117 @@ function Desktop() {
     }
   }
 
+  // 是否具备显示工作区的条件（选中已有会话且有工作目录）
+  const canShowWorkspace = centerView === 'chat' && !!selectedId && !!workingDir
+  // 实际是否显示 = 条件满足 且 用户没关掉
+  const showWorkspace = canShowWorkspace && workspaceOpen
+
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--bg0)', color: 'var(--t1)' }}>
-      {/* Left: Session list + nav */}
-      <div className="w-60 flex-shrink-0" style={{ background: 'var(--bg1)', borderRight: '1px solid var(--border)' }}>
-        <SessionList
-          selectedId={centerView === 'chat' ? selectedId : null}
-          pendingSession={centerView === 'chat' ? pendingSession : null}
-          centerView={centerView}
-          onViewChange={setCenterView}
-          onSelect={handleSelect}
-          onNewSession={handleNewSession}
-          onPendingSelect={handlePendingSelect}
-          onDismissDraft={handleDismissDraft}
-        />
+    // 整个窗口是淡灰"边框"底
+    <div className="flex h-screen flex-col overflow-hidden" style={{ background: 'var(--bg2)', color: 'var(--t1)' }}>
+      {/* 顶部完整一条 —— 全宽、可拖窗口；右上角留给原生控件 overlay */}
+      <div
+        style={{
+          height: 36,
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          paddingRight: 150,
+          WebkitAppRegion: 'drag',
+        } as React.CSSProperties}
+      >
+        <BrandBlock />
       </div>
 
-      {/* Center */}
-      <div className="flex min-w-0 flex-1 flex-col" style={{ background: 'var(--bg0)' }}>
-        {centerView === 'skills' ? (
-          <SkillsPage />
-        ) : centerView === 'llm' ? (
-          <LLMSettingsPage />
-        ) : (
-          <ChatPanel
-            sessionId={selectedId}
-            sse={sse}
-            // 仅当未选中已有会话时才传 pendingSession，避免 ChatPanel 在选中会话状态下进入 pending 渲染
-            pendingSession={draftActive ? pendingSession : null}
-            onSessionCreated={handleSessionCreated}
-            nextProvider={nextProvider}
-            nextModel={nextModel}
-            onNextLLMChange={handleNextLLMChange}
+      {/* 主体 —— 侧边栏贴左（不额外加宽），右/下 8px 灰边，顶部 8px 透气 */}
+      <div className="flex min-h-0 flex-1" style={{ paddingTop: 8, paddingRight: 8, paddingBottom: 8 }}>
+        {/* 左侧栏 —— 透明融进灰框；内部左 padding 给内容透气，但外宽不变（中间卡片不右移） */}
+        <div className="w-60 flex-shrink-0 flex flex-col" style={{ paddingLeft: 4 }}>
+          <SessionList
+            selectedId={centerView === 'chat' ? selectedId : null}
+            pendingSession={centerView === 'chat' ? pendingSession : null}
+            centerView={centerView}
+            onViewChange={setCenterView}
+            onSelect={handleSelect}
+            onNewSession={handleNewSession}
+            onPendingSelect={handlePendingSelect}
+            onDismissDraft={handleDismissDraft}
           />
+        </div>
+
+        {/* 中间内容卡片 —— 白底圆角 + 细边框，浮在灰框里 */}
+        <div
+          className="flex min-w-0 flex-1 flex-col"
+          style={{
+            background: 'var(--bg1)',
+            borderRadius: 12,
+            border: '1px solid var(--border)',
+            overflow: 'hidden',
+            marginLeft: 4,
+          }}
+        >
+          {centerView === 'skills' ? (
+            <SkillsPage />
+          ) : centerView === 'llm' ? (
+            <LLMSettingsPage />
+          ) : (
+            <ChatPanel
+              sessionId={selectedId}
+              sse={sse}
+              pendingSession={draftActive ? pendingSession : null}
+              onSessionCreated={handleSessionCreated}
+              nextProvider={nextProvider}
+              nextModel={nextModel}
+              onNextLLMChange={handleNextLLMChange}
+              canShowWorkspace={canShowWorkspace}
+              workspaceOpen={workspaceOpen}
+              onToggleWorkspace={() => setWorkspaceOpen(v => !v)}
+            />
+          )}
+        </div>
+
+        {/* 右侧 workspace —— 独立白卡片，跟中间卡片间隔 8px */}
+        {showWorkspace && (
+          <div
+            className="w-72 flex-shrink-0 flex flex-col"
+            style={{
+              background: 'var(--bg1)',
+              borderRadius: 12,
+              border: '1px solid var(--border)',
+              overflow: 'hidden',
+              marginLeft: 8,
+            }}
+          >
+            <div className="flex-1 min-h-0">
+              <WorkspacePanel workingDir={workingDir} onClose={() => setWorkspaceOpen(false)} />
+            </div>
+          </div>
         )}
       </div>
+    </div>
+  )
+}
 
-      {/* Right: Workspace (only shown when a session with working_dir is selected) */}
-      {centerView === 'chat' && selectedId && workingDir && (
-        <div className="w-72 flex-shrink-0" style={{ background: 'var(--bg1)', borderLeft: '1px solid var(--border)' }}>
-          <WorkspacePanel workingDir={workingDir} />
-        </div>
-      )}
+function BrandBlock() {
+  return (
+    <div
+      className="flex items-center gap-2"
+      style={{
+        padding: '0 12px',
+        height: '100%',
+        WebkitAppRegion: 'no-drag',
+      } as React.CSSProperties}
+    >
+      <img src="/icon.svg" alt="" style={{ width: 20, height: 20, flexShrink: 0 }} />
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t3)', letterSpacing: '0.5px' }}>NetLIVE</span>
+      <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--t3)' }}>·</span>
+      <span style={{
+        fontSize: 13, fontWeight: 700, letterSpacing: '-0.1px',
+        background: 'linear-gradient(90deg, #2563eb, #0891b2)',
+        WebkitBackgroundClip: 'text',
+        WebkitTextFillColor: 'transparent',
+        backgroundClip: 'text',
+      }}>CoWork</span>
     </div>
   )
 }

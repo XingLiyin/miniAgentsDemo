@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowUp, Square, Brain, Terminal, FolderIcon,
-  Copy, Check,
+  Copy, Check, PanelRightIcon, PanelRightCloseIcon,
 } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -79,9 +79,12 @@ interface Props {
   nextProvider: string
   nextModel: string
   onNextLLMChange: (provider: string, model: string) => void
+  canShowWorkspace?: boolean
+  workspaceOpen?: boolean
+  onToggleWorkspace?: () => void
 }
 
-export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, nextProvider, nextModel, onNextLLMChange }: Props) {
+export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, nextProvider, nextModel, onNextLLMChange, canShowWorkspace, workspaceOpen, onToggleWorkspace }: Props) {
   const qc = useQueryClient()
   const [input, setInput] = useState('')
   const [images, setImages] = useState<{ data: string; media_type: string }[]>([])
@@ -198,9 +201,9 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
     const canSend = !isCreating && (input.trim().length > 0 || images.length > 0)
 
     return (
-      <div className="flex h-full flex-col" style={{ background: 'var(--bg0)' }}>
-        {/* Header */}
-        <div className="flex items-center gap-2 px-4 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg1)' }}>
+      <div className="flex h-full flex-col" style={{ background: 'var(--bg1)' }}>
+        {/* Header —— 透明，继承父级 bg1 白底 */}
+        <div className="flex items-center gap-2 px-4 py-2">
           <FolderIcon size={14} className="flex-shrink-0 text-yellow-500" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium" style={{ color: 'var(--t1)' }}>{dirName}</p>
@@ -209,13 +212,13 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
         </div>
 
         {/* Empty area */}
-        <div className="flex flex-1 flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)', background: 'var(--bg0)' }}>
+        <div className="flex flex-1 flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)' }}>
           <div style={{ fontSize: 32, opacity: .35 }}>💬</div>
           <p className="text-sm">发送第一条消息来启动 Agent</p>
         </div>
 
-        {/* Input */}
-        <div style={{ padding: '10px 14px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg1)', flexShrink: 0 }}>
+        {/* Input —— 透明背景，跟 chat 区一体 */}
+        <div style={{ padding: '10px 14px 14px', flexShrink: 0 }}>
           <div style={{
             background: 'var(--bg1)', border: '1px solid var(--border)',
             borderRadius: 'var(--r2)', boxShadow: 'var(--shadow)',
@@ -302,25 +305,36 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
   const waitingItem = sse.waitingInput
 
   return (
-    <div className="flex h-full flex-col" style={{ background: 'var(--bg0)' }}>
-      {/* Header */}
+    <div className="flex h-full flex-col" style={{ background: 'var(--bg1)' }}>
+      {/* Header —— 透明，跟 chat 一体 */}
       {session && (
-        <div className="flex items-center justify-between px-4 py-2" style={{ borderBottom: '1px solid var(--border)', background: 'var(--bg1)' }}>
+        <div className="flex items-center justify-between px-4 py-2">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium" style={{ color: 'var(--t1)' }}>
               {session.goal || session.user_prompt || session.id.slice(0, 8)}
             </p>
           </div>
-          {session.llm_provider && (
-            <span className="ml-3 flex-shrink-0 text-xs" style={{ color: 'var(--t3)' }}>
-              {session.llm_provider}{session.llm_model ? ` · ${session.llm_model}` : ''}
-            </span>
-          )}
+          <div className="ml-3 flex flex-shrink-0 items-center gap-1">
+            {session.llm_provider && (
+              <span className="mr-1 text-xs" style={{ color: 'var(--t3)' }}>
+                {session.llm_provider}{session.llm_model ? ` · ${session.llm_model}` : ''}
+              </span>
+            )}
+            {canShowWorkspace && onToggleWorkspace && (
+              <HeaderIconBtn
+                title={workspaceOpen ? '隐藏工作区' : '打开工作区'}
+                active={workspaceOpen}
+                onClick={onToggleWorkspace}
+              >
+                {workspaceOpen ? <PanelRightCloseIcon size={15} /> : <PanelRightIcon size={15} />}
+              </HeaderIconBtn>
+            )}
+          </div>
         </div>
       )}
 
-      {/* Messages */}
-      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto" style={{ background: 'var(--bg0)', paddingTop: 12, paddingBottom: 8 }}>
+      {/* Messages —— 透明，跟父级一体 */}
+      <div ref={listRef} onScroll={handleScroll} className="flex-1 overflow-y-auto" style={{ paddingTop: 12, paddingBottom: 8 }}>
         {!sse.connected && !sse.session && (
           <div className="flex justify-center py-4"><Spinner /></div>
         )}
@@ -361,9 +375,9 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
         <div ref={bottomRef} />
       </div>
 
-      {/* Input */}
+      {/* Input —— 透明背景，跟 chat 一体 */}
       {!waitingItem && (
-        <div style={{ padding: '10px 14px 14px', borderTop: '1px solid var(--border)', background: 'var(--bg1)', flexShrink: 0 }}>
+        <div style={{ padding: '10px 14px 14px', flexShrink: 0 }}>
           <div style={{
             background: 'var(--bg1)', border: '1px solid var(--border)',
             borderRadius: 'var(--r2)', boxShadow: 'var(--shadow)',
@@ -443,6 +457,29 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
         </div>
       )}
     </div>
+  )
+}
+
+// ── Header icon button ────────────────────────────────────────────────────────
+
+function HeaderIconBtn({ onClick, title, active, children }: {
+  onClick: () => void; title?: string; active?: boolean; children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className="flex h-7 w-7 items-center justify-center rounded-md transition-colors"
+      style={{
+        background: active ? 'var(--blue-dim)' : 'none',
+        color: active ? 'var(--blue)' : 'var(--t3)',
+        border: 'none', cursor: 'pointer',
+      }}
+      onMouseEnter={e => { const el = e.currentTarget as HTMLElement; if (!active) { el.style.background = 'var(--bg3)'; el.style.color = 'var(--t2)' } }}
+      onMouseLeave={e => { const el = e.currentTarget as HTMLElement; if (!active) { el.style.background = 'none'; el.style.color = 'var(--t3)' } }}
+    >
+      {children}
+    </button>
   )
 }
 

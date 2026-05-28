@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon } from 'lucide-react'
+import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon, SettingsIcon } from 'lucide-react'
 import { sessionsApi } from '@/api/sessions'
 import type { Session, PendingSession } from '@/types'
 import { StatusBadge } from '@/components/ui/badge'
@@ -28,6 +28,26 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // 折叠状态：默认全展开；"未指定目录" 默认折叠
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set([NO_PROJECT_ID]))
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const settingsBtnRef = useRef<HTMLButtonElement>(null)
+
+  // 点设置区外面自动收起
+  useEffect(() => {
+    if (!settingsOpen) return
+    function onClickOutside(e: MouseEvent) {
+      const btn = settingsBtnRef.current
+      if (!btn) return
+      const target = e.target as Node
+      // 点击按钮自身不关闭（让按钮自己 toggle）
+      if (btn.contains(target)) return
+      // 点击弹出菜单内部不关闭
+      const menu = document.getElementById('settings-popup-menu')
+      if (menu && menu.contains(target)) return
+      setSettingsOpen(false)
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [settingsOpen])
 
   const { data: sessions = [] } = useQuery({
     queryKey: ['sessions'],
@@ -68,37 +88,6 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
   return (
     <>
       <div className="flex h-full flex-col">
-        {/* Header */}
-        <div className="flex items-center gap-2.5 px-3 py-2.5" style={{ borderBottom: '1px solid var(--border)' }}>
-          <img src="/icon.svg" alt="logo" style={{ width: 44, height: 44, flexShrink: 0 }} />
-          <div className="flex flex-col leading-tight">
-            <span style={{
-              fontSize: 18, fontWeight: 700, letterSpacing: '-0.2px',
-              background: 'linear-gradient(90deg, #2563eb, #0891b2)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-              backgroundClip: 'text',
-            }}>CoWork</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)', letterSpacing: '0.2px' }}>NetLIVE</span>
-          </div>
-        </div>
-
-        {/* Nav: Skill 市场 / LLM 配置 */}
-        <div className="py-1" style={{ borderBottom: '1px solid var(--border)' }}>
-          <NavItem
-            icon={<ZapIcon size={14} />}
-            label="Skill 市场"
-            active={centerView === 'skills'}
-            onClick={() => onViewChange(centerView === 'skills' ? 'chat' : 'skills')}
-          />
-          <NavItem
-            icon={<Wand2Icon size={14} />}
-            label="LLM 配置"
-            active={centerView === 'llm'}
-            onClick={() => onViewChange(centerView === 'llm' ? 'chat' : 'llm')}
-          />
-        </div>
-
         {/* Session list */}
         <div className="flex-1 overflow-y-auto py-1">
           {/* Session list title */}
@@ -152,6 +141,57 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
               </div>
             )
           })}
+        </div>
+
+        {/* Bottom: 设置 —— 无上边线，靠侧边栏 bg2 整体色块自身包裹感分隔 */}
+        <div className="relative" style={{ padding: '4px' }}>
+          {settingsOpen && (
+            <div
+              id="settings-popup-menu"
+              style={{
+                position: 'absolute', bottom: 'calc(100% + 2px)', left: 4, right: 4,
+                background: 'var(--bg1)', border: '1px solid var(--border)',
+                borderRadius: 'var(--r)', boxShadow: '0 8px 24px rgba(15,31,61,.12)',
+                overflow: 'hidden', zIndex: 20,
+              }}
+            >
+              <NavItem
+                icon={<ZapIcon size={14} />}
+                label="Skill 市场"
+                active={centerView === 'skills'}
+                onClick={() => {
+                  onViewChange(centerView === 'skills' ? 'chat' : 'skills')
+                  setSettingsOpen(false)
+                }}
+              />
+              <NavItem
+                icon={<Wand2Icon size={14} />}
+                label="LLM 配置"
+                active={centerView === 'llm'}
+                onClick={() => {
+                  onViewChange(centerView === 'llm' ? 'chat' : 'llm')
+                  setSettingsOpen(false)
+                }}
+              />
+            </div>
+          )}
+          <button
+            ref={settingsBtnRef}
+            onClick={() => setSettingsOpen(v => !v)}
+            style={{
+              display: 'flex', width: '100%', alignItems: 'center', gap: 8,
+              padding: '8px 10px', fontSize: 13, fontWeight: settingsOpen ? 600 : 500,
+              color: settingsOpen ? 'var(--blue)' : 'var(--t2)',
+              background: settingsOpen ? 'var(--blue-dim)' : 'transparent',
+              border: 'none', cursor: 'pointer', borderRadius: 'var(--r)',
+              transition: 'var(--tr)',
+            }}
+            onMouseEnter={e => { if (!settingsOpen) { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)'; (e.currentTarget as HTMLElement).style.color = 'var(--t1)' } }}
+            onMouseLeave={e => { if (!settingsOpen) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--t2)' } }}
+          >
+            <SettingsIcon size={14} />
+            设置
+          </button>
         </div>
       </div>
 
