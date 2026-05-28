@@ -12,6 +12,21 @@
 
 ---
 
+## Status (2026-05-28)
+
+**Code-complete on branch `feat/desktop-update-client`** (13 commits, base `master`, NOT merged).
+
+- **Tasks 1–10: DONE.** Implemented via subagent-driven development. Reviews: per-task spec + code-quality review on the risky integration (Task 7); a final holistic review caught and fixed packaging blockers (new modules were missing from electron-builder `files`; `electron-updater` was in `devDependencies` instead of `dependencies`).
+- **Verification (automated):** 17/17 `node:test` unit tests pass (`cd electron && npm test`); `node --check main.js` clean; `npx tsc -b` (frontend-desktop) clean.
+- **Task 11 (single-machine E2E): DEFERRED.** It needs a packaged build + GUI observation on Windows, and we want to validate against the real management service (Part B / Plan 2), which is being built in a parallel session. Run it once the server side is ready.
+
+**Resume checklist when the server side is ready:**
+- [ ] Build the PyInstaller backend into `build/dist/netlive-cowork` (existing backend build process; not changed by this branch)
+- [ ] Run Task 11 below (feed/telemetry can be localhost stand-ins OR the real management service)
+- [ ] On green, finish the branch (merge/PR) via superpowers:finishing-a-development-branch
+
+---
+
 ### Task 1: Test infra + electron-updater dependency
 
 **Files:**
