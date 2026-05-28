@@ -521,6 +521,9 @@ app.on('window-all-closed', async () => {
 });
 
 app.on('before-quit', () => {
-  stopBackend();
+  // Best-effort synchronous safety net. The graceful, awaited stop happens in
+  // window-all-closed and the update-install IPC handler; this only fires a
+  // synchronous SIGTERM for quit paths that bypass those, then closes the log.
+  if (backendProcess) { try { backendProcess.kill('SIGTERM'); } catch (_) {} }
   if (electronLogStream) electronLogStream.end();
 });
