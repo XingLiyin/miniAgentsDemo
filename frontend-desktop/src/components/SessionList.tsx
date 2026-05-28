@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon, SettingsIcon } from 'lucide-react'
+import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon, SettingsIcon, GlobeIcon } from 'lucide-react'
 import { sessionsApi } from '@/api/sessions'
 import type { Session, PendingSession } from '@/types'
 import { StatusBadge } from '@/components/ui/badge'
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { formatTime } from '@/lib/utils'
 import { NewSessionDialog } from './NewSessionDialog'
 import { useProjectGroups, NO_PROJECT_ID, type Project } from '@/hooks/useProjectGroups'
+import { useI18n, LANGUAGES, type Lang } from '@/i18n'
 import type { CenterView } from '@/App'
 
 interface Props {
@@ -23,13 +24,20 @@ interface Props {
 
 export function SessionList({ selectedId, pendingSession, centerView, onViewChange, onSelect, onNewSession, onPendingSelect, onDismissDraft }: Props) {
   const qc = useQueryClient()
+  const { t, lang, setLang } = useI18n()
   const [showNew, setShowNew] = useState(false)
   const [createInitialWd, setCreateInitialWd] = useState<string>('')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
   // 折叠状态：默认全展开；"未指定目录" 默认折叠
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(() => new Set([NO_PROJECT_ID]))
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [version, setVersion] = useState('')
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
+
+  // 取应用版本号（Electron 下）
+  useEffect(() => {
+    window.electronAPI?.getVersion?.().then(setVersion).catch(() => {})
+  }, [])
 
   // 点设置区外面自动收起
   useEffect(() => {
@@ -92,10 +100,10 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
         <div className="flex-1 overflow-y-auto py-1">
           {/* Session list title */}
           <div className="flex items-center justify-between px-3 py-1.5">
-            <span className="text-xs font-semibold" style={{ color: 'var(--t3)', letterSpacing: '1px', textTransform: 'uppercase' }}>会话</span>
+            <span className="text-xs font-semibold" style={{ color: 'var(--t3)', letterSpacing: '1px', textTransform: 'uppercase' }}>{t('sidebar.sessions')}</span>
             <button
               onClick={() => openCreate('')}
-              title="新建会话"
+              title={t('sidebar.newSession')}
               style={{
                 width: 20, height: 20, borderRadius: '50%', border: 'none',
                 background: 'var(--blue-dim)', color: 'var(--blue)',
@@ -116,7 +124,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
           )}
 
           {sessions.length === 0 && !pendingSession && (
-            <p className="px-3 py-4 text-center text-xs" style={{ color: 'var(--t3)' }}>暂无会话，点击 + 新建</p>
+            <p className="px-3 py-4 text-center text-xs" style={{ color: 'var(--t3)' }}>{t('sidebar.noSessions')}</p>
           )}
 
           {projects.map(project => {
@@ -157,7 +165,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
             >
               <NavItem
                 icon={<ZapIcon size={14} />}
-                label="Skill 市场"
+                label={t('sidebar.skillMarket')}
                 active={centerView === 'skills'}
                 onClick={() => {
                   onViewChange(centerView === 'skills' ? 'chat' : 'skills')
@@ -166,13 +174,46 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
               />
               <NavItem
                 icon={<Wand2Icon size={14} />}
-                label="LLM 配置"
+                label={t('sidebar.llmConfig')}
                 active={centerView === 'llm'}
                 onClick={() => {
                   onViewChange(centerView === 'llm' ? 'chat' : 'llm')
                   setSettingsOpen(false)
                 }}
               />
+
+              {/* 语言切换 */}
+              <div style={{ borderTop: '1px solid var(--border)' }} />
+              <div className="flex items-center justify-between px-3 py-2">
+                <div className="flex items-center gap-2">
+                  <GlobeIcon size={14} style={{ color: 'var(--t3)' }} />
+                  <span style={{ fontSize: 13, color: 'var(--t2)' }}>{t('settings.language')}</span>
+                </div>
+                <div className="flex items-center gap-0.5" style={{ background: 'var(--bg3)', borderRadius: 6, padding: 2 }}>
+                  {LANGUAGES.map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => setLang(opt.value as Lang)}
+                      style={{
+                        fontSize: 11, padding: '2px 8px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                        background: lang === opt.value ? 'var(--bg1)' : 'transparent',
+                        color: lang === opt.value ? 'var(--blue)' : 'var(--t3)',
+                        fontWeight: lang === opt.value ? 600 : 400,
+                        boxShadow: lang === opt.value ? '0 1px 2px rgba(15,31,61,.1)' : 'none',
+                        transition: 'var(--tr)',
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 版本号 */}
+              <div className="flex items-center justify-between px-3 pb-2" style={{ fontSize: 11, color: 'var(--t3)' }}>
+                <span>{t('settings.version')}</span>
+                <span style={{ fontFamily: 'monospace' }}>{version ? `V${version}` : '—'}</span>
+              </div>
             </div>
           )}
           <button
@@ -190,7 +231,7 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
             onMouseLeave={e => { if (!settingsOpen) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--t2)' } }}
           >
             <SettingsIcon size={14} />
-            设置
+            {t('sidebar.settings')}
           </button>
         </div>
       </div>
@@ -199,10 +240,10 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
       {confirmDelete && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(15,31,61,.35)', backdropFilter: 'blur(4px)' }}>
           <div className="w-72 p-4" style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 24px 80px rgba(15,31,61,.18)' }}>
-            <p className="mb-4 text-sm" style={{ color: 'var(--t2)' }}>确认删除这个会话？此操作不可撤销。</p>
+            <p className="mb-4 text-sm" style={{ color: 'var(--t2)' }}>{t('sidebar.deleteSessionConfirm')}</p>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(null)}>取消</Button>
-              <Button variant="danger" size="sm" onClick={() => { deleteMut.mutate(confirmDelete); setConfirmDelete(null) }}>删除</Button>
+              <Button variant="outline" size="sm" onClick={() => setConfirmDelete(null)}>{t('common.cancel')}</Button>
+              <Button variant="danger" size="sm" onClick={() => { deleteMut.mutate(confirmDelete); setConfirmDelete(null) }}>{t('common.delete')}</Button>
             </div>
           </div>
         </div>
@@ -224,8 +265,10 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
 function ProjectGroupHeader({ project, collapsed, onToggle, onCreateInProject }: {
   project: Project; collapsed: boolean; onToggle: () => void; onCreateInProject: () => void
 }) {
+  const { t } = useI18n()
   const isNoProject = project.id === NO_PROJECT_ID
   const Icon = isNoProject ? FolderIcon : FolderOpenIcon
+  const displayName = isNoProject ? t('sidebar.noProject') : project.display_name
   return (
     <div
       className="group flex cursor-pointer items-center gap-1"
@@ -234,21 +277,21 @@ function ProjectGroupHeader({ project, collapsed, onToggle, onCreateInProject }:
         padding: '5px 9px', margin: '0 4px 1px',
         transition: 'var(--tr)',
       }}
-      title={project.working_dir || '未指定工作目录的会话'}
+      title={project.working_dir || t('sidebar.noProject')}
       onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)' }}
       onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = '' }}
     >
       {collapsed ? <ChevronRightIcon size={11} style={{ color: 'var(--t3)' }} /> : <ChevronDownIcon size={11} style={{ color: 'var(--t3)' }} />}
       <Icon size={11} style={{ color: isNoProject ? 'var(--t3)' : '#eab308' }} />
       <span className="min-w-0 flex-1 truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--t2)' }}>
-        {project.display_name}
+        {displayName}
       </span>
       <span style={{ fontSize: 10, color: 'var(--t3)', fontFamily: 'monospace' }}>{project.session_count}</span>
       {!isNoProject && (
         <button
           onClick={e => { e.stopPropagation(); onCreateInProject() }}
           className="invisible group-hover:visible"
-          title={`在 ${project.display_name} 项目内新建会话`}
+          title={t('sidebar.createInProject', { name: project.display_name })}
           style={{
             background: 'none', border: 'none', cursor: 'pointer',
             color: 'var(--t3)', padding: 0, display: 'grid', placeItems: 'center',
@@ -284,6 +327,7 @@ function NavItem({ icon, label, active, onClick }: { icon: React.ReactNode; labe
 }
 
 function PendingSessionItem({ pending, selected, onClick, onDismiss }: { pending: PendingSession; selected: boolean; onClick: () => void; onDismiss: () => void }) {
+  const { t } = useI18n()
   const dirName = pending.workingDir.split(/[\\/]/).filter(Boolean).pop() ?? pending.workingDir
   return (
     <div
@@ -303,7 +347,7 @@ function PendingSessionItem({ pending, selected, onClick, onDismiss }: { pending
         <button
           onClick={e => { e.stopPropagation(); onDismiss() }}
           className="invisible flex-shrink-0 group-hover:visible"
-          title="放弃这个未发送的草稿"
+          title={t('sidebar.dismissDraft')}
           style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer', padding: 0, display: 'grid', placeItems: 'center' }}
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--red)' }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
@@ -311,7 +355,7 @@ function PendingSessionItem({ pending, selected, onClick, onDismiss }: { pending
           <XIcon size={11} />
         </button>
       </div>
-      <p className="mt-0.5 text-[10px]" style={{ color: 'var(--t3)' }}>等待第一条消息…</p>
+      <p className="mt-0.5 text-[10px]" style={{ color: 'var(--t3)' }}>{t('sidebar.draftWaiting')}</p>
     </div>
   )
 }

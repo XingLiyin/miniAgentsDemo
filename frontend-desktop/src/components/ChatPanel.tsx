@@ -13,6 +13,7 @@ import type { PendingSession } from '@/types'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ModelPickerButton } from '@/components/ui/ModelPickerButton'
+import { useI18n } from '@/i18n'
 
 function fmtTime(iso: string) {
   try { return new Date(iso).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }) }
@@ -22,6 +23,7 @@ function fmtTime(iso: string) {
 // ── Copy button — icon only, hidden until row hover, tooltip on button hover ──
 
 function CopyButton({ text, alignEnd }: { text: string; alignEnd?: boolean }) {
+  const { t } = useI18n()
   const [copied, setCopied] = useState(false)
   async function doCopy() {
     await navigator.clipboard.writeText(text)
@@ -65,7 +67,7 @@ function CopyButton({ text, alignEnd }: { text: string; alignEnd?: boolean }) {
         whiteSpace: 'nowrap', pointerEvents: 'none',
         opacity: 0, transition: 'opacity .15s',
       }}>
-        {copied ? '已复制' : '复制'}
+        {copied ? t('chat.copied') : t('chat.copy')}
       </span>
     </button>
   )
@@ -86,6 +88,7 @@ interface Props {
 
 export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, nextProvider, nextModel, onNextLLMChange, canShowWorkspace, workspaceOpen, onToggleWorkspace }: Props) {
   const qc = useQueryClient()
+  const { t } = useI18n()
   const [input, setInput] = useState('')
   const [images, setImages] = useState<{ data: string; media_type: string }[]>([])
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -214,7 +217,7 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
         {/* Empty area */}
         <div className="flex flex-1 flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)' }}>
           <div style={{ fontSize: 32, opacity: .35 }}>💬</div>
-          <p className="text-sm">发送第一条消息来启动 Agent</p>
+          <p className="text-sm">{t('chat.startAgentHint')}</p>
         </div>
 
         {/* Input —— 透明背景，跟 chat 区一体 */}
@@ -245,7 +248,7 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
               onKeyDown={onKeyDown}
               onPaste={pasteImage}
               disabled={isCreating}
-              placeholder="输入第一条消息（Enter 发送）"
+              placeholder={t('chat.firstInputPlaceholder')}
               rows={1}
               style={{
                 width: '100%', padding: '11px 13px 4px', margin: 0,
@@ -293,8 +296,8 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3" style={{ color: 'var(--t3)', background: 'var(--bg0)' }}>
         <div style={{ fontSize: 36, opacity: .35 }}>💬</div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t2)' }}>开始对话</div>
-        <p className="text-sm">选择或新建一个会话</p>
+        <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--t2)' }}>{t('chat.startConversation')}</div>
+        <p className="text-sm">{t('chat.selectOrCreate')}</p>
       </div>
     )
   }
@@ -322,7 +325,7 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
             )}
             {canShowWorkspace && onToggleWorkspace && (
               <HeaderIconBtn
-                title={workspaceOpen ? '隐藏工作区' : '打开工作区'}
+                title={workspaceOpen ? t('chat.hideWorkspace') : t('chat.showWorkspace')}
                 active={workspaceOpen}
                 onClick={onToggleWorkspace}
               >
@@ -403,7 +406,7 @@ export function ChatPanel({ sessionId, sse, pendingSession, onSessionCreated, ne
               onKeyDown={onKeyDown}
               onPaste={pasteImage}
               disabled={isRunning}
-              placeholder={isRunning ? '等待 Agent 响应…' : '输入消息（Enter 发送，Shift+Enter 换行）'}
+              placeholder={isRunning ? t('chat.waitingResponse') : t('chat.inputPlaceholder')}
               rows={1}
               style={{
                 width: '100%', padding: '11px 13px 4px', margin: 0,
@@ -504,6 +507,7 @@ const AV_AI: React.CSSProperties = {
 // ── Message row ───────────────────────────────────────────────────────────────
 
 function MessageRow({ msg }: { msg: ChatMessage }) {
+  const { t } = useI18n()
   const isUser = msg.role === 'user'
 
   if (isUser) {
@@ -514,7 +518,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
         padding: '8px 16px', animation: 'msg-fade-up .2s ease both',
       }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4, flexDirection: 'row-reverse' }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>我</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>{t('chat.me')}</span>
           <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>{fmtTime(msg.created_at)}</span>
         </div>
         <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
@@ -607,10 +611,11 @@ function ThinkingRow() {
 // ── Tool call row (aligned with message rows, 16px padding) ───────────────────
 
 function ToolCallRow({ tc }: { tc: ChatToolCall }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const argsStr = Object.keys(tc.arguments).length > 0 ? JSON.stringify(tc.arguments, null, 2) : ''
   const statusColor = tc.is_error ? 'var(--red)' : 'var(--green)'
-  const statusLabel = tc.is_error ? '✕ 失败' : '✓ 完成'
+  const statusLabel = tc.is_error ? t('chat.toolFailed') : t('chat.toolDone')
   return (
     <div style={{ padding: '3px 16px' }}>
       <div style={{
@@ -651,15 +656,15 @@ function ToolCallRow({ tc }: { tc: ChatToolCall }) {
           }}>
             {argsStr && (
               <div>
-                <span style={{ color: 'var(--t3)', fontSize: 10 }}>参数：</span>
+                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{t('chat.args')}</span>
                 <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: 'var(--t2)' }}>{argsStr}</pre>
               </div>
             )}
             {tc.result && (
               <div>
-                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{tc.is_error ? '错误：' : '结果：'}</span>
+                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{tc.is_error ? t('chat.error') : t('chat.result')}</span>
                 <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: tc.is_error ? 'var(--red)' : 'var(--t2)' }}>
-                  {tc.result.length > 2000 ? tc.result.slice(0, 2000) + '\n…（结果已截断）' : tc.result}
+                  {tc.result.length > 2000 ? tc.result.slice(0, 2000) + '\n' + t('chat.resultTruncated') : tc.result}
                 </pre>
               </div>
             )}
@@ -696,11 +701,12 @@ function ObserverRow({ obs }: { obs: ChatObserverMessage }) {
 // ── Reasoning block (inside AI bubble) ───────────────────────────────────────
 
 function ReasoningBlock({ text, defaultOpen }: { text: string; defaultOpen?: boolean }) {
+  const { t } = useI18n()
   const [open, setOpen] = useState(defaultOpen ?? false)
   return (
     <div style={{ marginBottom: 8, paddingLeft: 8, borderLeft: '2px solid var(--border2)' }}>
       <button onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}>
-        <Brain size={10} /> 推理过程 <span style={{ fontSize: 8 }}>{open ? '▲' : '▶'}</span>
+        <Brain size={10} /> {t('chat.reasoning')} <span style={{ fontSize: 8 }}>{open ? '▲' : '▶'}</span>
       </button>
       {open && <p style={{ marginTop: 4, whiteSpace: 'pre-wrap', fontSize: 11, lineHeight: 1.6, color: 'var(--t2)' }}>{text}</p>}
     </div>
@@ -732,6 +738,7 @@ function WaitingInputPanel({ item, input, setInput, onSubmit, onApprove, onRejec
   item: ChatWaitingInput; input: string; setInput: (v: string) => void
   onSubmit: () => void; onApprove: () => void; onReject: () => void
 }) {
+  const { t } = useI18n()
   const isBash = item.input_type === 'bash_exec_confirm'
   return (
     <div style={{
@@ -742,29 +749,29 @@ function WaitingInputPanel({ item, input, setInput, onSubmit, onApprove, onRejec
       {isBash ? (
         <>
           <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 500, color: 'var(--amber)' }}>
-            <Terminal size={12} /> 执行确认
+            <Terminal size={12} /> {t('chat.execConfirm')}
           </div>
           {item.command && (
             <pre style={{ marginBottom: 8, overflowX: 'auto', borderRadius: 'var(--r)', background: 'var(--bg1)', border: '1px solid var(--border)', padding: '6px 10px', fontSize: 11, color: 'var(--t2)' }}>{item.command}</pre>
           )}
           {item.prompt && <p style={{ marginBottom: 8, fontSize: 12, color: 'var(--t2)' }}>{item.prompt}</p>}
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button size="sm" onClick={onApprove} style={{ background: 'var(--amber)', color: '#fff' }}>允许</Button>
-            <Button size="sm" variant="outline" onClick={onReject}>拒绝</Button>
+            <Button size="sm" onClick={onApprove} style={{ background: 'var(--amber)', color: '#fff' }}>{t('chat.allow')}</Button>
+            <Button size="sm" variant="outline" onClick={onReject}>{t('chat.reject')}</Button>
           </div>
         </>
       ) : (
         <>
-          <p style={{ marginBottom: 8, fontSize: 12, fontWeight: 500, color: 'var(--amber)' }}>Agent 需要你的输入</p>
+          <p style={{ marginBottom: 8, fontSize: 12, fontWeight: 500, color: 'var(--amber)' }}>{t('chat.agentNeedsInput')}</p>
           {item.prompt && <p style={{ marginBottom: 8, fontSize: 13, color: 'var(--t2)' }}>{item.prompt}</p>}
           <div style={{ display: 'flex', gap: 8 }}>
             <input
               autoFocus value={input} onChange={e => setInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && !e.shiftKey && onSubmit()}
               style={{ flex: 1, borderRadius: 'var(--r)', border: '1px solid var(--border)', padding: '6px 10px', fontSize: 13, background: 'var(--bg1)', color: 'var(--t1)', outline: 'none' }}
-              placeholder="输入你的回复…"
+              placeholder={t('chat.replyPlaceholder')}
             />
-            <Button size="sm" disabled={!input.trim()} onClick={onSubmit}>发送</Button>
+            <Button size="sm" disabled={!input.trim()} onClick={onSubmit}>{t('chat.send')}</Button>
           </div>
         </>
       )}

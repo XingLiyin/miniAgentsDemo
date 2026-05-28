@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { ChevronUp, Check } from 'lucide-react'
 import type { LLMProvider } from '@/types'
+import { useI18n } from '@/i18n'
 
 interface Props {
   providers: LLMProvider[]
@@ -16,8 +17,10 @@ interface Props {
 
 export function ModelPickerButton({
   providers, selectedProvider, selectedModel, onChange,
-  disabled, variant = 'pill', placeholder = '默认模型',
+  disabled, variant = 'pill', placeholder,
 }: Props) {
+  const { t } = useI18n()
+  const ph = placeholder ?? t('chat.defaultModel')
   const btnRef = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const [pos, setPos] = useState<{ top?: number; bottom?: number; left?: number; right?: number } | null>(null)
@@ -115,7 +118,7 @@ export function ModelPickerButton({
           }}>{selectedProvider}</span>
         )}
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'left' }}>
-          {label ?? placeholder}
+          {label ?? ph}
         </span>
         <ChevronUp size={variant === 'field' ? 12 : 10} style={chevronStyle} />
       </button>
@@ -161,7 +164,7 @@ export function ModelPickerButton({
                   fontSize: 13, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap', fontWeight: selected ? 500 : 400,
                 }}>
-                  {opt.model || (opt.provider ? opt.provider : placeholder)}
+                  {opt.model || (opt.provider ? opt.provider : ph)}
                 </span>
                 {selected && <Check size={11} style={{ flexShrink: 0, color: 'var(--blue)' }} />}
               </button>

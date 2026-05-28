@@ -348,6 +348,8 @@ ipcMain.handle('open-path', async (_, p) => {
   await shell.openPath(p);
 });
 
+ipcMain.handle('app-version', () => app.getVersion());
+
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],

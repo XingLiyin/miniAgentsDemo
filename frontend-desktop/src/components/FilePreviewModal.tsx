@@ -35,6 +35,7 @@ import remarkGfm from 'remark-gfm'
 import { XIcon, FileIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { useI18n } from '@/i18n'
 
 const IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'svg'])
 const MD_EXTS = new Set(['md', 'markdown'])
@@ -74,6 +75,7 @@ interface Props {
 }
 
 export function FilePreviewModal({ path, onClose }: Props) {
+  const { t } = useI18n()
   const ext = getExt(path)
   const type = fileType(ext)
   const name = path.split(/[/\\]/).pop() ?? path
@@ -113,7 +115,7 @@ export function FilePreviewModal({ path, onClose }: Props) {
           {type === 'text' && <TextViewer path={path} />}
           {type === 'binary' && (
             <div className="flex h-full items-center justify-center text-sm" style={{ color: 'var(--t3)' }}>
-              不支持预览此文件类型（{ext || '未知'}）
+              {t('filePreview.unsupported', { ext: ext || t('filePreview.unknownExt') })}
             </div>
           )}
         </div>
@@ -232,6 +234,7 @@ function DocxViewer({ path }: { path: string }) {
 }
 
 function ExcelViewer({ path }: { path: string }) {
+  const { t } = useI18n()
   const [tables, setTables] = useState<{ name: string; rows: string[][] }[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [activeSheet, setActiveSheet] = useState(0)
@@ -265,7 +268,7 @@ function ExcelViewer({ path }: { path: string }) {
 
   if (error) return <ErrorMsg msg={error} />
   if (tables === null) return <Loading />
-  if (tables.length === 0) return <div className="p-6 text-sm" style={{ color: 'var(--t3)' }}>文件为空</div>
+  if (tables.length === 0) return <div className="p-6 text-sm" style={{ color: 'var(--t3)' }}>{t('filePreview.empty')}</div>
 
   const sheet = tables[activeSheet]
 
@@ -313,9 +316,10 @@ function ExcelViewer({ path }: { path: string }) {
 }
 
 function Loading() {
+  const { t } = useI18n()
   return (
     <div className="flex h-full items-center justify-center gap-2" style={{ color: 'var(--t3)' }}>
-      <Spinner className="h-4 w-4" /> <span className="text-sm">加载中…</span>
+      <Spinner className="h-4 w-4" /> <span className="text-sm">{t('common.loading')}</span>
     </div>
   )
 }

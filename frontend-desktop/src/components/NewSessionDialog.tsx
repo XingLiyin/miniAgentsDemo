@@ -6,12 +6,14 @@ import { ModelPickerButton } from '@/components/ui/ModelPickerButton'
 import { Button } from '@/components/ui/button'
 import type { PendingSession, Session } from '@/types'
 import { pickDefaultsFromRecentSession } from '@/hooks/useProjectGroups'
+import { useI18n } from '@/i18n'
 
 declare global {
   interface Window {
     electronAPI?: {
       selectDirectory: () => Promise<string | null>
       openPath: (p: string) => Promise<void>
+      getVersion?: () => Promise<string>
     }
   }
 }
@@ -25,6 +27,7 @@ interface Props {
 }
 
 export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions = [], onClose, onCreated }: Props) {
+  const { t } = useI18n()
   const [workingDir, setWorkingDir] = useState('')
   const [selProvider, setSelProvider] = useState('')
   const [selModel, setSelModel] = useState('')
@@ -83,7 +86,7 @@ export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions 
         applyDefaultsFor(dir)
       }
     } else {
-      alert('目录选择需要在 Electron 客户端中使用')
+      alert(t('newSession.dirNeedsElectron'))
     }
   }
 
@@ -111,7 +114,7 @@ export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions 
       <div className="w-[420px]" style={{ background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: '0 24px 80px rgba(15,31,61,.18)' }}>
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--border)' }}>
-          <h2 className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>新建会话</h2>
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--t1)' }}>{t('newSession.title')}</h2>
           <button onClick={onClose} style={{ color: 'var(--t3)', background: 'none', border: 'none', cursor: 'pointer' }}>
             <XIcon size={16} />
           </button>
@@ -121,7 +124,7 @@ export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions 
         <div className="flex flex-col gap-4 p-4">
           {/* Working dir — required, picker only */}
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium" style={{ color: 'var(--t2)' }}>工作目录 <span className="text-red-500">*</span></label>
+            <label className="text-xs font-medium" style={{ color: 'var(--t2)' }}>{t('newSession.workingDir')} <span className="text-red-500">*</span></label>
             <div
               onClick={pickDirectory}
               className="flex cursor-pointer items-center gap-2 rounded-md px-3 py-2 text-sm"
@@ -133,25 +136,25 @@ export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions 
               {workingDir ? (
                 <span className="min-w-0 flex-1 truncate" style={{ color: 'var(--t1)' }}>{workingDir}</span>
               ) : (
-                <span style={{ color: 'var(--t3)' }}>点击选择目录…</span>
+                <span style={{ color: 'var(--t3)' }}>{t('newSession.selectDir')}</span>
               )}
             </div>
           </div>
 
           {/* Model picker */}
           <div className="flex flex-col gap-1">
-            <label className="text-xs font-medium" style={{ color: 'var(--t2)' }}>模型（可选）</label>
+            <label className="text-xs font-medium" style={{ color: 'var(--t2)' }}>{t('newSession.model')}</label>
             <ModelPickerButton
               variant="field"
               providers={providers}
               selectedProvider={selProvider}
               selectedModel={selModel}
               onChange={handleProviderModelChange}
-              placeholder="使用默认"
+              placeholder={t('newSession.useDefault')}
             />
             {appliedFromSession && (
               <p className="text-[11px]" style={{ color: 'var(--blue)' }}>
-                已套用此目录最近会话的模型（{appliedFromSession.slice(0, 12)}…）
+                {t('newSession.appliedRecent', { id: appliedFromSession.slice(0, 12) })}
               </p>
             )}
           </div>
@@ -159,9 +162,9 @@ export function NewSessionDialog({ open, initialWorkingDir = '', recentSessions 
 
         {/* Footer */}
         <div className="flex justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid var(--border)' }}>
-          <Button variant="outline" onClick={onClose}>取消</Button>
+          <Button variant="outline" onClick={onClose}>{t('common.cancel')}</Button>
           <Button disabled={!workingDir.trim()} onClick={handleCreate}>
-            创建会话
+            {t('newSession.create')}
           </Button>
         </div>
       </div>

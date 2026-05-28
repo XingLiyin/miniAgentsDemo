@@ -169,9 +169,9 @@ function Desktop() {
           }}
         >
           {centerView === 'skills' ? (
-            <SkillsPage />
+            <SkillsPage onClose={() => setCenterView('chat')} />
           ) : centerView === 'llm' ? (
-            <LLMSettingsPage />
+            <LLMSettingsPage onClose={() => setCenterView('chat')} />
           ) : (
             <ChatPanel
               sessionId={selectedId}
