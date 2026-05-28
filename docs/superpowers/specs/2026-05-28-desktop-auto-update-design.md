@@ -1,169 +1,232 @@
-# 桌面端自动更新 — 设计文档
+# 桌面端更新系统 — 设计文档
 
 - 日期：2026-05-28
 - 状态：待评审
 - 适用：NetLIVE-CoWork 桌面端（Electron + 内嵌 PyInstaller 后端）
+- 范围：客户端自助更新 + 客户端遥测上报 + 服务端更新管理服务（统计 + 发布管理）
 
-## 1. 背景与目标
+## 0. 概览与交付物拆分
 
-应用即将迁移到内网、面向多用户开放，当前为 beta，需要高频迭代与修复。由于是**桌面端分发**（每个用户本地运行一份 Electron 应用 + 本地后端实例，互不可达），没有共享多租户服务器，因此首要诉求是**能把新版本自动推达分散在各机器上的用户**，避免逐台手动重装。
+应用即将迁移到内网、面向多用户开放，当前为 beta、需高频迭代。由于是**桌面端分发**（每用户本地一份 Electron 应用 + 本地后端实例，互不可达），首要诉求是**把新版本自动推达分散的用户**，并能**观测更新效果**与**管理发布**。
 
-目标：基于 `electron-updater` 实现自助更新，更新源为**自建内网 generic 静态文件服务器**，与首次安装下载共用同一托管。先在**单机用 localhost 静态服务器验证全链路**，生产仅替换 feed URL。
+本设计是**一份完整 spec**，但**实现拆为两个独立交付物**（见 §16）：
 
-**不在本次范围**：OAuth 认证（独立、后做）、mac/Linux、自定义更新后端 / 下载统计、更新源的 per-user 鉴权。
+| 交付物 | 内容 | 形态 |
+|---|---|---|
+| **① 客户端**（Part A） | electron-updater 自助更新 + 分发 + 遥测上报 | Electron/前端代码，现有 app 仓 |
+| **② 管理服务**（Part B） | 遥测 ingest + 存储 + 发布管理 + 统计看板 + 产物托管 | 服务端应用（API + DB + 后台 UI），单独仓 / `server/` 组件 |
 
-## 2. 决策摘要
+两者仅通过两个契约耦合：**遥测事件 schema**（§C1）与 **feed/产物布局**（§C2）。①可先在单机独立验证，不依赖②。
 
-| 维度 | 决策 |
-|---|---|
-| 更新工具 | `electron-updater`（配合既有 `electron-builder` + NSIS target） |
-| 更新源 | 自建内网 `generic` 静态文件服务器；先用 localhost 单机验证 |
-| feed URL / channel | **运行时可配置**（env / AppData 配置文件），未配置则跳过检查、不报错 |
-| 更新源鉴权 | **开放**，靠内网边界 + sha512 校验 + 建议 HTTPS/签名；不与 OAuth 耦合 |
-| 分发 | 更新 feed 与首次安装下载**共用一个静态托管**，另加给人用的 "latest" 下载入口 |
-| 代码仓 | **不单独建仓**；发布配置留在现有 app 仓；产物不入 git |
-| 灰度发布 | **B 通道**（beta/stable）做定向 canary + `stagingPercentage` 做百分比 ramp |
-| beta 入组 | **方案 A**：管理员手动给指定机器配 `channel=beta`，默认 stable，不做用户自助开关 |
-| 更新 UX | 启动自动检查 + 后台自动下载 + 下载完非侵入提示「重启更新」+ 设置页手动「检查更新」按钮；安装由用户确认触发，不强制 |
-| 数据迁移 | 版本感知补种（仅补缺失默认配置 / `.env` 新增键，绝不覆盖用户改动），与本次一起做 |
-| 代码签名 | 推荐但 beta 不阻塞；未签名时仅首次安装弹 SmartScreen |
-| 差分下载 | 开启 blockmap（PyInstaller 后端体积大） |
+**不在本次范围**：OAuth（agent 认证，独立后做）、mac/Linux、代码签名（推荐可选）、`stagingPercentage` 百分比放量（已明确不做）。
 
-## 3. 架构总览
+---
 
-- 更新逻辑**完全在 Electron 主进程**（`electron-updater`）。Python 后端基本不动，只在两处与之协同：**安装前优雅停后端**、**升级后版本感知补种配置**。
-- 分发（首次安装 + 更新）**共用一个静态文件托管**，产物为 `latest.yml`（stable）/ `beta.yml`（beta）+ 版本化 `Setup x.y.z.exe` + `.blockmap`，另加一个 "latest" 人用下载入口。
-- channel 在 generic 静态 feed 下是**客户端侧设置**：客户端读 `{feedURL}/{channel}.yml`。服务器是哑文件托管，不决定（无鉴权下也无法决定）谁属于 beta。
+# Part A — 客户端
 
-## 4. 组件拆分
+## A1. 架构总览
+
+- 更新逻辑完全在 Electron 主进程（`electron-updater`）。Python 后端基本不动，仅两处协同：**安装前优雅停后端**、**升级后版本感知补种**。
+- 客户端额外**主动上报更新生命周期遥测**到②的 ingest 端点。
+- feed 与产物由②托管（生产）；单机验证时用 localhost 静态服务器。
+
+## A2. 组件拆分
 
 | 组件 | 位置 | 职责 |
 |---|---|---|
-| Updater 模块 | 新增 `electron/updater.js`（保持 `main.js` 精简） | 解析 feed URL + channel、接 electron-updater 事件、下载策略、触发安装 |
-| Updater UI | `frontend-desktop` 设置页新增一块 | 当前版本、「检查更新」按钮、状态（检查中/有新版/下载 %/已下载/已是最新/出错）、「重启以更新」 |
-| IPC 桥 | `electron/preload.js` | 暴露：触发检查、查状态、订阅进度事件、触发安装（已有 `app-version`） |
-| 后端停止协调 | `electron/main.js`（强化现有 `stopBackend`） | 安装前确保 `netlive-cowork.exe` 真正退出、端口释放，带超时强杀兜底 |
-| 版本感知补种 | `electron/main.js`（增强 `seedDefaultData` / `ensureUserEnvFile`） | 记 `installed_version`，版本变化时补缺失默认配置 + `.env` 新增键，绝不覆盖用户改动 |
-| 发布配置 | `electron/package.json` build | 加 `publish: generic`、保留版本化产物 + blockmap、发布脚本 |
-| 静态托管 | 基础设施（非 app 代码） | 共用于首装下载 + 更新 feed + "latest" 入口 |
+| Updater 模块 | 新增 `electron/updater.js` | 解析 feed URL + channel、接 electron-updater 事件、下载策略、触发安装 |
+| 遥测上报模块 | 新增 `electron/telemetry.js` | 上报更新生命周期事件，失败重试 + 离线队列 |
+| Updater UI | `frontend-desktop` 设置页 | 当前版本、「检查更新」按钮、状态、「重启以更新」 |
+| IPC 桥 | `electron/preload.js` | 触发检查、查状态、订阅进度、触发安装（已有 `app-version`） |
+| 后端停止协调 | `electron/main.js`（强化 `stopBackend`） | 安装前确保 `netlive-cowork.exe` 退出、端口释放，超时强杀 |
+| 版本感知补种 | `electron/main.js`（增强 `seedDefaultData`/`ensureUserEnvFile`） | 版本变化时补缺失默认配置 + `.env` 新增键，绝不覆盖 |
+| 发布配置 | `electron/package.json` build | `publish: generic` + 版本化产物 + blockmap |
 
-## 5. 配置解析（feed URL + channel）
+## A3. 配置解析（feed URL + channel + 遥测端点）
 
-运行时按优先级解析，写在 `electron/updater.js`：
+运行时按优先级解析，写在 `electron/updater.js` / `telemetry.js`：
 
-1. 环境变量 `NETLIVE_COWORK_UPDATE_FEED_URL` / `NETLIVE_COWORK_UPDATE_CHANNEL`；
-2. AppData 配置文件 `%APPDATA%\NetLIVE-CoWork\update-config.json`，形如 `{ "feedUrl": "...", "channel": "beta" }`；
-3. 打包时 electron-builder 写入的 `app-update.yml` 默认值（内网地址 / stable）；
-4. feed URL 最终为空 → **直接跳过 `checkForUpdates()`，不发起任何请求**（零噪音）。
+1. 环境变量 `NETLIVE_COWORK_UPDATE_FEED_URL` / `NETLIVE_COWORK_UPDATE_CHANNEL` / `NETLIVE_COWORK_TELEMETRY_URL`；
+2. AppData 配置文件 `%APPDATA%\NetLIVE-CoWork\update-config.json`：`{ "feedUrl": "...", "channel": "beta", "telemetryUrl": "..." }`；
+3. 打包时 electron-builder 写入的 `app-update.yml` 默认值；
+4. feed URL 为空 → 跳过 `checkForUpdates()`，不发请求；telemetry URL 为空 → 不上报。
 
-channel 取值：`beta` → `autoUpdater.channel = 'beta'`（读 `beta.yml`）；缺省 / `stable` → 沿用默认（读 `latest.yml`）。
+channel：`beta` → `autoUpdater.channel='beta'`（读 `beta.yml`）；缺省/`stable` → 默认（读 `latest.yml`）。
 
 约束：
-- `autoUpdater` 仅在 `app.isPackaged` 下生效；dev 模式跳过（如需调事件接线，用 `dev-app-update.yml` + `autoUpdater.forceDevUpdateConfig = true`，但真正安装步骤仍需已装版）。
-- **必须注册 `error` 事件监听**：服务器不可达时静默记日志、app 照常运行；不注册会因 Node EventEmitter 在 `error` 无监听时抛未捕获异常。
+- `autoUpdater` 仅 `app.isPackaged` 生效；dev 用 `dev-app-update.yml` + `forceDevUpdateConfig` 调事件接线，但安装步骤仍需已装版。
+- **必须注册 `error` 事件**：不可达时静默记日志、app 照常；否则 Node EventEmitter 在 `error` 无监听会抛未捕获异常。
 
-## 6. 更新流程（时序）
+## A4. 更新流程（时序）
 
-1. 应用启动并加载 UI；
-2. 若 feed 已配置 → `autoUpdater.checkForUpdates()`；
-3. 有新版 → 后台 `autoDownload`（默认开启），渲染层显示进度；
-4. `update-downloaded` → 通知渲染层，提示「有新版本，重启以更新」；
-5. 用户点确认 → **优雅停后端（见 §7）→ 端口释放确认**；
-6. `autoUpdater.quitAndInstall(false, true)`（非静默、安装后自动重启）；
-7. 重启为新版 → 启动时版本感知补种运行（见 §8）。
+1. 启动加载 UI；上报 `app_launch`（当前版本）；
+2. feed 已配置 → `checkForUpdates()`；
+3. 有新版 → 上报 `update_available` → 后台 `autoDownload`，显示进度；
+4. `update-downloaded` → 上报 `update_download_completed` → 提示「重启更新」；
+5. 用户确认 → **优雅停后端（§A5）+ 端口释放确认**；
+6. `quitAndInstall(false, true)`；
+7. 重启新版 → 版本感知补种（§A6）→ 启动时上报新版本 `app_launch`（服务端据此判定升级成功）。
 
-## 7. 后端停止时序（Windows 文件锁，关键风险）
+## A5. 后端停止时序（Windows 文件锁，关键风险）
 
-`quitAndInstall` 前必须保证 spawn 出的 `netlive-cowork.exe` 已退出，否则 NSIS 覆盖安装会因文件被占用而失败。`stopBackend()` 升级为：
+`quitAndInstall` 前必须保证 spawn 的 `netlive-cowork.exe` 已退出，否则 NSIS 覆盖因占用失败。`stopBackend()` 升级：
 
-1. 向后端进程发 `SIGTERM`；
-2. 轮询 `backendProcess.exitCode` / 设超时（如 5s）；
-3. 超时仍未退出 → `taskkill /PID <pid> /T /F` 强杀进程树；
-4. 处理「端口被占则复用已有后端」路径下可能存在的**孤儿后端**：检测端口仍被占用时定位并清理；
-5. 确认端口释放后才进入 `quitAndInstall`。
+1. 发 `SIGTERM`；
+2. 轮询 `exitCode` / 超时（如 5s）；
+3. 超时未退 → `taskkill /PID <pid> /T /F` 杀进程树；
+4. 处理「端口被占则复用已有后端」路径下的**孤儿后端**：端口仍占用则定位清理；
+5. 确认端口释放后再 `quitAndInstall`。
 
-## 8. 升级数据 / 配置迁移（版本感知补种）
+## A6. 升级数据 / 配置迁移（版本感知补种）
 
-- 用户数据在 `%APPDATA%\NetLIVE-CoWork`（`.env` / `data` / `logs` / `workspace`）。NSIS 更新只换安装目录、不动 AppData → **天然保留**（验证时眼见为实）。
-- 补 gap：现状 `seedDefaultData` / `ensureUserEnvFile` 是「不存在才建」，升级时新版本新增的默认 llm/mcp 配置、`.env` 新增键，老用户拿不到。改为版本感知：
-  - 在 AppData 记 `installed_version`；
-  - 启动时比对当前 `app.getVersion()`：版本变化时，补入新版本新增的默认配置文件（**仅缺失项**）、合并 `.env` 新增键（**仅缺失键**）；
-  - **已有内容一律不动**（不覆盖用户编辑）；
-  - 更新 `installed_version`。
-- 补种的 diff 逻辑抽成纯函数，便于单测（见 §13）。
+- 用户数据在 `%APPDATA%\NetLIVE-CoWork`，NSIS 只换安装目录 → **天然保留**（验证时眼见为实）。
+- 现状 `seedDefaultData`/`ensureUserEnvFile` 是「不存在才建」，升级时新增默认配置/`.env` 键拿不到。改为版本感知：
+  - AppData 记 `installed_version`；
+  - 启动时比对 `app.getVersion()`：版本变化时补**缺失**默认配置文件、合并 `.env` **缺失键**；
+  - 已有内容一律不动；更新 `installed_version`。
+- 补种 diff 逻辑抽纯函数，便于单测。
 
-## 9. 灰度发布（B 通道 + stagingPercentage）
+## A7. 灰度发布（仅 B 通道）
 
-### 9.1 通道机制
-- 发布两条通道：stable → `latest.yml`，beta → `beta.yml`，各自指向对应版本化产物。
-- 客户端通过 §5 的 channel 配置决定读哪条。
+- 两条通道：stable → `latest.yml`，beta → `beta.yml`。客户端按 §A3 channel 决定读哪条。
+- **beta 入组（方案 A）**：管理员手动给指定机器写 `update-config.json` 的 `channel:"beta"`（或 env）。默认 = stable。人群由「谁能改该机器配置」界定，无需登录。
+- **不做** `stagingPercentage` 百分比放量。
+- caveat：channel 是**放量机制非访问控制**。无鉴权下知道 beta 路径即可配入 beta。内网受控前提下可接受；若须「禁止」非 beta 用户拿 beta 包，需网络层限制或单独鉴权，属另一件事。
 
-### 9.2 beta 入组（方案 A）
-- 管理员手动给**指定机器**写 `update-config.json` 的 `channel: "beta"`（或设 env）。默认无该配置 = stable。
-- 入组动作 = 在那几台机器写一下配置（手动 / 小脚本 / IT 托管机随провижн下发）。
-- 人群由「谁能改这台机器的配置」界定，**无需登录**。
+## A8. 客户端遥测上报
 
-### 9.3 百分比 ramp
-- `latest.yml` 内加 `stagingPercentage`（如 10），electron-updater 用各安装持久化的 staging GUID 算稳定随机值决定是否纳入本次更新。
-- 放量 = 改这个数字：10 → 50 → 100，跨数天。纯清单字段，**无代码**。
+- 模块 `electron/telemetry.js`：按 §C1 schema POST 事件到 `telemetryUrl`。
+- 可靠性：发送失败写入本地离线队列（AppData 小文件），下次启动/定时重试；不阻塞更新主流程。
+- 隐私：携带**匿名 `installId`**（客户端生成的稳定 GUID，存 AppData，**非用户身份、无 PII**）。
+- telemetryUrl 未配置则完全不上报（与「feed 未配置则不检查」一致）。
 
-### 9.4 典型放量路径
-canary 几台配 beta 通道 → 验证一天 → 把产物 / yml 从 beta 复制到 stable 并以 `stagingPercentage` 逐步放量 → 100%。
+## A9. 更新 UX
 
-### 9.5 重要 caveat（无鉴权的本质限制）
-> channel 是**放量机制，不是访问控制**。无鉴权下，任何知道 beta 通道名 / 路径的人，把自己配成 `channel=beta` 即可拿到 beta 包。在内网、cohort 受控前提下没问题。若诉求是「**必须禁止**非 beta 用户拿到 beta 包」（如 beta 含未公开功能），需靠网络层限制或给 beta 通道单独加鉴权——属另一件事，与「灰度放量」分开。
+启动自动检查；后台自动下载（`autoDownload=true`）；下载完非侵入提示「重启更新」；设置页有手动「检查更新」按钮 + 状态。安装由用户确认触发，不强制。
 
-## 10. 更新 UX
+---
 
-- 启动自动检查；后台自动下载（`autoDownload = true`）；下载完成非侵入提示「有新版本，重启以更新」。
-- 设置页提供手动「检查更新」按钮与状态展示。
-- 安装（重启）由用户确认触发，**不强制打断**。
+# Part B — 更新管理服务
 
-## 11. 构建与发布流程
+## B1. 架构总览
 
-- 每次发版 bump `electron/package.json` 的 `version`；同时将后端 `app/config/settings.py` 的 `app_version`（`/health` 使用）对齐到同一来源。
-- `electron-builder ... --publish`（手动起步，后续可挂 CI）产出并上传 `latest.yml` / `beta.yml` / `Setup x.y.z.exe` / `.blockmap`。
-- 托管目录保留历史版本化文件（差分下载依赖）+ 维护 "latest" 人用下载入口。
-- **portable target 不能自动更新**：更新能力仅针对 NSIS 安装版；portable 保留作免安装试用但不期望其更新。
-- `stagingPercentage`、beta→stable 提升，均为发布流程的清单操作，无代码。
+独立服务端应用，三块职责：**遥测 ingest + 存储**、**发布管理**（产物 + 清单 + 通道提升）、**统计看板**；并**托管产物与 feed**。部署在内网（单容器即可）。
 
-## 12. 单机验证计划（同时即开发循环）
+## B2. 技术栈（推荐，待确认）
 
-1. `serve` / `python -m http.server` 起 localhost 文件源，`NETLIVE_COWORK_UPDATE_FEED_URL` 指向它；
-2. build `0.1.0` → NSIS **正式安装**（必须用已装版，`app.isPackaged` 才生效）；
-3. bump `0.1.1` → build → 产物丢进文件源目录；
-4. 启动 `0.1.0` → 应检测 → 下载 → 重启为 `0.1.1`；
-5. 重点验证：
-   - 后端 exe 无文件锁失败；
-   - `%APPDATA%` 数据（会话 / 配置）保留；
-   - 版本感知补种生效（新增默认配置 / `.env` 键被补上，旧内容不变）；
-   - blockmap 差分下载生效；
-   - channel：把 `update-config.json` 配 `beta`，验证读取 `beta.yml`。
+- API：**FastAPI**（与现有后端一致，复用模式与团队熟悉度）；
+- 存储：**SQLite** 起步（零运维单文件，beta 量级足够；预期增长可换 Postgres）；
+- 后台 UI：**React**（与桌面前端栈一致）小型管理页；
+- 产物：服务器**文件系统目录** + DB 存元数据/遥测；
+- 部署：**Docker 容器**，内网自托管。
 
-## 13. 测试策略
+## B3. 组件拆分
 
-- `electron-updater` 本身难做单元测试 → 主要靠 §12 单机验证清单（手动，写进实现计划）。
-- 可单测的纯逻辑：
-  - **feed URL / channel 解析**（env → update-config.json → bundled → skip）；
-  - **版本感知补种 diff**（仅补缺失、不覆盖）。
+| 组件 | 职责 |
+|---|---|
+| 遥测 ingest API | 接收 §C1 事件，校验后落库 |
+| 产物/feed 托管 | 静态提供 `latest.yml`/`beta.yml`/`Setup x.y.z.exe`/`.blockmap` + 人用 "latest" 下载入口 |
+| 发布管理 API + UI | 上传产物、生成/更新清单、列出版本、**一键 beta→stable 提升**（复制产物+清单） |
+| 统计看板 | 下载/安装量、各版本在线分布、**安装成功率**、最近失败列表 |
+| 鉴权 | 保护发布管理 + 看板（见 B5） |
+
+## B4. 数据模型（概要）
+
+- `telemetry_events`：`install_id`、`event_type`、`app_version`、`channel`、`os`、`arch`、`error`、`ts`、`received_at`。
+- `releases`：`version`、`channel`、`artifact_path`、`sha512`、`size`、`published_at`、`promoted_from`。
+- 统计为查询派生：版本分布按 `install_id` 最近 `app_launch`；安装成功率按 `update_download_completed` → 新版本 `app_launch` 配对。
+
+## B5. 鉴权姿态（关键，待确认）
+
+| 端点 | 鉴权 |
+|---|---|
+| 产物 / feed 下载 | **开放**（靠内网边界 + sha512 + 建议 HTTPS）；与 §A 一致，不耦合 OAuth |
+| 遥测 ingest | **内网开放**，可选一个**共享静态 token** 防滥用（客户端无用户身份，POST 前未登录） |
+| 发布管理 + 看板 | **必须鉴权** —— 上传产物/提升通道/看统计是特权操作，绝不能裸奔 |
+
+后台登录推荐：beta 起步用**简单运维登录**（账号口令哈希 + 会话/JWT，置于内网）；**待确认**是否后续接入已有 IdP（OIDC SSO）。注意这与「agent 的 OAuth」是两套东西（此处是给发布者的后台登录）。
+
+## B6. 发布流程
+
+1. 每次发版 bump `electron/package.json` `version`；后端 `app/config/settings.py` 的 `app_version`（`/health` 用）对齐同一来源；
+2. `electron-builder ... --publish`（或手动上传）把产物经发布管理录入②；
+3. 先发 beta 通道 → canary 机器（配 beta）验证一天 → 后台**一键提升 beta→stable**；
+4. 托管保留历史版本化文件（差分依赖）+ 维护 "latest" 下载入口；
+5. **portable target 不能自动更新**：更新仅针对 NSIS 安装版，portable 作免安装试用、不期望更新。
+
+---
+
+# 共享契约
+
+## C1. 遥测事件 schema
+
+POST JSON 到 `{telemetryUrl}/events`，公共字段 + `event_type`：
+
+公共：`install_id`(匿名 GUID)、`app_version`、`channel`、`os`、`arch`、`ts`。
+
+事件类型：
+- `app_launch`（启动时当前版本 → 在线版本分布）
+- `update_available`（看到版本 X）
+- `update_download_started` / `update_download_completed` / `update_download_failed`(带 error)
+- `update_check_failed`（feed 不可达等）
+
+升级成功 = `update_download_completed` 后，同 `install_id` 出现更高版本的 `app_launch`。
+
+## C2. feed / 产物布局
+
+```
+{host}/latest.yml          # stable 清单
+{host}/beta.yml            # beta 清单
+{host}/NetLIVE-CoWork Setup x.y.z.exe
+{host}/...exe.blockmap
+{host}/download/latest     # 人用首装下载入口（重定向到当前 stable exe）
+```
+
+客户端 `feedUrl` 指向 `{host}`；channel 决定读 `latest.yml` 或 `beta.yml`。
+
+---
+
+## 13. 验证与测试
+
+**① 客户端单机验证（同时即开发循环）**：
+1. `serve`/`python -m http.server` 起 localhost 文件源，`NETLIVE_COWORK_UPDATE_FEED_URL` 指向它；
+2. build `0.1.0` → NSIS **正式安装**（`app.isPackaged` 才生效）；
+3. bump `0.1.1` → build → 产物丢进文件源；
+4. 启动 `0.1.0` → 检测 → 下载 → 重启为 `0.1.1`；
+5. 重点验证：后端 exe 无文件锁失败、`%APPDATA%` 数据保留、版本感知补种生效、blockmap 差分、channel 读 `beta.yml`、遥测事件按序发出（可先指 localhost ingest）。
+
+**② 管理服务本地验证**：本地起服务 → 客户端遥测指向它 → 看板出现事件；上传产物 + 一键 beta→stable 提升后，客户端能拉到对应清单。
+
+**可单测纯逻辑**：feed/channel 解析、版本感知补种 diff、遥测离线队列与重试、安装成功率配对查询。
 
 ## 14. 风险与缓解
 
 | 风险 | 缓解 |
 |---|---|
-| Windows 后端 exe 文件锁导致覆盖失败 | §7 强制停后端 + 超时强杀 + 端口释放确认 |
-| 更新服务器未就绪 / 不可达 | §5 可配置 + 未配跳过 + 必接 `error` handler |
-| 未签名触发 SmartScreen | 签名列为推荐项，beta 不阻塞；仅首装受影响 |
-| 全量包体积大 | 开启 blockmap 差分下载 |
-| 升级后老用户缺新默认配置 | §8 版本感知补种 |
-| 误把 dev/portable 当可更新 | §5 `app.isPackaged` 守卫；portable 不期望更新 |
+| Windows 后端 exe 文件锁 | §A5 强制停后端 + 超时强杀 + 端口确认 |
+| 更新/遥测服务器未就绪 | §A3 可配置 + 未配跳过 + 必接 `error` handler + 遥测离线队列 |
+| 未签名 SmartScreen | 签名列推荐项，beta 不阻塞；仅首装受影响 |
+| 全量包体积大 | blockmap 差分 |
+| 升级后缺新默认配置 | §A6 版本感知补种 |
+| 管理后台特权裸奔 | §B5 后台强制鉴权 |
+| 遥测含 PII | §A8 仅匿名 installId、无用户身份 |
 
 ## 15. 不在本次范围
 
-代码签名（推荐但可选）、mac/Linux、自定义更新后端、灰度按身份精确「禁止访问」（仅做放量）、下载统计 / 管理后台、更新源 per-user 鉴权、OAuth 认证（独立后做）。
+OAuth（agent 认证，独立后做）、mac/Linux、代码签名（推荐可选）、`stagingPercentage` 百分比放量、灰度按身份「禁止访问」（仅做放量）、后台接入 IdP SSO（先简单登录，后续可选）。
 
-## 16. 未决 / 可调整项
+## 16. 实现拆分
 
-- 更新 UX 默认采「后台自动下载 + 提示」，如需改为「下载前征询」可调。
-- `stagingPercentage` 的具体 ramp 节奏（如 10/50/100 的天数）待发布时定。
-- 后端 `app_version` 与 `electron/package.json` `version` 的「同一来源」具体落地方式（构建时注入 vs 手动同步）待实现时定。
+- **Plan 1 — 客户端（Part A）**：可独立先做、单机验证。依赖②仅为 feed URL 与遥测端点（验证期可用 localhost 顶替）。
+- **Plan 2 — 管理服务（Part B）**：独立仓/组件，按 §C1/§C2 契约对接。
+- 顺序：建议先①(可立即验证、交付价值)，②并行或随后。两份各自走 spec→plan→实现循环。
+
+## 17. 未决 / 待确认项
+
+- 管理服务技术栈（FastAPI + SQLite + React）—— §B2 推荐，待确认；
+- 后台登录方式（简单运维登录 vs 接入 IdP SSO）—— §B5；
+- 遥测 ingest 是否加共享 token —— §B5；
+- 更新 UX 默认「后台自动下载 + 提示」（vs 下载前征询）；
+- 版本感知补种放第一版（§A6）；
+- portable 保留但不更新（§B6）；
+- 后端 `app_version` 与 `package.json` `version` 的同一来源落地方式（构建注入 vs 手动同步）。
