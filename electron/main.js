@@ -5,6 +5,10 @@ const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
 const fs = require('fs');
+const { resolveUpdateConfig, shouldCheckForUpdates, shouldReportTelemetry } = require('./lib/update-config');
+const { planSeedMigration } = require('./lib/seed-migration');
+const { createReporter } = require('./telemetry');
+const { initUpdater } = require('./updater');
 
 const PORT = parseInt(process.env.NETLIVE_COWORK_BACKEND_PORT || '15926', 10);
 const BACKEND_URL = `http://localhost:${PORT}`;
@@ -14,6 +18,9 @@ const DEV_VITE_URL = `http://localhost:${process.env.VITE_PORT || '5173'}`;
 let mainWindow = null;
 let backendProcess = null;
 let electronLogStream = null;
+let updateConfig = null;     // resolved update config
+let telemetry = null;        // telemetry reporter
+let autoUpdaterRef = null;   // active autoUpdater or null
 
 // ── Paths ─────────────────────────────────────────────────────────────────────
 
@@ -33,6 +40,34 @@ function getBundledResourcesPath() {
 
 function getAppDataDir() {
   return path.join(app.getPath('appData'), 'NetLIVE-CoWork');
+}
+
+function readUpdateConfigFile() {
+  try {
+    const p = path.join(getAppDataDir(), 'update-config.json');
+    if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8'));
+  } catch (e) { elog('readUpdateConfigFile failed: ' + e.message); }
+  return {};
+}
+
+function getOrCreateInstallId() {
+  const p = path.join(getAppDataDir(), 'install-id');
+  try {
+    if (fs.existsSync(p)) return fs.readFileSync(p, 'utf8').trim();
+    const id = require('crypto').randomUUID();
+    fs.mkdirSync(getAppDataDir(), { recursive: true });
+    fs.writeFileSync(p, id, 'utf8');
+    return id;
+  } catch (e) { elog('getOrCreateInstallId failed: ' + e.message); return 'unknown'; }
+}
+
+function telemetryQueuePath() { return path.join(getAppDataDir(), 'telemetry-queue.json'); }
+function loadTelemetryQueue() {
+  try { const p = telemetryQueuePath(); if (fs.existsSync(p)) return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) {}
+  return [];
+}
+function saveTelemetryQueue(q) {
+  try { fs.writeFileSync(telemetryQueuePath(), JSON.stringify(q), 'utf8'); } catch (e) { elog('saveTelemetryQueue failed: ' + e.message); }
 }
 
 // ── Electron-side log file ────────────────────────────────────────────────────
@@ -137,6 +172,33 @@ function seedDefaultData() {
   }
 }
 
+function applyVersionAwareSeed() {
+  const appDataDir = getAppDataDir();
+  const markerPath = path.join(appDataDir, 'installed-version');
+  let installedVersion = null;
+  try { if (fs.existsSync(markerPath)) installedVersion = fs.readFileSync(markerPath, 'utf8').trim(); } catch (_) {}
+  const currentVersion = app.getVersion();
+
+  const defaultDataDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'default_data')
+    : path.join(__dirname, '..', 'data');
+
+  for (const subdir of ['llm_configs', 'mcp_configs']) {
+    const src = path.join(defaultDataDir, subdir);
+    const dst = path.join(appDataDir, 'data', subdir);
+    if (!fs.existsSync(src)) continue;
+    const bundled = fs.readdirSync(src).filter((f) => f.endsWith('.json'));
+    const existing = fs.existsSync(dst) ? fs.readdirSync(dst).filter((f) => f.endsWith('.json')) : [];
+    const { versionChanged, filesToCopy } = planSeedMigration({
+      installedVersion, currentVersion, bundledConfigFiles: bundled, existingConfigFiles: existing,
+    });
+    if (!versionChanged) continue;
+    fs.mkdirSync(dst, { recursive: true });
+    for (const f of filesToCopy) { fs.copyFileSync(path.join(src, f), path.join(dst, f)); elog(`seed(upgrade): ${subdir}/${f}`); }
+  }
+  try { fs.writeFileSync(markerPath, currentVersion, 'utf8'); } catch (e) { elog('write installed-version failed: ' + e.message); }
+}
+
 // ── Backend lifecycle ─────────────────────────────────────────────────────────
 
 // Collected stderr lines for crash dialog
@@ -209,10 +271,31 @@ function startBackend() {
 }
 
 function stopBackend() {
-  if (backendProcess) {
-    try { backendProcess.kill('SIGTERM'); } catch (_) {}
+  return new Promise((resolve) => {
+    if (!backendProcess) { resolve(); return; }
+    const proc = backendProcess;
+    const pid = proc.pid;
     backendProcess = null;
-  }
+    if (proc.exitCode !== null) { resolve(); return; }
+
+    let done = false;
+    const finish = () => { if (!done) { done = true; resolve(); } };
+    proc.once('exit', finish);
+
+    try { proc.kill('SIGTERM'); } catch (_) {}
+
+    // Windows: if it hasn't exited in 5s, force-kill the process tree so the
+    // exe file lock is released before NSIS overwrites it.
+    setTimeout(() => {
+      if (done) return;
+      try {
+        if (process.platform === 'win32' && pid) {
+          spawn('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true });
+        } else { proc.kill('SIGKILL'); }
+      } catch (e) { elog('force kill failed: ' + e.message); }
+      setTimeout(finish, 1500);
+    }, 5000);
+  });
 }
 
 // ── Backend readiness poll ────────────────────────────────────────────────────
@@ -331,6 +414,23 @@ async function createWindow() {
   });
 
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  autoUpdaterRef = initUpdater({
+    config: updateConfig,
+    isPackaged: app.isPackaged,
+    logger: elog,
+    onEvent: (payload) => {
+      if (telemetry) {
+        if (payload.status === 'available') telemetry.report('update_available', { target_version: payload.version }).catch(() => {});
+        if (payload.status === 'downloaded') telemetry.report('update_download_completed', { target_version: payload.version }).catch(() => {});
+        if (payload.status === 'error') telemetry.report('update_check_failed', { error: payload.message }).catch(() => {});
+      }
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update-status', payload);
+    },
+  });
+  if (autoUpdaterRef && shouldCheckForUpdates(updateConfig)) {
+    autoUpdaterRef.checkForUpdates().catch((e) => elog('checkForUpdates failed: ' + e.message));
+  }
 }
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
@@ -360,6 +460,15 @@ ipcMain.handle('select-directory', async () => {
   return result.canceled ? null : result.filePaths[0];
 });
 
+ipcMain.handle('update-check', async () => {
+  if (autoUpdaterRef) { try { await autoUpdaterRef.checkForUpdates(); } catch (e) { elog('manual check failed: ' + e.message); } }
+});
+
+ipcMain.handle('update-install', async () => {
+  await stopBackend();
+  if (autoUpdaterRef) autoUpdaterRef.quitAndInstall(false, true);
+});
+
 app.whenReady().then(async () => {
   // Windows 任务栏图标分组标识：与 appId 一致，确保任务栏使用我们的图标（含 dev 模式）
   if (process.platform === 'win32') {
@@ -374,6 +483,25 @@ app.whenReady().then(async () => {
   elog(`App path: ${app.getAppPath()}`);
   elog(`Resources: ${process.resourcesPath}`);
   seedDefaultData();
+  applyVersionAwareSeed();
+
+  updateConfig = resolveUpdateConfig({
+    env: process.env,
+    configFile: readUpdateConfigFile(),
+    defaults: {},
+  });
+  if (shouldReportTelemetry(updateConfig)) {
+    telemetry = createReporter({
+      endpoint: updateConfig.telemetryUrl,
+      context: {
+        installId: getOrCreateInstallId(), appVersion: app.getVersion(),
+        channel: updateConfig.channel, os: process.platform, arch: process.arch,
+        now: () => Date.now(),
+      },
+      loadQueue: loadTelemetryQueue, saveQueue: saveTelemetryQueue,
+    });
+    telemetry.report('app_launch').catch(() => {});
+  }
 
   if (!IS_DEV) {
     const alreadyRunning = await isBackendAlreadyRunning();
@@ -387,8 +515,8 @@ app.whenReady().then(async () => {
   createWindow();
 });
 
-app.on('window-all-closed', () => {
-  stopBackend();
+app.on('window-all-closed', async () => {
+  await stopBackend();
   app.quit();
 });
 
