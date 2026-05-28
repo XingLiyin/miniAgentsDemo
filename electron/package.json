@@ -19,6 +19,13 @@
   "build": {
     "appId": "com.netlive-cowork.desktop",
     "productName": "NetLIVE-CoWork",
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "http://localhost:8384",
+        "channel": "latest"
+      }
+    ],
     "copyright": "NetLIVE-CoWork",
     "icon": "assets/icon",
     "directories": {
