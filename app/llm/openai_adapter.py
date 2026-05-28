@@ -38,6 +38,7 @@ class OpenAIAdapter(BaseAdapter):
     def __init__(self, api_key: str, base_url: str, transport: Transport, timeout_sec: int = 60) -> None:
         self._api_key = api_key
         self._base_url = base_url.rstrip('/')
+        self._chat_url = _resolve_chat_url(self._base_url)
         self._transport = transport
         self._timeout_sec = timeout_sec
 
@@ -46,7 +47,7 @@ class OpenAIAdapter(BaseAdapter):
     def complete(self, req: LLMRequest) -> LLMResponse:
         """统一补全接口（OpenAI Chat Completions 风格）。"""
         payload = self._build_payload(req, stream=False)
-        url = f"{self._base_url}/v1/chat/completions"
+        url = self._chat_url
         resp = self._transport.post(url, headers=self._headers(), json=payload, timeout=self._timeout_sec)
         return LLMResponse(
             text=_extract_openai_text(resp),
@@ -88,7 +89,7 @@ class OpenAIAdapter(BaseAdapter):
             return
 
         payload = self._build_payload(req, stream=True)
-        url = f"{self._base_url}/v1/chat/completions"
+        url = self._chat_url
 
         # 聚合 tool_call 增量（按 index）
         tool_call_buffers: dict[int, dict[str, Any]] = {}
@@ -104,7 +105,13 @@ class OpenAIAdapter(BaseAdapter):
                 choices = data.get('choices') or []
                 if not choices:
                     # 检测 provider 在流中返回的错误（如 Dashscope 内容审核拦截）
-                    err_obj = data.get('error') or {}
+                    err_raw = data.get('error')
+                    if isinstance(err_raw, dict):
+                        err_obj = err_raw
+                    elif isinstance(err_raw, str) and err_raw:
+                        err_obj = {'message': err_raw}   # 兼容 error 为字符串的非标准格式
+                    else:
+                        err_obj = {}
                     if not err_obj and data.get('code') and data.get('message'):
                         err_obj = data
                     if err_obj:
@@ -453,18 +460,53 @@ def _map_openai_tools(tools: list[LLMTool]) -> list[dict]:
     return mapped
 
 
+def _resolve_chat_url(base: str) -> str:
+    """根据 base_url 形态推断 chat/completions 端点，兼容不同 OpenAI 兼容供应商。
+
+      - 已含 /chat/completions（用户填了完整端点）       → 原样使用
+      - 以 /vN 结尾（如 .../v1、智谱 .../paas/v4）        → 追加 /chat/completions
+      - 其它（裸 host，如 https://api.openai.com）         → 追加 /v1/chat/completions
+
+    避免出现 `.../v4/chat/completions/v1/chat/completions` 这类重复路径。
+    """
+    if base.endswith('/chat/completions'):
+        return base
+    last = base.rsplit('/', 1)[-1]
+    if len(last) >= 2 and last[0] in ('v', 'V') and last[1:].isdigit():
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
+
+
 def _format_api_error(exc: RuntimeError, model: str, url: str) -> str:
-    """从 RuntimeError 中提取 API 错误详情，拼成可读字符串。"""
+    """从 RuntimeError 中提取 API 错误详情，拼成可读字符串。
+
+    兼容多种错误体形态：
+      - OpenAI/Anthropic 标准：{"error": {"message": ..., "request_id": ...}}
+      - 非标准：{"error": "Not Found", ...}（error 是字符串）
+      - 其它：{"message": ...} 或无法解析
+    """
     raw = str(exc)
+    api_msg = ''
+    request_id = ''
     # 尝试解析响应体中的 JSON error 对象
     try:
         brace = raw.index('{')
         body = json.loads(raw[brace:])
-        api_msg = (body.get('error') or {}).get('message') or body.get('message') or ''
-        request_id = (body.get('error') or {}).get('request_id') or body.get('request_id') or ''
-    except (ValueError, json.JSONDecodeError):
+        if isinstance(body, dict):
+            err = body.get('error')
+            if isinstance(err, dict):
+                api_msg = err.get('message') or ''
+                request_id = err.get('request_id') or ''
+            elif isinstance(err, str):
+                api_msg = err
+            api_msg = api_msg or body.get('message') or ''
+            request_id = request_id or body.get('request_id') or ''
+    except (ValueError, json.JSONDecodeError, AttributeError, TypeError):
         api_msg = ''
         request_id = ''
+    # 防御：确保是字符串，避免下游 `in` 运算或拼接报错
+    api_msg = str(api_msg) if api_msg else ''
+    request_id = str(request_id) if request_id else ''
 
     parts = [raw]
     if api_msg and api_msg not in raw:
