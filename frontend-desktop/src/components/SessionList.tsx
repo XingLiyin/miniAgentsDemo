@@ -45,6 +45,14 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
     return () => { off?.() }
   }, [])
 
+  // Auto-dismiss transient "up to date" / error states so they don't linger.
+  useEffect(() => {
+    if (update?.status === 'not-available' || update?.status === 'error') {
+      const id = setTimeout(() => setUpdate(null), 4000)
+      return () => clearTimeout(id)
+    }
+  }, [update])
+
   // 点设置区外面自动收起
   useEffect(() => {
     if (!settingsOpen) return
@@ -235,12 +243,12 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
                   </span>
                   {update?.status === 'downloaded' ? (
                     <button onClick={() => window.electronAPI?.installUpdate?.()}
-                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: 'none', cursor: 'pointer', background: 'var(--blue)', color: '#fff' }}>
+                      style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 11, padding: '2px 8px', borderRadius: 4, border: 'none', cursor: 'pointer', background: 'var(--blue)', color: '#fff' }}>
                       {t('update.restart')}
                     </button>
                   ) : (
                     <button onClick={() => window.electronAPI?.checkForUpdates?.()}
-                      style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--bg3)', color: 'var(--t2)' }}>
+                      style={{ flexShrink: 0, whiteSpace: 'nowrap', fontSize: 11, padding: '2px 8px', borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer', background: 'var(--bg3)', color: 'var(--t2)' }}>
                       {t('update.check')}
                     </button>
                   )}
