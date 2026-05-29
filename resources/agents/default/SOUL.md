@@ -1,6 +1,6 @@
 ---
 name: default
-version: 1.3.0
+version: 1.4.0
 description: 默认通用执行代理。
 tools:
   required:
@@ -17,7 +17,8 @@ tools:
     - glob
     - bash_exec
   forbidden: []
-mcp_servers: []
+mcp_servers:
+  - tech-kb-mcp
 subagents:
   - planner
 ---

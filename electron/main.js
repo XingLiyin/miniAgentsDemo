@@ -240,11 +240,13 @@ function applyVersionAwareSeed() {
 function getUserSkillsDir() { return path.join(getAppDataDir(), 'skills'); }
 function getUserAgentsDir() { return path.join(getAppDataDir(), 'agents'); }
 
-// Seed bundled <name> (skills / agents) into its AppData copy so all user-mutable
-// content (pulled / imported / edited) lives in AppData and survives app updates
-// (NSIS overwrites the install dir). Copies only entries not already present —
-// never clobbers the user's versions. New bundled entries get added after updates.
-function seedBundledResource(name) {
+// Seed bundled <name> (skills / agents) into its AppData copy so content lives in
+// AppData and survives app updates (NSIS overwrites the install dir).
+// - overwrite=false (skills): missing-only — never clobbers user pulled/edited skills.
+// - overwrite=true (agents): refresh bundled templates from the app on every launch
+//   (they're app-shipped/canonical, so updates like default-template changes land),
+//   while user-ADDED agent dirs (not in the bundle) are left untouched.
+function seedBundledResource(name, { overwrite = false } = {}) {
   try {
     const src = path.join(getBundledResourcesPath(), name);
     const dst = path.join(getAppDataDir(), name);
@@ -255,7 +257,10 @@ function seedBundledResource(name) {
       try {
         if (!fs.statSync(s).isDirectory()) continue;
         const d = path.join(dst, entry);
-        if (fs.existsSync(d)) continue;   // keep the user's version
+        if (fs.existsSync(d)) {
+          if (!overwrite) continue;                            // keep the user's version
+          fs.rmSync(d, { recursive: true, force: true });      // refresh bundled template
+        }
         fs.cpSync(s, d, { recursive: true });
         elog(`Seeded bundled ${name}: ${entry}`);
       } catch (e) { elog(`seedBundledResource(${name}): failed ${entry}: ${e.message}`); }
@@ -573,7 +578,7 @@ app.whenReady().then(async () => {
   seedDefaultData();
   applyVersionAwareSeed();
   seedBundledResource('skills');
-  seedBundledResource('agents');
+  seedBundledResource('agents', { overwrite: true });
 
   updateConfig = resolveUpdateConfig({
     env: process.env,
