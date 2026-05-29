@@ -313,10 +313,18 @@ const en: Dict = {
 const DICTS: Record<Lang, Dict> = { zh, en }
 
 function detectInitial(): Lang {
+  // 1) 用户手动选过的优先
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
     if (saved === 'zh' || saved === 'en') return saved
   } catch { /* ignore */ }
+  // 2) 首次启动跟随系统/UI 语言（Electron 下 navigator.language 反映 Windows 语言）
+  try {
+    const sys = (navigator.languages?.[0] || navigator.language || '').toLowerCase()
+    if (sys.startsWith('zh')) return 'zh'
+    if (sys) return 'en'   // 仅有中英两种，非中文系统统一回退英文
+  } catch { /* ignore */ }
+  // 3) 兜底
   return 'zh'
 }
 

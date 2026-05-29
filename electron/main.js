@@ -266,6 +266,8 @@ async function createWindow() {
     minWidth: 900,
     minHeight: 600,
     title: 'NetLIVE-CoWork',
+    // 窗口 / 任务栏图标，与界面内 logo (icon.svg) 同一品牌图
+    icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
     backgroundColor: '#09090b',
     // 隐藏原生标题栏（包含左上角的应用图标）；保留 min/max/close 控件作为 overlay
@@ -359,6 +361,11 @@ ipcMain.handle('select-directory', async () => {
 });
 
 app.whenReady().then(async () => {
+  // Windows 任务栏图标分组标识：与 appId 一致，确保任务栏使用我们的图标（含 dev 模式）
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.netlive-cowork.desktop');
+  }
+
   // 全局移除应用菜单（File/Edit/View/Window/Help）
   Menu.setApplicationMenu(null);
 

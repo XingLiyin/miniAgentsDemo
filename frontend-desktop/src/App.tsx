@@ -221,15 +221,24 @@ function BrandBlock() {
       } as React.CSSProperties}
     >
       <img src="/icon.svg" alt="" style={{ width: 20, height: 20, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t3)', letterSpacing: '0.5px' }}>NetLIVE</span>
-      <span style={{ fontSize: 12, fontWeight: 400, color: 'var(--t3)' }}>·</span>
+      <div className="flex items-center" style={{ gap: 3 }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>NetLIVE</span>
+        <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--t3)', letterSpacing: '0.2px' }}>·</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>CoWork</span>
+      </div>
       <span style={{
-        fontSize: 13, fontWeight: 700, letterSpacing: '-0.1px',
-        background: 'linear-gradient(90deg, #2563eb, #0891b2)',
-        WebkitBackgroundClip: 'text',
-        WebkitTextFillColor: 'transparent',
-        backgroundClip: 'text',
-      }}>CoWork</span>
+        marginLeft: 2,
+        fontSize: 9,
+        fontWeight: 700,
+        lineHeight: 1,
+        letterSpacing: '0.5px',
+        textTransform: 'uppercase',
+        color: '#2563eb',
+        background: 'rgba(37, 99, 235, 0.12)',
+        border: '1px solid rgba(37, 99, 235, 0.25)',
+        borderRadius: 4,
+        padding: '2px 4px',
+      }}>beta</span>
     </div>
   )
 }
