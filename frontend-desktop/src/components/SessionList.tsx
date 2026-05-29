@@ -40,18 +40,19 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
     window.electronAPI?.getVersion?.().then(setVersion).catch(() => {})
   }, [])
 
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
-    const off = window.electronAPI?.onUpdateStatus?.((p) => setUpdate(p))
-    return () => { off?.() }
+    const off = window.electronAPI?.onUpdateStatus?.((p) => {
+      setUpdate(p)
+      // Auto-dismiss transient "up to date" / error states the moment they arrive,
+      // independent of render timing.
+      if (dismissTimer.current) clearTimeout(dismissTimer.current)
+      if (p.status === 'not-available' || p.status === 'error') {
+        dismissTimer.current = setTimeout(() => setUpdate(null), 4000)
+      }
+    })
+    return () => { off?.(); if (dismissTimer.current) clearTimeout(dismissTimer.current) }
   }, [])
-
-  // Auto-dismiss transient "up to date" / error states so they don't linger.
-  useEffect(() => {
-    if (update?.status === 'not-available' || update?.status === 'error') {
-      const id = setTimeout(() => setUpdate(null), 4000)
-      return () => clearTimeout(id)
-    }
-  }, [update])
 
   // 点设置区外面自动收起
   useEffect(() => {
