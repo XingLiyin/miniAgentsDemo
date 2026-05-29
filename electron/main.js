@@ -150,13 +150,13 @@ function ensureUserEnvFile() {
       content = content.replace(/^IPMASTER_COWORK_DATA_DIR=.*/m,           `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`);
       content = content.replace(/^IPMASTER_COWORK_LOG_DIR=.*/m,            `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`);
       content = content.replace(/^IPMASTER_COWORK_SKILLS_DIR=.*/m,         `IPMASTER_COWORK_SKILLS_DIR=${toUnix(getUserSkillsDir())}`);
-      content = content.replace(/^IPMASTER_COWORK_AGENTS_DIR=.*/m,         `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`);
+      content = content.replace(/^IPMASTER_COWORK_AGENTS_DIR=.*/m,         `IPMASTER_COWORK_AGENTS_DIR=${toUnix(getUserAgentsDir())}`);
       content = content.replace(/^IPMASTER_COWORK_WORKSPACE_BASE_DIR=.*/m, `IPMASTER_COWORK_WORKSPACE_BASE_DIR=${toUnix(path.join(appDataDir, 'workspace'))}`);
     } else {
       content = [
         `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`,
         `IPMASTER_COWORK_SKILLS_DIR=${toUnix(getUserSkillsDir())}`,
-        `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`,
+        `IPMASTER_COWORK_AGENTS_DIR=${toUnix(getUserAgentsDir())}`,
         `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`,
       ].join('\n');
     }
@@ -238,27 +238,29 @@ function applyVersionAwareSeed() {
 // User skills live in AppData (NOT the install dir) so they survive app updates
 // (NSIS overwrites the install dir, which would otherwise wipe pulled/imported skills).
 function getUserSkillsDir() { return path.join(getAppDataDir(), 'skills'); }
+function getUserAgentsDir() { return path.join(getAppDataDir(), 'agents'); }
 
-// Seed bundled default skills into the user skills dir. Copies only skill dirs
-// not already present — never clobbers user edits or pulled skills. Runs on first
-// run and after updates (new bundled skills get added; existing ones are kept).
-function seedBundledSkills() {
+// Seed bundled <name> (skills / agents) into its AppData copy so all user-mutable
+// content (pulled / imported / edited) lives in AppData and survives app updates
+// (NSIS overwrites the install dir). Copies only entries not already present —
+// never clobbers the user's versions. New bundled entries get added after updates.
+function seedBundledResource(name) {
   try {
-    const src = path.join(getBundledResourcesPath(), 'skills');
-    const dst = getUserSkillsDir();
+    const src = path.join(getBundledResourcesPath(), name);
+    const dst = path.join(getAppDataDir(), name);
     if (!fs.existsSync(src)) return;
     fs.mkdirSync(dst, { recursive: true });
-    for (const name of fs.readdirSync(src)) {
-      const s = path.join(src, name);
+    for (const entry of fs.readdirSync(src)) {
+      const s = path.join(src, entry);
       try {
         if (!fs.statSync(s).isDirectory()) continue;
-        const d = path.join(dst, name);
-        if (fs.existsSync(d)) continue;   // keep the user's version / pulled skills
+        const d = path.join(dst, entry);
+        if (fs.existsSync(d)) continue;   // keep the user's version
         fs.cpSync(s, d, { recursive: true });
-        elog(`Seeded bundled skill: ${name}`);
-      } catch (e) { elog(`seedBundledSkills: failed ${name}: ${e.message}`); }
+        elog(`Seeded bundled ${name}: ${entry}`);
+      } catch (e) { elog(`seedBundledResource(${name}): failed ${entry}: ${e.message}`); }
     }
-  } catch (e) { elog('seedBundledSkills failed: ' + e.message); }
+  } catch (e) { elog(`seedBundledResource(${name}) failed: ${e.message}`); }
 }
 
 // ── Backend lifecycle ─────────────────────────────────────────────────────────
@@ -286,8 +288,9 @@ function startBackend() {
       ...process.env,
       IPMASTER_COWORK_BACKEND_PORT: String(PORT),
       IPMASTER_COWORK_ENV_FILE: envFilePath,
-      // Force skills to the AppData dir (survives updates), overriding any .env value.
+      // Force skills/agents to the AppData dirs (survive updates), overriding any .env value.
       IPMASTER_COWORK_SKILLS_DIR: getUserSkillsDir(),
+      IPMASTER_COWORK_AGENTS_DIR: getUserAgentsDir(),
     },
     cwd: getAppDataDir(),
     windowsHide: true,
@@ -569,7 +572,8 @@ app.whenReady().then(async () => {
   elog(`Resources: ${process.resourcesPath}`);
   seedDefaultData();
   applyVersionAwareSeed();
-  seedBundledSkills();
+  seedBundledResource('skills');
+  seedBundledResource('agents');
 
   updateConfig = resolveUpdateConfig({
     env: process.env,
