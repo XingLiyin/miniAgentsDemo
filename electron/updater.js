@@ -13,6 +13,13 @@ function initUpdater({ config, isPackaged, onEvent, logger }) {
   if (!config.feedUrl) { log('updater: skipped (no feedUrl configured)'); return null; }
 
   const { autoUpdater } = require('electron-updater');
+  // Route electron-updater's internal logs into our electron.log for diagnosis.
+  autoUpdater.logger = {
+    info: (m) => log('updater[info]: ' + m),
+    warn: (m) => log('updater[warn]: ' + m),
+    error: (m) => log('updater[error]: ' + m),
+    debug: (m) => log('updater[debug]: ' + m),
+  };
   const channel = config.channel === 'beta' ? 'beta' : 'latest';
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;

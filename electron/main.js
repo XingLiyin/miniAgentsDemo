@@ -340,13 +340,20 @@ function waitForBackend(maxAttempts = 60) {
 
 // ── Window ────────────────────────────────────────────────────────────────────
 
-const LOADING_HTML =
-  'data:text/html,' +
-  encodeURIComponent(
-    '<html style="background:#09090b;margin:0"><body style="display:flex;align-items:center;' +
-    'justify-content:center;height:100vh;margin:0"><p style="color:#71717a;font-family:' +
-    'system-ui,sans-serif;font-size:15px">正在启动 NetLIVE-CoWork…</p></body></html>'
+// Splash shown before the renderer (and its i18n) loads. The main process can't
+// read the renderer's saved language choice, so follow the OS locale here.
+function loadingHtml() {
+  const zh = app.getLocale().toLowerCase().startsWith('zh');
+  const text = zh ? '正在启动 NetLIVE-CoWork…' : 'Starting NetLIVE-CoWork…';
+  return (
+    'data:text/html;charset=utf-8,' +
+    encodeURIComponent(
+      '<html style="background:#09090b;margin:0"><body style="display:flex;align-items:center;' +
+      'justify-content:center;height:100vh;margin:0"><p style="color:#71717a;font-family:' +
+      'system-ui,sans-serif;font-size:15px">' + text + '</p></body></html>'
+    )
   );
+}
 
 async function createWindow() {
   mainWindow = new BrowserWindow({
@@ -379,7 +386,7 @@ async function createWindow() {
   // 移除应用菜单，连 Alt 键唤起也禁掉
   mainWindow.setMenuBarVisibility(false);
 
-  mainWindow.loadURL(LOADING_HTML);
+  mainWindow.loadURL(loadingHtml());
   mainWindow.show();
 
   if (IS_DEV) {
@@ -472,19 +479,17 @@ ipcMain.handle('update-check', async () => {
 
 ipcMain.handle('update-install', async () => {
   if (!autoUpdaterRef) return;   // updater inactive (dev mode or no feed configured)
+  // stopBackend() kills the tracked backend by PID, releasing the exe lock so
+  // NSIS can overwrite during install.
+  //
+  // Do NOT taskkill /IM netlive-cowork.exe here: image-name matching is
+  // case-insensitive on Windows, and the backend ('netlive-cowork.exe') collides
+  // with the Electron app ('NetLIVE-CoWork.exe') — so /IM would kill THIS app
+  // before quitAndInstall runs, aborting the update. (Orphan backends reused
+  // from a prior session are a separate, rarer case to handle by port/PID.)
   await stopBackend();
-  // Catch any orphan backend (e.g. one reused from a prior session that this
-  // process never spawned) so it can't hold a lock on the exe during install.
-  if (process.platform === 'win32') {
-    await new Promise((resolve) => {
-      try {
-        const tk = spawn('taskkill', ['/F', '/IM', 'netlive-cowork.exe', '/T'], { windowsHide: true, stdio: 'ignore' });
-        tk.on('exit', resolve);
-        tk.on('error', resolve);
-      } catch (_) { resolve(); }
-    });
-  }
-  if (autoUpdaterRef) autoUpdaterRef.quitAndInstall(false, true);
+  // Silent install (NSIS /S) + relaunch.
+  autoUpdaterRef.quitAndInstall(true, true);
 });
 
 app.whenReady().then(async () => {
