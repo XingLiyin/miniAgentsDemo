@@ -541,7 +541,7 @@ function MessageRow({ msg }: { msg: ChatMessage }) {
       <div style={AV_AI}>✦</div>
       <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>NetLIVE-CoWork AI</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>IPMaster-Cowork AI</span>
           <span style={{ fontSize: 10.5, color: 'var(--t3)' }}>{fmtTime(msg.created_at)}</span>
         </div>
         <div style={BUBBLE_AI}>
@@ -568,7 +568,7 @@ function AssistantBubble({ content, images, reasoning, streaming }: { content: s
       <div style={AV_AI}>✦</div>
       <div style={{ maxWidth: '72%', minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 4 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>NetLIVE-CoWork AI</span>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--t2)' }}>IPMaster-Cowork AI</span>
         </div>
         <div style={BUBBLE_AI}>
           {images.map((img, i) => <ImageView key={i} img={img} />)}

@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-  NetLIVE-CoWork — 完整桌面应用打包脚本 (Electron + PyInstaller)
+  IPMaster-Cowork — 完整桌面应用打包脚本 (Electron + PyInstaller)
 .DESCRIPTION
-  输出: build\electron-dist\NetLIVE-CoWork Setup <version>.exe  (NSIS 安装包)
-        build\electron-dist\NetLIVE-CoWork <version>.exe         (免安装便携版)
+  输出: build\electron-dist\IPMaster-Cowork Setup <version>.exe  (NSIS 安装包)
+        build\electron-dist\IPMaster-Cowork <version>.exe         (免安装便携版)
 .PARAMETER GTK3Bin
   GTK3 Runtime bin 目录（用于 cairosvg）。找不到时跳过，不影响其他功能。
 .PARAMETER SkipFrontend
   跳过桌面前端构建（需要 frontend-desktop/dist 已存在）。
 .PARAMETER SkipBackend
-  跳过 PyInstaller 打包（需要 build/dist/netlive-cowork 已存在）。
+  跳过 PyInstaller 打包（需要 build/dist/ipmaster-cowork 已存在）。
 .PARAMETER SkipInstall
   跳过 uv sync / PyInstaller 安装步骤。
 .EXAMPLE
@@ -75,19 +75,19 @@ if (-not $SkipBackend) {
 
   New-Item -ItemType Directory -Force $BuildDir | Out-Null
   Set-Location $Root
-  uv run pyinstaller "$PSScriptRoot\netlive-cowork-desktop.spec" --noconfirm `
+  uv run pyinstaller "$PSScriptRoot\ipmaster-cowork-desktop.spec" --noconfirm `
     --distpath "$BuildDir\dist" `
     --workpath "$BuildDir\work"
   if ($LASTEXITCODE -ne 0) { Write-Err "PyInstaller 打包失败" }
 
   # 复制运行时资源到 exe 同级（与 build_exe.ps1 一致）
-  $DistDir = Join-Path $BuildDir "dist\netlive-cowork"
+  $DistDir = Join-Path $BuildDir "dist\ipmaster-cowork"
   Copy-Item (Join-Path $Root "resources") $DistDir -Recurse -Force
   Copy-Item (Join-Path $Root ".env.example") (Join-Path $DistDir ".env.example") -Force
-  Write-OK "后端已输出到 build/dist/netlive-cowork/"
+  Write-OK "后端已输出到 build/dist/ipmaster-cowork/"
 } else {
-  if (-not (Test-Path (Join-Path $BuildDir "dist\netlive-cowork\netlive-cowork.exe"))) {
-    Write-Err "build/dist/netlive-cowork/netlive-cowork.exe 不存在，请去掉 -SkipBackend 或先手动构建后端"
+  if (-not (Test-Path (Join-Path $BuildDir "dist\ipmaster-cowork\ipmaster-cowork.exe"))) {
+    Write-Err "build/dist/ipmaster-cowork/ipmaster-cowork.exe 不存在，请去掉 -SkipBackend 或先手动构建后端"
   }
   Write-Warn "跳过后端打包"
 }
@@ -158,12 +158,12 @@ Write-Host @"
 ==========================================
   打包完成！
   输出目录: build\electron-dist\
-  安装包:   NetLIVE-CoWork Setup *.exe
-  便携版:   NetLIVE-CoWork *.exe
+  安装包:   IPMaster-Cowork Setup *.exe
+  便携版:   IPMaster-Cowork *.exe
 
   首次运行配置：
-    数据目录自动创建于 %APPDATA%\NetLIVE-CoWork\
-    LLM 配置文件：%APPDATA%\NetLIVE-CoWork\.env
+    数据目录自动创建于 %APPDATA%\IPMaster-Cowork\
+    LLM 配置文件：%APPDATA%\IPMaster-Cowork\.env
     启动后通过前端界面添加 LLM Provider 即可使用。
 ==========================================
 "@ -ForegroundColor Green

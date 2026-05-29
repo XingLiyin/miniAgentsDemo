@@ -44,7 +44,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title=settings.app_name,
         version=settings.app_version,
-        description="NetLIVE-CoWork Phase 1 — Single Agent Loop with file-based storage",
+        description="IPMaster-Cowork Phase 1 — Single Agent Loop with file-based storage",
         lifespan=_lifespan,
     )
 

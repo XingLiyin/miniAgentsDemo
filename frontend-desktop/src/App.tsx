@@ -10,7 +10,7 @@ import type { PendingSession } from '@/types'
 
 // ── 草稿持久化 ────────────────────────────────────────────────────────────────
 // pendingSession 是 Smart B 阶段唯一不入后端的状态，关掉 app 就丢。
-// 用 localStorage 落盘（Electron 下落在 %APPDATA%\NetLIVE-CoWork\Local Storage\）。
+// 用 localStorage 落盘（Electron 下落在 %APPDATA%\IPMaster-Cowork\Local Storage\）。
 
 const PENDING_STORAGE_KEY = 'netlive.pendingSession.v1'
 
@@ -222,9 +222,9 @@ function BrandBlock() {
     >
       <img src="/icon.svg" alt="" style={{ width: 20, height: 20, flexShrink: 0 }} />
       <div className="flex items-center" style={{ gap: 3 }}>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>NetLIVE</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>IPMaster</span>
         <span style={{ fontSize: 13, fontWeight: 400, color: 'var(--t3)', letterSpacing: '0.2px' }}>·</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>CoWork</span>
+        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--t1)', letterSpacing: '0.2px' }}>Cowork</span>
       </div>
       <span style={{
         marginLeft: 2,

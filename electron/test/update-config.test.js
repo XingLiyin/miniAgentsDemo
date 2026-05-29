@@ -5,7 +5,7 @@ const { resolveUpdateConfig, shouldCheckForUpdates, shouldReportTelemetry } = re
 
 test('env overrides config file overrides defaults', () => {
   const cfg = resolveUpdateConfig({
-    env: { NETLIVE_COWORK_UPDATE_FEED_URL: 'http://env' },
+    env: { IPMASTER_COWORK_UPDATE_FEED_URL: 'http://env' },
     configFile: { feedUrl: 'http://file', channel: 'beta' },
     defaults: { feedUrl: 'http://default', channel: 'stable' },
   });
@@ -37,7 +37,7 @@ test('missing feed/telemetry yields empty strings and false guards', () => {
 });
 
 test('guards true when urls present', () => {
-  const cfg = resolveUpdateConfig({ env: { NETLIVE_COWORK_UPDATE_FEED_URL: 'http://x', NETLIVE_COWORK_TELEMETRY_URL: 'http://y' }, configFile: {}, defaults: {} });
+  const cfg = resolveUpdateConfig({ env: { IPMASTER_COWORK_UPDATE_FEED_URL: 'http://x', IPMASTER_COWORK_TELEMETRY_URL: 'http://y' }, configFile: {}, defaults: {} });
   assert.strictEqual(shouldCheckForUpdates(cfg), true);
   assert.strictEqual(shouldReportTelemetry(cfg), true);
 });

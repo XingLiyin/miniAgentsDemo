@@ -1,7 +1,7 @@
 {
-  "name": "netlive-cowork",
+  "name": "ipmaster-cowork",
   "version": "0.1.4",
-  "description": "NetLIVE-CoWork Desktop Application",
+  "description": "IPMaster-Cowork Desktop Application",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -19,8 +19,8 @@
     "electron-builder": "^25.1.8"
   },
   "build": {
-    "appId": "com.netlive-cowork.desktop",
-    "productName": "NetLIVE-CoWork",
+    "appId": "com.ipmaster-cowork.desktop",
+    "productName": "IPMaster-Cowork",
     "publish": [
       {
         "provider": "generic",
@@ -28,7 +28,7 @@
         "channel": "latest"
       }
     ],
-    "copyright": "NetLIVE-CoWork",
+    "copyright": "IPMaster-Cowork",
     "icon": "assets/icon",
     "directories": {
       "output": "../build/electron-dist"
@@ -45,7 +45,7 @@
     ],
     "extraResources": [
       {
-        "from": "../build/dist/netlive-cowork",
+        "from": "../build/dist/ipmaster-cowork",
         "to": "backend",
         "filter": [
           "**/*"
@@ -87,7 +87,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "NetLIVE-CoWork",
+      "shortcutName": "IPMaster-Cowork",
       "installerLanguages": [
         "zh_CN",
         "en_US"

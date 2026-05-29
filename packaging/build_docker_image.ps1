@@ -1,14 +1,14 @@
-# NetLIVE-CoWork — 打包成 Docker 镜像供 Linux 离线部署
-# 用法: .\packaging\build_docker_image.ps1 [-Output netlive-cowork-linux.tar]
+# IPMaster-Cowork — 打包成 Docker 镜像供 Linux 离线部署
+# 用法: .\packaging\build_docker_image.ps1 [-Output ipmaster-cowork-linux.tar]
 param(
-    [string]$Output = "netlive-cowork-linux.tar",
+    [string]$Output = "ipmaster-cowork-linux.tar",
     [string]$Tag    = "latest"
 )
 
 $ErrorActionPreference = "Stop"
 $Root      = Split-Path $PSScriptRoot -Parent   # 项目根目录
 $BuildDir  = Join-Path $Root "build"
-$ImageName = "netlive-cowork"
+$ImageName = "ipmaster-cowork"
 $FullTag   = "${ImageName}:${Tag}"
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -52,18 +52,18 @@ Write-Host @"
 
   目标机操作（仅需安装 Docker，无需联网）:
 
-    docker load -i netlive-cowork-linux.tar
+    docker load -i ipmaster-cowork-linux.tar
     cp .env.example .env
     # 编辑 .env 填写配置后:
     docker run -d \
-      --name netlive-cowork \
+      --name ipmaster-cowork \
       -p 15926:15926 \
       --env-file .env \
-      -v ./data:/netlive-cowork/data \
-      -v ./resources:/netlive-cowork/resources \
-      -v ./logs:/netlive-cowork/logs \
+      -v ./data:/ipmaster-cowork/data \
+      -v ./resources:/ipmaster-cowork/resources \
+      -v ./logs:/ipmaster-cowork/logs \
       --restart unless-stopped \
-      netlive-cowork:latest
+      ipmaster-cowork:latest
 
   访问: http://localhost:15926
 ==========================================

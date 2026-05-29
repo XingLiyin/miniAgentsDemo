@@ -37,10 +37,10 @@ if getattr(sys, "frozen", False):
             _meipass + os.pathsep + os.environ.get("LD_LIBRARY_PATH", "")
         )
 
-    # 加载 .env：优先使用 NETLIVE_COWORK_ENV_FILE（由 Electron 设置为 AppData 路径），
+    # 加载 .env：优先使用 IPMASTER_COWORK_ENV_FILE（由 Electron 设置为 AppData 路径），
     # 回退到 exe 同级目录的 .env
     from dotenv import load_dotenv
-    _env_file = os.environ.get("NETLIVE_COWORK_ENV_FILE") or os.path.join(_exe_dir, ".env")
+    _env_file = os.environ.get("IPMASTER_COWORK_ENV_FILE") or os.path.join(_exe_dir, ".env")
     load_dotenv(_env_file)
 
     # 冻结模式下强制用绝对路径——.env 里的相对路径无法正确解析，直接覆盖
@@ -50,9 +50,9 @@ if getattr(sys, "frozen", False):
         if not val or not os.path.isabs(val):
             os.environ[key] = frozen_abs
 
-    _resolve("NETLIVE_COWORK_DATA_DIR",   os.path.join(_exe_dir, "data"))
-    _resolve("NETLIVE_COWORK_SKILLS_DIR", os.path.join(_exe_dir, "resources", "skills"))
-    _resolve("NETLIVE_COWORK_AGENTS_DIR", os.path.join(_exe_dir, "resources", "agents"))
+    _resolve("IPMASTER_COWORK_DATA_DIR",   os.path.join(_exe_dir, "data"))
+    _resolve("IPMASTER_COWORK_SKILLS_DIR", os.path.join(_exe_dir, "resources", "skills"))
+    _resolve("IPMASTER_COWORK_AGENTS_DIR", os.path.join(_exe_dir, "resources", "agents"))
 else:
     from dotenv import load_dotenv
     load_dotenv()
@@ -68,7 +68,7 @@ import uvicorn  # noqa: E402
 
 
 def main() -> None:
-    port = int(os.environ.get("NETLIVE_COWORK_BACKEND_PORT", 15926))
+    port = int(os.environ.get("IPMASTER_COWORK_BACKEND_PORT", 15926))
     application = create_app()
 
     # 挂载前端静态文件
@@ -94,7 +94,7 @@ def main() -> None:
         # 挂载到 "/" 必须在所有 API 路由注册之后
         application.mount("/", _SPAFiles(directory=frontend_dist, html=True), name="frontend")
 
-    print(f"[NetLIVE-CoWork] Starting on http://0.0.0.0:{port}")
+    print(f"[IPMaster-Cowork] Starting on http://0.0.0.0:{port}")
     uvicorn.run(application, host="0.0.0.0", port=port, log_level="info")
 
 

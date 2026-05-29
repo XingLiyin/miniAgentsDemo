@@ -79,13 +79,13 @@
     <circle cx="11" cy="52" r="4" fill="url(#star-grad)" filter="url(#node-glow)"/>
   </g>
 
-  <!-- ── CoWork ── -->
+  <!-- ── Cowork ── -->
   <text x="97" y="43"
         font-family="'Segoe UI','Inter','Helvetica Neue',Arial,sans-serif"
         font-size="33" font-weight="700" letter-spacing="0.3"
-        fill="url(#cowork-grad)" filter="url(#text-glow)">CoWork</text>
+        fill="url(#cowork-grad)" filter="url(#text-glow)">Cowork</text>
 
-  <!-- ── NetLIVE ── -->
+  <!-- ── IPMaster ── -->
   <rect x="97"  y="57" width="5" height="19" fill="#a8d800"/>
   <polygon points="97,57 102,57 116,76 111,76" fill="#a8d800"/>
   <rect x="111" y="57" width="5" height="19" fill="#3b82f6"/>

@@ -6,10 +6,10 @@
 function resolveUpdateConfig({ env = {}, configFile = {}, defaults = {} } = {}) {
   const pick = (envKey, fileKey) =>
     env[envKey] || configFile[fileKey] || defaults[fileKey] || '';
-  const channelRaw = pick('NETLIVE_COWORK_UPDATE_CHANNEL', 'channel') || 'stable';
+  const channelRaw = pick('IPMASTER_COWORK_UPDATE_CHANNEL', 'channel') || 'stable';
   return {
-    feedUrl: pick('NETLIVE_COWORK_UPDATE_FEED_URL', 'feedUrl'),
-    telemetryUrl: pick('NETLIVE_COWORK_TELEMETRY_URL', 'telemetryUrl'),
+    feedUrl: pick('IPMASTER_COWORK_UPDATE_FEED_URL', 'feedUrl'),
+    telemetryUrl: pick('IPMASTER_COWORK_TELEMETRY_URL', 'telemetryUrl'),
     channel: channelRaw === 'beta' ? 'beta' : 'stable',
   };
 }

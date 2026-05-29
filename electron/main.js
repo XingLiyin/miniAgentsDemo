@@ -11,14 +11,14 @@ const { planSeedMigration } = require('./lib/seed-migration');
 const { createReporter } = require('./telemetry');
 const { initUpdater } = require('./updater');
 
-const PORT = parseInt(process.env.NETLIVE_COWORK_BACKEND_PORT || '15926', 10);
+const PORT = parseInt(process.env.IPMASTER_COWORK_BACKEND_PORT || '15926', 10);
 const BACKEND_URL = `http://localhost:${PORT}`;
 const IS_DEV = !!process.env.ELECTRON_DEV;
 const DEV_VITE_URL = `http://localhost:${process.env.VITE_PORT || '5173'}`;
 
 // Built-in default update/telemetry server. Used when neither an env var
-// (NETLIVE_COWORK_UPDATE_FEED_URL / _TELEMETRY_URL / _UPDATE_CHANNEL) nor
-// %APPDATA%\NetLIVE-CoWork\update-config.json overrides it.
+// (IPMASTER_COWORK_UPDATE_FEED_URL / _TELEMETRY_URL / _UPDATE_CHANNEL) nor
+// %APPDATA%\IPMaster-Cowork\update-config.json overrides it.
 // CHANGE THIS to the production intranet URL before a real release.
 const DEFAULT_UPDATE_BASE = 'http://localhost:8077';
 
@@ -33,9 +33,9 @@ let autoUpdaterRef = null;   // active autoUpdater or null
 
 function getBackendExePath() {
   if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'backend', 'netlive-cowork.exe');
+    return path.join(process.resourcesPath, 'backend', 'ipmaster-cowork.exe');
   }
-  return path.join(__dirname, '..', 'build', 'dist', 'netlive-cowork', 'netlive-cowork.exe');
+  return path.join(__dirname, '..', 'build', 'dist', 'ipmaster-cowork', 'ipmaster-cowork.exe');
 }
 
 function getBundledResourcesPath() {
@@ -46,7 +46,31 @@ function getBundledResourcesPath() {
 }
 
 function getAppDataDir() {
-  return path.join(app.getPath('appData'), 'NetLIVE-CoWork');
+  return path.join(app.getPath('appData'), 'IPMaster-Cowork');
+}
+
+// One-time migration from the legacy NetLIVE-CoWork AppData dir to IPMaster-Cowork
+// (rebrand). Runs before anything creates the new dir, so "new dir absent" is a
+// reliable signal. Copies all user data and rewrites the migrated .env (env-var
+// prefix + embedded paths) so the new backend reads the carried-over config.
+function migrateLegacyAppData() {
+  try {
+    const newDir = getAppDataDir();
+    const oldDir = path.join(app.getPath('appData'), 'NetLIVE-CoWork');
+    if (fs.existsSync(newDir)) return;   // already migrated / fresh new-layout run
+    if (!fs.existsSync(oldDir)) return;  // fresh install, nothing to migrate
+    fs.cpSync(oldDir, newDir, { recursive: true });
+    const envPath = path.join(newDir, '.env');
+    if (fs.existsSync(envPath)) {
+      const txt = fs.readFileSync(envPath, 'utf8')
+        .replace(/NETLIVE_COWORK_/g, 'IPMASTER_COWORK_')
+        .replace(/NetLIVE-CoWork/g, 'IPMaster-Cowork');
+      fs.writeFileSync(envPath, txt, 'utf8');
+    }
+    process.stdout.write(`Migrated legacy AppData ${oldDir} -> ${newDir}\n`);
+  } catch (e) {
+    try { process.stdout.write('migrateLegacyAppData failed: ' + e.message + '\n'); } catch (_) {}
+  }
 }
 
 function readUpdateConfigFile() {
@@ -79,7 +103,7 @@ function saveTelemetryQueue(q) {
 
 // ── Electron-side log file ────────────────────────────────────────────────────
 // Captures backend stdout/stderr before Python's own logger starts.
-// Written to %APPDATA%\NetLIVE-CoWork\logs\electron.log
+// Written to %APPDATA%\IPMaster-Cowork\logs\electron.log
 
 function openElectronLog() {
   try {
@@ -88,7 +112,7 @@ function openElectronLog() {
     const logPath = path.join(logsDir, 'electron.log');
     electronLogStream = fs.createWriteStream(logPath, { flags: 'a' });
     const ts = new Date().toISOString();
-    electronLogStream.write(`\n${'='.repeat(60)}\n[${ts}] NetLIVE-CoWork started\n`);
+    electronLogStream.write(`\n${'='.repeat(60)}\n[${ts}] IPMaster-Cowork started\n`);
     return logPath;
   } catch (e) {
     return null;
@@ -123,17 +147,17 @@ function ensureUserEnvFile() {
     let content = '';
     if (fs.existsSync(templatePath)) {
       content = fs.readFileSync(templatePath, 'utf8');
-      content = content.replace(/^NETLIVE_COWORK_DATA_DIR=.*/m,           `NETLIVE_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`);
-      content = content.replace(/^NETLIVE_COWORK_LOG_DIR=.*/m,            `NETLIVE_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`);
-      content = content.replace(/^NETLIVE_COWORK_SKILLS_DIR=.*/m,         `NETLIVE_COWORK_SKILLS_DIR=${resourcesPath}/skills`);
-      content = content.replace(/^NETLIVE_COWORK_AGENTS_DIR=.*/m,         `NETLIVE_COWORK_AGENTS_DIR=${resourcesPath}/agents`);
-      content = content.replace(/^NETLIVE_COWORK_WORKSPACE_BASE_DIR=.*/m, `NETLIVE_COWORK_WORKSPACE_BASE_DIR=${toUnix(path.join(appDataDir, 'workspace'))}`);
+      content = content.replace(/^IPMASTER_COWORK_DATA_DIR=.*/m,           `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`);
+      content = content.replace(/^IPMASTER_COWORK_LOG_DIR=.*/m,            `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`);
+      content = content.replace(/^IPMASTER_COWORK_SKILLS_DIR=.*/m,         `IPMASTER_COWORK_SKILLS_DIR=${resourcesPath}/skills`);
+      content = content.replace(/^IPMASTER_COWORK_AGENTS_DIR=.*/m,         `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`);
+      content = content.replace(/^IPMASTER_COWORK_WORKSPACE_BASE_DIR=.*/m, `IPMASTER_COWORK_WORKSPACE_BASE_DIR=${toUnix(path.join(appDataDir, 'workspace'))}`);
     } else {
       content = [
-        `NETLIVE_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`,
-        `NETLIVE_COWORK_SKILLS_DIR=${resourcesPath}/skills`,
-        `NETLIVE_COWORK_AGENTS_DIR=${resourcesPath}/agents`,
-        `NETLIVE_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`,
+        `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`,
+        `IPMASTER_COWORK_SKILLS_DIR=${resourcesPath}/skills`,
+        `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`,
+        `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`,
       ].join('\n');
     }
     fs.writeFileSync(envPath, content, 'utf8');
@@ -222,7 +246,7 @@ function startBackend() {
   elog(`Exists: ${fs.existsSync(exePath)}`);
 
   if (!fs.existsSync(exePath)) {
-    dialog.showErrorBox('NetLIVE-CoWork — 启动失败', `找不到后端程序：\n${exePath}\n\n请重新安装应用。`);
+    dialog.showErrorBox('IPMaster-Cowork — 启动失败', `找不到后端程序：\n${exePath}\n\n请重新安装应用。`);
     app.quit();
     return false;
   }
@@ -234,8 +258,8 @@ function startBackend() {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: {
       ...process.env,
-      NETLIVE_COWORK_BACKEND_PORT: String(PORT),
-      NETLIVE_COWORK_ENV_FILE: envFilePath,
+      IPMASTER_COWORK_BACKEND_PORT: String(PORT),
+      IPMASTER_COWORK_ENV_FILE: envFilePath,
     },
     cwd: getAppDataDir(),
     windowsHide: true,
@@ -254,7 +278,7 @@ function startBackend() {
   backendProcess.on('error', (err) => {
     elog(`[spawn-error] ${err.message}`);
     dialog.showErrorBox(
-      'NetLIVE-CoWork — 无法启动后端',
+      'IPMaster-Cowork — 无法启动后端',
       `启动后端进程时出错：\n${err.message}\n\n日志文件：${path.join(getAppDataDir(), 'logs', 'electron.log')}`,
     );
   });
@@ -266,7 +290,7 @@ function startBackend() {
       const lastLines = stderrLines.slice(-20).join('\n');
       dialog.showMessageBox(mainWindow, {
         type: 'error',
-        title: 'NetLIVE-CoWork — 后端异常退出',
+        title: 'IPMaster-Cowork — 后端异常退出',
         message: `后端进程退出（退出码 ${code}）`,
         detail: lastLines
           ? `最近输出：\n${lastLines}\n\n完整日志：${logPath}`
@@ -350,7 +374,7 @@ function waitForBackend(maxAttempts = 60) {
 // read the renderer's saved language choice, so follow the OS locale here.
 function loadingHtml() {
   const zh = app.getLocale().toLowerCase().startsWith('zh');
-  const text = zh ? '正在启动 NetLIVE-CoWork…' : 'Starting NetLIVE-CoWork…';
+  const text = zh ? '正在启动 IPMaster-Cowork…' : 'Starting IPMaster-Cowork…';
   return (
     'data:text/html;charset=utf-8,' +
     encodeURIComponent(
@@ -367,7 +391,7 @@ async function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    title: 'NetLIVE-CoWork',
+    title: 'IPMaster-Cowork',
     // 窗口 / 任务栏图标，与界面内 logo (icon.svg) 同一品牌图
     icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
@@ -416,7 +440,7 @@ async function createWindow() {
       : `完整日志：${logPath}`;
     const { response } = await dialog.showMessageBox({
       type: 'error',
-      title: 'NetLIVE-CoWork — 启动失败',
+      title: 'IPMaster-Cowork — 启动失败',
       message: err.message,
       detail,
       buttons: ['打开日志文件', '退出'],
@@ -488,9 +512,9 @@ ipcMain.handle('update-install', async () => {
   // stopBackend() kills the tracked backend by PID, releasing the exe lock so
   // NSIS can overwrite during install.
   //
-  // Do NOT taskkill /IM netlive-cowork.exe here: image-name matching is
-  // case-insensitive on Windows, and the backend ('netlive-cowork.exe') collides
-  // with the Electron app ('NetLIVE-CoWork.exe') — so /IM would kill THIS app
+  // Do NOT taskkill /IM ipmaster-cowork.exe here: image-name matching is
+  // case-insensitive on Windows, and the backend ('ipmaster-cowork.exe') collides
+  // with the Electron app ('IPMaster-Cowork.exe') — so /IM would kill THIS app
   // before quitAndInstall runs, aborting the update. (Orphan backends reused
   // from a prior session are a separate, rarer case to handle by port/PID.)
   await stopBackend();
@@ -501,11 +525,15 @@ ipcMain.handle('update-install', async () => {
 app.whenReady().then(async () => {
   // Windows 任务栏图标分组标识：与 appId 一致，确保任务栏使用我们的图标（含 dev 模式）
   if (process.platform === 'win32') {
-    app.setAppUserModelId('com.netlive-cowork.desktop');
+    app.setAppUserModelId('com.ipmaster-cowork.desktop');
   }
 
   // 全局移除应用菜单（File/Edit/View/Window/Help）
   Menu.setApplicationMenu(null);
+
+  // Rebrand: carry over data from the legacy NetLIVE-CoWork AppData dir.
+  // Must run before openElectronLog (which would create the new dir).
+  migrateLegacyAppData();
 
   openElectronLog();
   elog(`Electron version: ${process.versions.electron}`);

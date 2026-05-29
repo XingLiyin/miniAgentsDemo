@@ -1,8 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for NetLIVE-CoWork desktop build.
-Uses frontend-desktop/dist instead of frontend/dist.
-Usage: pyinstaller netlive-cowork-desktop.spec --noconfirm
+PyInstaller spec for IPMaster-Cowork.
+Usage: pyinstaller ipmaster-cowork.spec --noconfirm
 """
 import os
 from pathlib import Path
@@ -11,6 +10,7 @@ from pathlib import Path
 # Project root is one level up.
 _ROOT = str(Path(SPECPATH).parent)
 
+# ── GTK3 DLL 收集 ─────────────────────────────────────────────────────────────
 GTK3_BIN = os.environ.get("GTK3_BIN", r"C:\Program Files\GTK3-Runtime Win64\bin")
 gtk3_binaries = []
 if os.path.isdir(GTK3_BIN):
@@ -19,16 +19,18 @@ if os.path.isdir(GTK3_BIN):
 else:
     print(f"[WARN] GTK3_BIN not found: {GTK3_BIN}  (cairosvg may not work)")
 
+# ── 分析 ──────────────────────────────────────────────────────────────────────
 a = Analysis(
     [os.path.join(_ROOT, "_run.py")],
     pathex=[_ROOT],
     binaries=gtk3_binaries,
     datas=[
-        # Desktop frontend build output
-        (os.path.join(_ROOT, "frontend-desktop", "dist"), "frontend_dist"),
-        # resources/ is copied by the build script to dist dir
+        # 已构建的前端（需先 npm run build）
+        (os.path.join(_ROOT, "frontend", "dist"), "frontend_dist"),
+        # resources/ 不打进 _internal，由 build_exe.ps1 复制到 exe 同级目录
     ],
     hiddenimports=[
+        # uvicorn 内部动态导入
         "uvicorn.logging",
         "uvicorn.loops",
         "uvicorn.loops.auto",
@@ -46,14 +48,18 @@ a = Analysis(
         "uvicorn.lifespan",
         "uvicorn.lifespan.on",
         "uvicorn.lifespan.off",
+        # anyio 后端
         "anyio._backends._asyncio",
+        # starlette
         "starlette.staticfiles",
         "starlette.middleware.cors",
+        # pydantic v2
         "pydantic.deprecated.class_validators",
         "pydantic.deprecated.config",
         "pydantic.deprecated.decorator",
         "pydantic.deprecated.tools",
         "pydantic_settings",
+        # cairosvg & cairo
         "cairosvg",
         "cairosvg.css",
         "cairosvg.defs",
@@ -67,13 +73,16 @@ a = Analysis(
         "cairosvg.surface",
         "cairosvg.text",
         "cairosvg.url",
+        # mcp
         "mcp",
         "mcp.client",
         "mcp.server",
         "mcp.types",
+        # httpx
         "httpx",
         "httpx._transports.default",
         "httpx._transports.asyncio",
+        # 标准库补充
         "email.mime.multipart",
         "email.mime.text",
         "multipart",
@@ -96,12 +105,12 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name="netlive-cowork",
+    name="ipmaster-cowork",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,
-    console=False,   # windowless for desktop
+    upx=False,          # UPX 与某些 DLL 不兼容，保持 False 更稳定
+    console=True,       # 显示控制台，方便查看日志
 )
 
 coll = COLLECT(
@@ -111,5 +120,5 @@ coll = COLLECT(
     a.datas,
     strip=False,
     upx=False,
-    name="netlive-cowork",
+    name="ipmaster-cowork",
 )

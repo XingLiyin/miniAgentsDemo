@@ -1,4 +1,4 @@
-# NetLIVE-CoWork — 一键打包 exe 脚本
+# IPMaster-Cowork — 一键打包 exe 脚本
 # 用法: .\packaging\build_exe.ps1 [-GTK3Bin "C:\...\GTK3-Runtime Win64\bin"] [-SkipFrontend] [-SkipInstall]
 param(
     [string]$GTK3Bin  = "C:\Program Files\GTK3-Runtime Win64\bin",
@@ -9,7 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root     = Split-Path $PSScriptRoot -Parent   # 项目根目录
 $BuildDir = Join-Path $Root "build"
-$DistDir  = Join-Path $BuildDir "dist\netlive-cowork"
+$DistDir  = Join-Path $BuildDir "dist\ipmaster-cowork"
 $WorkDir  = Join-Path $BuildDir "work"
 
 function Write-Step([string]$msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
@@ -67,7 +67,7 @@ if (-not $SkipInstall) {
 Write-Step "PyInstaller 打包"
 New-Item -ItemType Directory -Force $BuildDir | Out-Null
 Set-Location $Root
-uv run pyinstaller "$PSScriptRoot\netlive-cowork.spec" --noconfirm `
+uv run pyinstaller "$PSScriptRoot\ipmaster-cowork.spec" --noconfirm `
     --distpath "$BuildDir\dist" `
     --workpath "$BuildDir\work"
 if ($LASTEXITCODE -ne 0) { Write-Err "PyInstaller 打包失败"; exit 1 }
@@ -75,21 +75,21 @@ if ($LASTEXITCODE -ne 0) { Write-Err "PyInstaller 打包失败"; exit 1 }
 # ── 5. 复制运行时文件到 exe 同级目录 ─────────────────────────────────────────
 Write-Step "拷贝 resources/ 和配置示例"
 Copy-Item (Join-Path $Root "resources") $DistDir -Recurse -Force
-Write-OK "已将 resources/ 复制到 build\dist\netlive-cowork\"
+Write-OK "已将 resources/ 复制到 build\dist\ipmaster-cowork\"
 
 Copy-Item (Join-Path $Root ".env.example") (Join-Path $DistDir ".env.example") -Force
-Write-OK "已将 .env.example 复制到 build\dist\netlive-cowork\"
+Write-OK "已将 .env.example 复制到 build\dist\ipmaster-cowork\"
 
 # ── 完成 ──────────────────────────────────────────────────────────────────────
 Write-Host @"
 
 ==========================================
   打包完成！
-  可执行目录: build\dist\netlive-cowork\
+  可执行目录: build\dist\ipmaster-cowork\
   启动方式:
-    1. 将 .env.example 复制为 build\dist\netlive-cowork\.env 并填写配置
-    2. 双击 build\dist\netlive-cowork\netlive-cowork.exe
-       或: .\build\dist\netlive-cowork\netlive-cowork.exe
+    1. 将 .env.example 复制为 build\dist\ipmaster-cowork\.env 并填写配置
+    2. 双击 build\dist\ipmaster-cowork\ipmaster-cowork.exe
+       或: .\build\dist\ipmaster-cowork\ipmaster-cowork.exe
   默认地址: http://localhost:15926
 ==========================================
 "@ -ForegroundColor Green

@@ -26,14 +26,14 @@ def resolve_working_dir(raw: str) -> str:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="NETLIVE_COWORK_",
+        env_prefix="IPMASTER_COWORK_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
     # 应用基本信息
-    app_name: str = "NetLIVE-CoWork"
+    app_name: str = "IPMaster-Cowork"
     app_version: str = "0.1.0"
 
     # 数据目录

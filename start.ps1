@@ -1,4 +1,4 @@
-# NetLIVE-CoWork one-click startup script (PowerShell)
+# IPMaster-Cowork one-click startup script (PowerShell)
 param(
     [switch]$BackendOnly,
     [switch]$FrontendOnly,
