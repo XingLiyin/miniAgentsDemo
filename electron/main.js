@@ -20,7 +20,7 @@ const DEV_VITE_URL = `http://localhost:${process.env.VITE_PORT || '5173'}`;
 // (IPMASTER_COWORK_UPDATE_FEED_URL / _TELEMETRY_URL / _UPDATE_CHANNEL) nor
 // %APPDATA%\IPMaster-Cowork\update-config.json overrides it.
 // CHANGE THIS to the production intranet URL before a real release.
-const DEFAULT_UPDATE_BASE = 'http://localhost:8077';
+const DEFAULT_UPDATE_BASE = 'http://10.25.228.203:8077';
 
 let mainWindow = null;
 let backendProcess = null;

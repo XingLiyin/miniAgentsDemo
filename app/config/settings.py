@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     enable_builtin_tools: bool = True  # 是否注册内置工具（skill_executor 和 control tools 始终注册）
 
     # 远端 Skill 拉取服务器
-    skill_pull_server_url: str = "http://172.20.10.2:8080/api"  # 远端 skill 服务器 base URL，如 https://example.com/api
+    skill_pull_server_url: str = "http://10.25.228.203:8080/api"  # 远端 skill 服务器 base URL，如 https://example.com/api
 
     # 外部存储
     store_base_url: str = ""
