@@ -50,20 +50,6 @@
         "filter": [
           "**/*"
         ]
-      },
-      {
-        "from": "../data/llm_configs",
-        "to": "default_data/llm_configs",
-        "filter": [
-          "*.json"
-        ]
-      },
-      {
-        "from": "../data/mcp_configs",
-        "to": "default_data/mcp_configs",
-        "filter": [
-          "*.json"
-        ]
       }
     ],
     "win": {
