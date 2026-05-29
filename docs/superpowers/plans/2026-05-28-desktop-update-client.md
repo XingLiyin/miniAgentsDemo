@@ -12,18 +12,21 @@
 
 ---
 
-## Status (2026-05-28)
+## Status (updated 2026-05-29)
 
-**Code-complete on branch `feat/desktop-update-client`** (13 commits, base `master`, NOT merged).
+**Validated end-to-end on branch `feat/desktop-update-client`** (20 commits, base `master`, NOT merged — held pending server-side P1).
 
-- **Tasks 1–10: DONE.** Implemented via subagent-driven development. Reviews: per-task spec + code-quality review on the risky integration (Task 7); a final holistic review caught and fixed packaging blockers (new modules were missing from electron-builder `files`; `electron-updater` was in `devDependencies` instead of `dependencies`).
-- **Verification (automated):** 17/17 `node:test` unit tests pass (`cd electron && npm test`); `node --check main.js` clean; `npx tsc -b` (frontend-desktop) clean.
-- **Task 11 (single-machine E2E): DEFERRED.** It needs a packaged build + GUI observation on Windows, and we want to validate against the real management service (Part B / Plan 2), which is being built in a parallel session. Run it once the server side is ready.
+- **Tasks 1–10: DONE** (subagent-driven; per-task + final holistic review; a final review caught packaging blockers — modules missing from electron-builder `files`, `electron-updater` in `devDependencies`).
+- **Automated:** 17/17 `node:test` pass; `node --check main.js` + `npx tsc -b` clean.
+- **Task 11 (E2E): DONE.** Stage A (client, localhost feed) and Stage B (real management service, localhost:8077) both PASS — stable update 0.1.2→0.1.3, beta update 0.1.3→0.1.4, telemetry landed, release mgmt + promote + admin auth + stats verified.
 
-**Resume checklist when the server side is ready:**
-- [ ] Build the PyInstaller backend into `build/dist/netlive-cowork` (existing backend build process; not changed by this branch)
-- [ ] Run Task 11 below (feed/telemetry can be localhost stand-ins OR the real management service)
-- [ ] On green, finish the branch (merge/PR) via superpowers:finishing-a-development-branch
+**Bugs found & fixed during E2E (committed):** taskkill self-kill (case-insensitive `netlive-cowork.exe` vs `NetLIVE-CoWork.exe` — caused "restart to update" to hang); silent install `quitAndInstall(true,true)`; splash charset+OS-locale; i18n fallback en + button polish + up-to-date auto-dismiss; telemetry `ts` → ISO string; built-in `DEFAULT_UPDATE_BASE` (placeholder `http://localhost:8077` — change before release).
+
+**Open before finalizing (held by user 2026-05-29):**
+- [ ] Server-side P1 (parallel session): server generates/corrects feed `url`+`sha512`+`size` from the stored artifact, so publishers can upload raw electron-builder output (currently the publisher must hand-rewrite the yml to `artifacts/<file>`). Re-verify "upload raw artifacts" once P1 lands.
+- [ ] Set `DEFAULT_UPDATE_BASE` to the real intranet URL.
+- [ ] Finish the branch (merge/PR) via superpowers:finishing-a-development-branch.
+- [ ] (optional) client emit `update_download_started` (server enum has it; client doesn't send → `started:0`).
 
 ---
 
