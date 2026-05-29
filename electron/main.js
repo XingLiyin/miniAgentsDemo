@@ -16,6 +16,12 @@ const BACKEND_URL = `http://localhost:${PORT}`;
 const IS_DEV = !!process.env.ELECTRON_DEV;
 const DEV_VITE_URL = `http://localhost:${process.env.VITE_PORT || '5173'}`;
 
+// Built-in default update/telemetry server. Used when neither an env var
+// (NETLIVE_COWORK_UPDATE_FEED_URL / _TELEMETRY_URL / _UPDATE_CHANNEL) nor
+// %APPDATA%\NetLIVE-CoWork\update-config.json overrides it.
+// CHANGE THIS to the production intranet URL before a real release.
+const DEFAULT_UPDATE_BASE = 'http://localhost:8077';
+
 let mainWindow = null;
 let backendProcess = null;
 let electronLogStream = null;
@@ -511,7 +517,7 @@ app.whenReady().then(async () => {
   updateConfig = resolveUpdateConfig({
     env: process.env,
     configFile: readUpdateConfigFile(),
-    defaults: {},
+    defaults: { feedUrl: DEFAULT_UPDATE_BASE, telemetryUrl: DEFAULT_UPDATE_BASE, channel: 'stable' },
   });
   if (shouldReportTelemetry(updateConfig)) {
     telemetry = createReporter({
