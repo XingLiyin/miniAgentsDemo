@@ -519,7 +519,7 @@ app.whenReady().then(async () => {
       context: {
         installId: getOrCreateInstallId(), appVersion: app.getVersion(),
         channel: updateConfig.channel, os: process.platform, arch: process.arch,
-        now: () => Date.now(),
+        now: () => new Date().toISOString(),  // server expects ts as ISO date-time string
       },
       loadQueue: loadTelemetryQueue, saveQueue: saveTelemetryQueue,
     });
