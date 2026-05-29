@@ -340,8 +340,8 @@ function detectInitial(): Lang {
     if (sys.startsWith('zh')) return 'zh'
     if (sys) return 'en'   // 仅有中英两种，非中文系统统一回退英文
   } catch { /* ignore */ }
-  // 3) 兜底
-  return 'zh'
+  // 3) 兜底：仅中英两种，非中文/检测失败统一回退英文
+  return 'en'
 }
 
 interface I18nContextValue {
