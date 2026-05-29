@@ -149,13 +149,13 @@ function ensureUserEnvFile() {
       content = fs.readFileSync(templatePath, 'utf8');
       content = content.replace(/^IPMASTER_COWORK_DATA_DIR=.*/m,           `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`);
       content = content.replace(/^IPMASTER_COWORK_LOG_DIR=.*/m,            `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`);
-      content = content.replace(/^IPMASTER_COWORK_SKILLS_DIR=.*/m,         `IPMASTER_COWORK_SKILLS_DIR=${resourcesPath}/skills`);
+      content = content.replace(/^IPMASTER_COWORK_SKILLS_DIR=.*/m,         `IPMASTER_COWORK_SKILLS_DIR=${toUnix(getUserSkillsDir())}`);
       content = content.replace(/^IPMASTER_COWORK_AGENTS_DIR=.*/m,         `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`);
       content = content.replace(/^IPMASTER_COWORK_WORKSPACE_BASE_DIR=.*/m, `IPMASTER_COWORK_WORKSPACE_BASE_DIR=${toUnix(path.join(appDataDir, 'workspace'))}`);
     } else {
       content = [
         `IPMASTER_COWORK_DATA_DIR=${toUnix(path.join(appDataDir, 'data'))}`,
-        `IPMASTER_COWORK_SKILLS_DIR=${resourcesPath}/skills`,
+        `IPMASTER_COWORK_SKILLS_DIR=${toUnix(getUserSkillsDir())}`,
         `IPMASTER_COWORK_AGENTS_DIR=${resourcesPath}/agents`,
         `IPMASTER_COWORK_LOG_DIR=${toUnix(path.join(appDataDir, 'logs'))}`,
       ].join('\n');
@@ -235,6 +235,32 @@ function applyVersionAwareSeed() {
   try { fs.writeFileSync(markerPath, currentVersion, 'utf8'); } catch (e) { elog('write installed-version failed: ' + e.message); }
 }
 
+// User skills live in AppData (NOT the install dir) so they survive app updates
+// (NSIS overwrites the install dir, which would otherwise wipe pulled/imported skills).
+function getUserSkillsDir() { return path.join(getAppDataDir(), 'skills'); }
+
+// Seed bundled default skills into the user skills dir. Copies only skill dirs
+// not already present — never clobbers user edits or pulled skills. Runs on first
+// run and after updates (new bundled skills get added; existing ones are kept).
+function seedBundledSkills() {
+  try {
+    const src = path.join(getBundledResourcesPath(), 'skills');
+    const dst = getUserSkillsDir();
+    if (!fs.existsSync(src)) return;
+    fs.mkdirSync(dst, { recursive: true });
+    for (const name of fs.readdirSync(src)) {
+      const s = path.join(src, name);
+      try {
+        if (!fs.statSync(s).isDirectory()) continue;
+        const d = path.join(dst, name);
+        if (fs.existsSync(d)) continue;   // keep the user's version / pulled skills
+        fs.cpSync(s, d, { recursive: true });
+        elog(`Seeded bundled skill: ${name}`);
+      } catch (e) { elog(`seedBundledSkills: failed ${name}: ${e.message}`); }
+    }
+  } catch (e) { elog('seedBundledSkills failed: ' + e.message); }
+}
+
 // ── Backend lifecycle ─────────────────────────────────────────────────────────
 
 // Collected stderr lines for crash dialog
@@ -260,6 +286,8 @@ function startBackend() {
       ...process.env,
       IPMASTER_COWORK_BACKEND_PORT: String(PORT),
       IPMASTER_COWORK_ENV_FILE: envFilePath,
+      // Force skills to the AppData dir (survives updates), overriding any .env value.
+      IPMASTER_COWORK_SKILLS_DIR: getUserSkillsDir(),
     },
     cwd: getAppDataDir(),
     windowsHide: true,
@@ -541,6 +569,7 @@ app.whenReady().then(async () => {
   elog(`Resources: ${process.resourcesPath}`);
   seedDefaultData();
   applyVersionAwareSeed();
+  seedBundledSkills();
 
   updateConfig = resolveUpdateConfig({
     env: process.env,
