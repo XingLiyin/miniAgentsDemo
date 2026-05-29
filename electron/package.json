@@ -50,6 +50,13 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "../packaging/default_data",
+        "to": "default_data",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

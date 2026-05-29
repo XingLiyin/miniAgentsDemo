@@ -389,13 +389,13 @@ function CatalogCard({ item, highlighted = false, containerRef, pulling, onPull 
       {/* Card body */}
       <div className="flex-1 p-4">
         {/* Name */}
-        <p className="text-sm font-semibold leading-snug mb-1.5" style={{ color: 'var(--t1)' }}>{item.name}</p>
+        <p className="truncate text-sm font-semibold leading-snug mb-1.5" style={{ color: 'var(--t1)' }}>{item.name}</p>
 
         {/* Description */}
         {item.description ? (
-          <p className="text-xs leading-relaxed" style={{ color: 'var(--t2)' }}>{item.description}</p>
+          <p className="text-xs leading-relaxed" style={{ color: 'var(--t2)', margin: 0, height: '4.875em', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{item.description}</p>
         ) : (
-          <p className="text-xs italic" style={{ color: 'var(--t3)' }}>{t('skills.noDescription')}</p>
+          <p className="text-xs italic" style={{ color: 'var(--t3)', margin: 0, height: '4.875em' }}>{t('skills.noDescription')}</p>
         )}
       </div>
 
