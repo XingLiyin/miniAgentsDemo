@@ -24,9 +24,18 @@
 
 **Open before finalizing (held by user 2026-05-29):**
 - [ ] Server-side P1 (parallel session): server generates/corrects feed `url`+`sha512`+`size` from the stored artifact, so publishers can upload raw electron-builder output (currently the publisher must hand-rewrite the yml to `artifacts/<file>`). Re-verify "upload raw artifacts" once P1 lands.
-- [ ] Set `DEFAULT_UPDATE_BASE` to the real intranet URL.
+- [x] Set `DEFAULT_UPDATE_BASE` to the real intranet URL → `http://10.25.228.203:8077`.
 - [ ] Finish the branch (merge/PR) via superpowers:finishing-a-development-branch.
 - [ ] (optional) client emit `update_download_started` (server enum has it; client doesn't send → `started:0`).
+
+## Post-plan work on this branch (rebrand + hardening, 2026-05-29)
+
+Beyond this plan, the same branch now also carries the **IPMaster Cowork rebrand** and a hardening batch (current build **0.1.8**, unpushed). Authoritative details are in memory `desktop-update-system-status`. Summary:
+- Full rebrand NetLIVE CoWork → IPMaster Cowork (appId, env prefix `IPMASTER_COWORK_`, AppData dir, exe/dist names) + one-time AppData migration. **Requires a real PyInstaller backend rebuild** — the fast path (rename exe + swap frontend_dist) does NOT carry Python changes.
+- skills + agents moved to `%APPDATA%\IPMaster-Cowork\{skills,agents}` (survive updates); no default skills shipped; default MCP `tech-kb-mcp` (`http://10.25.228.203:8000/mcp/`) shipped + added to the default agent template; Skill Market cards fixed-height.
+- Servers: skill `http://10.25.228.203:8080/api`, update `http://10.25.228.203:8077` (HTTP).
+- **Security:** stopped bundling dev `data/llm_configs` (leaked a glm API key in 0.1.0–0.1.7 / published 0.1.4–0.1.6); added root `.gitignore`. Rotate the key if any old build leaked externally. Don't distribute old `Setup 0.1.4–0.1.7.exe`.
+- Deferred: integrate `upstream/master` UX-optimize merge (`2881228`) after it lands on master (heavy file overlap).
 
 ---
 
