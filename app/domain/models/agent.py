@@ -9,7 +9,7 @@ from typing import Any
 @dataclass
 class LoopGuard:
     """Agent Loop Guard 运行时计数。"""
-    actor_max_tool_rounds: int = 50      # 单个 atomic task 内最多工具调用轮次
+    actor_max_tool_rounds: int = 100      # 单个 atomic task 内最多工具调用轮次
     observer_max_tool_rounds: int = 5    # observer ReAct 循环最多轮次
     context_tokens: int = 0             # 最近一次 LLM 调用的 prompt_tokens（当前窗口大小）
     context_message_count: int = 0      # 上次 LLM 调用时 memory 消息数，用于增量 token 估算

@@ -144,6 +144,10 @@ class AgentLoop:
         effective_flag = None if (task.settings or {}).get("_daemon") else interrupt_flag
         if effective_flag and effective_flag.is_set():
             raise AgentInterruptedError("interrupted before actor start")
+        # 清空上一轮残留的 outputs：本轮没有最终产出时不应再被旧值掩盖（影响 observer 的空产出护栏）。
+        if task.outputs:
+            task.outputs = ""
+            self._task_svc.save(task)
         result = self._actor.act(task, ctx, agent, session, interrupt_flag=effective_flag)
 
         if result.context_tokens:
