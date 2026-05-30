@@ -414,8 +414,10 @@ function loadingHtml() {
   return (
     'data:text/html;charset=utf-8,' +
     encodeURIComponent(
-      '<html style="background:#09090b;margin:0"><body style="display:flex;align-items:center;' +
-      'justify-content:center;height:100vh;margin:0"><p style="color:#71717a;font-family:' +
+      // Match the React app's actual background (index.css --bg0) so launch
+      // doesn't flash from dark splash to light app.
+      '<html style="background:#f0f4fa;margin:0"><body style="display:flex;align-items:center;' +
+      'justify-content:center;height:100vh;margin:0"><p style="color:#8aa3bf;font-family:' +
       'system-ui,sans-serif;font-size:15px">' + text + '</p></body></html>'
     )
   );
@@ -431,7 +433,9 @@ async function createWindow() {
     // 窗口 / 任务栏图标，与界面内 logo (icon.svg) 同一品牌图
     icon: path.join(__dirname, 'assets', 'icon.ico'),
     show: false,
-    backgroundColor: '#09090b',
+    // Same color as the React app's body (index.css --bg0) — prevents a
+    // black flash before the renderer paints.
+    backgroundColor: '#f0f4fa',
     // 隐藏原生标题栏（包含左上角的应用图标）；保留 min/max/close 控件作为 overlay
     titleBarStyle: 'hidden',
     titleBarOverlay: {
