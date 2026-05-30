@@ -627,10 +627,15 @@ app.whenReady().then(async () => {
     if (priorVersion !== currentVersion) {
       try { fs.writeFileSync(versionFile, currentVersion, 'utf8'); }
       catch (e) { elog('persist last-version failed: ' + e.message); }
-      if (priorVersion) {
-        await session.defaultSession.clearCache();
-        elog(`Cleared chunk cache after upgrade ${priorVersion} -> ${currentVersion}`);
-      }
+      // Clear unconditionally on any version change — INCLUDING the first run
+      // after upgrading from a version that predates this last-version file
+      // (priorVersion === null). That first upgrade is exactly when a stale
+      // index.html from the old build is still cached; skipping it (the old
+      // `if (priorVersion)` guard) left the very upgrade that introduced this
+      // mechanism uncleared. On a genuine fresh install there's no cache to
+      // clear, so this is harmless.
+      await session.defaultSession.clearCache();
+      elog(`Cleared renderer cache on version change ${priorVersion || '(fresh/legacy)'} -> ${currentVersion}`);
     }
   } catch (e) { elog('cache-clear-on-upgrade failed: ' + e.message); }
 
