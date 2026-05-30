@@ -142,6 +142,14 @@ if ($LASTEXITCODE -ne 0) {
 Write-Step "构建 Electron 桌面应用 (electron-builder)"
 $electronDir = Join-Path $Root "electron"
 
+# electron-builder 复用残留的 win-unpacked 会打出空壳安装包（payload 丢失且不报错）；
+# 快速路径（-SkipBackend / -SkipFrontend）尤其常见。每次构建前先清掉，强制重新生成。
+$unpacked = Join-Path $BuildDir "electron-dist\win-unpacked"
+if (Test-Path $unpacked) {
+  Remove-Item -Recurse -Force $unpacked
+  Write-OK "已清理旧 win-unpacked（避免空壳安装包）"
+}
+
 Write-Host "  安装 Electron 依赖 (npm install)..."
 $r = Start-Process npm.cmd -ArgumentList "install" -WorkingDirectory $electronDir -NoNewWindow -Wait -PassThru
 if ($r.ExitCode -ne 0) { Write-Err "electron npm install 失败" }
