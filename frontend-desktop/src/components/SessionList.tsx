@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon, SettingsIcon, GlobeIcon } from 'lucide-react'
+import { Trash2Icon, FolderIcon, FolderOpenIcon, Wand2Icon, ZapIcon, ChevronRightIcon, ChevronDownIcon, PlusIcon, XIcon, SettingsIcon, GlobeIcon, DownloadIcon } from 'lucide-react'
 import { sessionsApi } from '@/api/sessions'
 import type { Session, PendingSession } from '@/types'
 import { StatusBadge } from '@/components/ui/badge'
@@ -33,7 +33,15 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [version, setVersion] = useState('')
   const [update, setUpdate] = useState<{ status: string; percent?: number; version?: string; message?: string } | null>(null)
+  // Banner dismissed (× clicked) for current process only — resets on app restart.
+  // Tracked by version so a *newer* downloaded update re-surfaces the banner.
+  const [dismissedVersion, setDismissedVersion] = useState<string | null>(null)
   const settingsBtnRef = useRef<HTMLButtonElement>(null)
+
+  // Any update state worth surfacing outside the popup (drives the gear's blue dot).
+  const hasActiveUpdate = update?.status === 'available' || update?.status === 'downloading' || update?.status === 'downloaded'
+  // Downloaded + user hasn't dismissed *this* version's banner.
+  const showUpdateBanner = update?.status === 'downloaded' && (update.version ?? '__downloaded__') !== dismissedVersion
 
   // 取应用版本号（Electron 下）
   useEffect(() => {
@@ -257,6 +265,54 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
               )}
             </div>
           )}
+          {/* Update-ready banner — visible above the settings button, dismissable
+              for the current process (next launch re-surfaces if still downloaded). */}
+          {showUpdateBanner && (
+            <div
+              style={{
+                marginBottom: 4,
+                padding: '8px 10px',
+                background: 'var(--blue-dim)',
+                border: '1px solid var(--blue)',
+                borderRadius: 'var(--r)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                boxShadow: 'var(--shadow)',
+              }}
+            >
+              <DownloadIcon size={14} style={{ color: 'var(--blue)', flexShrink: 0 }} />
+              <span style={{ color: 'var(--t1)', flex: 1, lineHeight: 1.3, minWidth: 0 }}>
+                {t('update.readyTitle')}{update?.version ? ` v${update.version}` : ''}
+              </span>
+              <button
+                onClick={() => window.electronAPI?.installUpdate?.()}
+                style={{
+                  flexShrink: 0, fontSize: 11, padding: '3px 10px',
+                  borderRadius: 4, border: 'none', cursor: 'pointer',
+                  background: 'var(--blue)', color: '#fff', fontWeight: 500,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t('update.restart')}
+              </button>
+              <button
+                onClick={() => setDismissedVersion(update?.version ?? '__downloaded__')}
+                aria-label={t('update.dismiss')}
+                title={t('update.dismiss')}
+                style={{
+                  flexShrink: 0, padding: 2, border: 'none', background: 'transparent',
+                  cursor: 'pointer', color: 'var(--t3)', display: 'inline-flex',
+                  alignItems: 'center', justifyContent: 'center', borderRadius: 4,
+                }}
+                onMouseEnter={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t1)' }}
+                onMouseLeave={e => { (e.currentTarget as HTMLElement).style.color = 'var(--t3)' }}
+              >
+                <XIcon size={14} />
+              </button>
+            </div>
+          )}
           <button
             ref={settingsBtnRef}
             onClick={() => setSettingsOpen(v => !v)}
@@ -271,7 +327,23 @@ export function SessionList({ selectedId, pendingSession, centerView, onViewChan
             onMouseEnter={e => { if (!settingsOpen) { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)'; (e.currentTarget as HTMLElement).style.color = 'var(--t1)' } }}
             onMouseLeave={e => { if (!settingsOpen) { (e.currentTarget as HTMLElement).style.background = 'transparent'; (e.currentTarget as HTMLElement).style.color = 'var(--t2)' } }}
           >
-            <SettingsIcon size={14} />
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <SettingsIcon size={14} />
+              {/* Blue dot when any active update state exists (available/downloading/downloaded). */}
+              {hasActiveUpdate && (
+                <span
+                  aria-hidden
+                  style={{
+                    position: 'absolute',
+                    top: -2, right: -3,
+                    width: 6, height: 6,
+                    borderRadius: '50%',
+                    background: 'var(--blue)',
+                    boxShadow: '0 0 0 1.5px var(--bg2)',
+                  }}
+                />
+              )}
+            </span>
             {t('sidebar.settings')}
           </button>
         </div>

@@ -61,6 +61,8 @@ const zh: Dict = {
   'update.restart': '重启更新',
   'update.uptodate': '已是最新',
   'update.error': '更新检查失败',
+  'update.readyTitle': '更新已就绪',
+  'update.dismiss': '稍后提醒',
 
   // session status
   'status.QUEUED': '等待中',
@@ -213,6 +215,8 @@ const en: Dict = {
   'update.restart': 'Restart',
   'update.uptodate': 'Up to date',
   'update.error': 'Update check failed',
+  'update.readyTitle': 'Update ready to install',
+  'update.dismiss': 'Remind me later',
 
   // session status
   'status.QUEUED': 'Queued',
