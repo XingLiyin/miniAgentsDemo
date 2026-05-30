@@ -1,4 +1,4 @@
-# IPMaster-Cowork — 打包成 Docker 镜像供 Linux 离线部署
+﻿# IPMaster-Cowork — 打包成 Docker 镜像供 Linux 离线部署
 # 用法: .\packaging\build_docker_image.ps1 [-Output ipmaster-cowork-linux.tar]
 param(
     [string]$Output = "ipmaster-cowork-linux.tar",

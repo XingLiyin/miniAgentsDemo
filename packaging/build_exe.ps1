@@ -1,4 +1,4 @@
-# IPMaster-Cowork — 一键打包 exe 脚本
+﻿# IPMaster-Cowork — 一键打包 exe 脚本
 # 用法: .\packaging\build_exe.ps1 [-GTK3Bin "C:\...\GTK3-Runtime Win64\bin"] [-SkipFrontend] [-SkipInstall]
 param(
     [string]$GTK3Bin  = "C:\Program Files\GTK3-Runtime Win64\bin",

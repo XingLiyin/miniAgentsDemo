@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   IPMaster-Cowork — 完整桌面应用打包脚本 (Electron + PyInstaller)
 .DESCRIPTION
