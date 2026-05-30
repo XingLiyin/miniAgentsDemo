@@ -614,13 +614,17 @@ function ToolCallRow({ tc }: { tc: ChatToolCall }) {
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const argsStr = Object.keys(tc.arguments).length > 0 ? JSON.stringify(tc.arguments, null, 2) : ''
-  const statusColor = tc.is_error ? 'var(--red)' : 'var(--green)'
-  const statusLabel = tc.is_error ? t('chat.toolFailed') : t('chat.toolDone')
+  // Tool failures are rendered neutrally (no red / no "error" wording): a failed
+  // call shows a grey "已结束/Finished" instead of green "✓ 完成", and its detail
+  // body uses the neutral "结果/Result" label. Avoids alarming users over
+  // routine recoverable tool failures (MCP unreachable, skill non-zero exit, …).
+  const statusColor = tc.is_error ? 'var(--t3)' : 'var(--green)'
+  const statusLabel = tc.is_error ? t('chat.toolEnded') : t('chat.toolDone')
   return (
     <div style={{ padding: '3px 16px' }}>
       <div style={{
         borderRadius: 10, overflow: 'hidden', boxShadow: 'var(--shadow)',
-        border: `1px solid ${tc.is_error ? '#fca5a5' : 'var(--border)'}`,
+        border: '1px solid var(--border)',
         background: 'var(--bg1)',
       }}>
         {/* Header */}
@@ -635,14 +639,14 @@ function ToolCallRow({ tc }: { tc: ChatToolCall }) {
           onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg3)' }}
           onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = 'var(--bg2)' }}
         >
-          {/* ⚙ icon in blue-dim square */}
+          {/* ⚙ icon in blue-dim square — neutral regardless of success/failure */}
           <span style={{
             width: 20, height: 20, borderRadius: 4, flexShrink: 0,
             display: 'grid', placeItems: 'center', fontSize: 10,
-            background: tc.is_error ? 'rgba(220,38,38,.08)' : 'var(--blue-dim)',
-            color: tc.is_error ? 'var(--red)' : 'var(--blue)',
+            background: 'var(--blue-dim)',
+            color: 'var(--blue)',
           }}>⚙</span>
-          <code style={{ flex: 1, fontFamily: 'monospace', fontSize: 11.5, color: tc.is_error ? 'var(--red)' : 'var(--t2)', fontWeight: 500 }}>{tc.tool_name}</code>
+          <code style={{ flex: 1, fontFamily: 'monospace', fontSize: 11.5, color: 'var(--t2)', fontWeight: 500 }}>{tc.tool_name}</code>
           <span style={{ fontSize: 10.5, color: statusColor, flexShrink: 0 }}>{statusLabel}</span>
           <span style={{ fontSize: 9, color: 'var(--t3)', flexShrink: 0 }}>{open ? '▲' : '▼'}</span>
         </button>
@@ -662,8 +666,8 @@ function ToolCallRow({ tc }: { tc: ChatToolCall }) {
             )}
             {tc.result && (
               <div>
-                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{tc.is_error ? t('chat.error') : t('chat.result')}</span>
-                <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: tc.is_error ? 'var(--red)' : 'var(--t2)' }}>
+                <span style={{ color: 'var(--t3)', fontSize: 10 }}>{t('chat.result')}</span>
+                <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all', margin: '3px 0 0', fontSize: 11, color: 'var(--t2)' }}>
                   {tc.result.length > 2000 ? tc.result.slice(0, 2000) + '\n' + t('chat.resultTruncated') : tc.result}
                 </pre>
               </div>

@@ -114,8 +114,12 @@ def read_file_raw(path: str = Query(...)):
 
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="File not found")
-    if target.stat().st_size > 10_485_760:
-        raise HTTPException(status_code=413, detail="File too large (>10 MB)")
+    # Cap at 50 MB: FileResponse streams (zero backend memory pressure), but the
+    # browser still has to load + parse the bytes (mammoth/xlsx are in-memory).
+    # 50 MB covers image-heavy office docs while protecting against accidentally
+    # opening huge binaries (videos, archives) in a preview pane.
+    if target.stat().st_size > 52_428_800:
+        raise HTTPException(status_code=413, detail="File too large for preview (>50 MB)")
 
     mime, _ = mimetypes.guess_type(str(target))
     return FileResponse(str(target), media_type=mime or "application/octet-stream", filename=target.name)

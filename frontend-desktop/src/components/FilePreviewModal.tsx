@@ -59,6 +59,24 @@ function rawUrl(path: string) {
   return `/api/v1/workspace/file/raw?path=${encodeURIComponent(path)}`
 }
 
+// fetch that throws on !ok with FastAPI's `detail` extracted into the message,
+// so callers (mammoth/xlsx/markdown) don't get HTML/JSON error bodies dressed
+// up as their expected binary format (e.g., mammoth's "is this a zip" when the
+// server actually returned a 413).
+async function fetchOrThrow(url: string): Promise<Response> {
+  const r = await fetch(url)
+  if (!r.ok) {
+    let detail = ''
+    try {
+      const body = await r.text()
+      try { detail = (JSON.parse(body) as { detail?: string })?.detail || body }
+      catch { detail = body }
+    } catch { /* ignore body read failures */ }
+    throw new Error(`HTTP ${r.status}${detail ? ': ' + detail.slice(0, 200) : ''}`)
+  }
+  return r
+}
+
 function fileType(ext: string): 'image' | 'markdown' | 'docx' | 'excel' | 'code' | 'text' | 'binary' {
   if (IMAGE_EXTS.has(ext)) return 'image'
   if (MD_EXTS.has(ext)) return 'markdown'
@@ -174,7 +192,7 @@ function useFileText(path: string) {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     setContent(null); setError(null)
-    fetch(`/api/v1/workspace/file?path=${encodeURIComponent(path)}`)
+    fetchOrThrow(`/api/v1/workspace/file?path=${encodeURIComponent(path)}`)
       .then(r => r.json())
       .then(d => setContent(d.content))
       .catch(e => setError(String(e)))
@@ -215,7 +233,7 @@ function DocxViewer({ path }: { path: string }) {
 
   useEffect(() => {
     setHtml(null); setError(null)
-    fetch(rawUrl(path))
+    fetchOrThrow(rawUrl(path))
       .then(r => r.arrayBuffer())
       .then(buf => import('mammoth').then(m => m.convertToHtml({ arrayBuffer: buf })))
       .then(result => setHtml(result.value))
@@ -243,7 +261,7 @@ function ExcelViewer({ path }: { path: string }) {
     setTables(null); setError(null); setActiveSheet(0)
     const isCsv = path.toLowerCase().endsWith('.csv')
     const load = isCsv
-      ? fetch(`/api/v1/workspace/file?path=${encodeURIComponent(path)}`).then(r => r.json()).then(d =>
+      ? fetchOrThrow(`/api/v1/workspace/file?path=${encodeURIComponent(path)}`).then(r => r.json()).then(d =>
           import('xlsx').then(XLSX => {
             const wb = XLSX.read(d.content, { type: 'string' })
             return wb.SheetNames.map((name: string) => {
@@ -253,7 +271,7 @@ function ExcelViewer({ path }: { path: string }) {
             })
           })
         )
-      : fetch(rawUrl(path)).then(r => r.arrayBuffer()).then(buf =>
+      : fetchOrThrow(rawUrl(path)).then(r => r.arrayBuffer()).then(buf =>
           import('xlsx').then(XLSX => {
             const wb = XLSX.read(buf, { type: 'array' })
             return wb.SheetNames.map((name: string) => {

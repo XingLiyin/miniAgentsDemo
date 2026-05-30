@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, Menu, dialog, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, dialog, shell, ipcMain, session } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const http = require('http');
@@ -456,6 +456,19 @@ async function createWindow() {
   // 移除应用菜单，连 Alt 键唤起也禁掉
   mainWindow.setMenuBarVisibility(false);
 
+  // Re-register DevTools shortcuts manually — Menu.setApplicationMenu(null) below
+  // wipes the default accelerators (F12 / Ctrl+Shift+I), making in-prod debugging
+  // impossible without --remote-debugging-port=9222.
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    const isF12 = input.key === 'F12';
+    const isCtrlShiftI = (input.control || input.meta) && input.shift && input.key.toLowerCase() === 'i';
+    if (isF12 || isCtrlShiftI) {
+      mainWindow.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   mainWindow.loadURL(loadingHtml());
   mainWindow.show();
 
@@ -601,6 +614,25 @@ app.whenReady().then(async () => {
     });
     telemetry.report('app_launch').catch(() => {});
   }
+
+  // Clear renderer chunk cache on every version change. Prevents Chromium from
+  // holding onto a stale index.html that references hashed JS chunks no longer
+  // on disk after an OTA update (which manifests as "Failed to fetch
+  // dynamically imported module" when the user opens any code-split route).
+  try {
+    const versionFile = path.join(getAppDataDir(), 'last-version');
+    const currentVersion = app.getVersion();
+    let priorVersion = null;
+    try { priorVersion = fs.readFileSync(versionFile, 'utf8').trim(); } catch {}
+    if (priorVersion !== currentVersion) {
+      try { fs.writeFileSync(versionFile, currentVersion, 'utf8'); }
+      catch (e) { elog('persist last-version failed: ' + e.message); }
+      if (priorVersion) {
+        await session.defaultSession.clearCache();
+        elog(`Cleared chunk cache after upgrade ${priorVersion} -> ${currentVersion}`);
+      }
+    }
+  } catch (e) { elog('cache-clear-on-upgrade failed: ' + e.message); }
 
   if (!IS_DEV) {
     const alreadyRunning = await isBackendAlreadyRunning();

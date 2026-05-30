@@ -82,14 +82,26 @@ def main() -> None:
         from starlette.exceptions import HTTPException as _StarletteHTTPException
 
         class _SPAFiles(StaticFiles):
-            """BrowserRouter SPA 支持：找不到文件时回退到 index.html。"""
+            """BrowserRouter SPA 支持：找不到文件时回退到 index.html。
+
+            index.html 一律返回 Cache-Control: no-store。hashed asset
+            文件名自带缓存破坏，但 index.html 不能被浏览器缓存——否则
+            升级后旧 index.html 还会指向已不存在的 chunk hash，导致
+            "Failed to fetch dynamically imported module"。
+            """
             async def get_response(self, path: str, scope):
+                is_index = path in ("", "index.html")
                 try:
-                    return await super().get_response(path, scope)
+                    resp = await super().get_response(path, scope)
                 except _StarletteHTTPException as exc:
                     if exc.status_code == 404:
-                        return await super().get_response("index.html", scope)
+                        resp = await super().get_response("index.html", scope)
+                        resp.headers["Cache-Control"] = "no-store"
+                        return resp
                     raise
+                if is_index:
+                    resp.headers["Cache-Control"] = "no-store"
+                return resp
 
         # 挂载到 "/" 必须在所有 API 路由注册之后
         application.mount("/", _SPAFiles(directory=frontend_dist, html=True), name="frontend")
