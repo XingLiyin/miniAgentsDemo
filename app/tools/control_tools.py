@@ -367,20 +367,42 @@ def submit_task_assessment(
     task_process_report = f"{task_process_report}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_process_report
 
     if task is not None:
+        # 护栏：没有最终产出就不允许判成功，强制再跑一轮 actor 补齐纯文本终稿。
+        if task_status == "success" and not task.outputs:
+            task_status = "active"
+            _hint = ("The previous round ended without a final output. Review the process report above "
+                     "and judge whether this task still needs more work. If it does, continue with the "
+                     "necessary tool calls. Once everything required is done, reply in plain text that "
+                     "describes what was actually accomplished or produced — that plain-text reply is the "
+                     "task's final output and the completion signal, so do not call any further tools afterward.")
+            task_process_report = f"{task_process_report}\n\n{_hint}" if task_process_report else _hint
+
         if task_status == "success":
             task_svc.finish(task.id, process_report=task_process_report, session_id=task.session_id)
             task.status = "FINISHED"
+            task.process_report = task_process_report
         elif task_status == "failed":
             task_svc.fail(task.id, process_report=task_process_report, error=task_failure_reason, session_id=task.session_id)
             task.status = "FAILED"
+            task.process_report = task_process_report
+            task.error = task_failure_reason
         elif task_status == "active":
             task_svc.transition(task.id, "PENDING", process_report=task_process_report, session_id=task.session_id)
             task.status = "PENDING"
+            task.process_report = task_process_report
         else:  # needs_user_input
+            original_report = task_process_report
             task_status, task_process_report = _confirm_with_user(
                 task, task_process_report, task_svc=task_svc, session_svc=session_svc,
             )
-            task.status = "FINISHED" if task_status == "success" else "FAILED"
+            # _confirm_with_user persists process_report=original_report; on rejection it
+            # also stores the user's feedback in error and returns it as task_process_report.
+            task.process_report = original_report
+            if task_status == "success":
+                task.status = "FINISHED"
+            else:
+                task.status = "FAILED"
+                task.error = task_process_report
 
     review_msg = ""
     if task_reviews and ctx:
