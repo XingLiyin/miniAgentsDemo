@@ -17,7 +17,7 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true,
-    "types": ["vitest/globals", "react-syntax-highlighter"],
+    "types": ["vitest/globals"],
     "paths": {
       "@/*": ["./src/*"]
     }
