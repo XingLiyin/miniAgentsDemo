@@ -21,6 +21,7 @@ describe('parseXlsx', () => {
     const csv = 'x,y\n3,4'
     const buf = new TextEncoder().encode(csv).buffer
     const sheets = parseXlsx(buf, { csv: true })
+    expect(sheets).toHaveLength(1)
     expect(sheets[0].rows).toEqual([['x', 'y'], ['3', '4']])
   })
 })

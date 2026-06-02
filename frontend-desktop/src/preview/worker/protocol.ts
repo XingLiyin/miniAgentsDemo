@@ -12,10 +12,16 @@ export interface ParseRequestMsg {
   options?: Record<string, unknown>
 }
 export interface ParseProgressMsg { type: 'progress'; id: string; progress: ParseProgress }
-export interface ParseResultMsg { type: 'result'; id: string; data: unknown }
+export interface ParseResultMsg { type: 'result'; id: string; kind: ParseKind; data: unknown }
 export interface ParseErrorMsg { type: 'error'; id: string; error: string }
 
 export type WorkerOutMsg = ParseProgressMsg | ParseResultMsg | ParseErrorMsg
 
 // Result shape for kind 'xlsx'
 export interface SheetData { name: string; rows: string[][] }
+
+// Maps each ParseKind to its result payload type. Extend when adding kinds
+// (e.g. pptx in Phase 2). The parse client uses this to type its return value.
+export interface ParseResultData {
+  xlsx: SheetData[]
+}
