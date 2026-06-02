@@ -6,8 +6,7 @@ function makeWorkbookBytes(): ArrayBuffer {
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet([['a', 'b'], ['1', '2']])
   XLSX.utils.book_append_sheet(wb, ws, 'Sheet1')
-  const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as Uint8Array
-  return out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength)
+  return XLSX.write(wb, { type: 'array', bookType: 'xlsx' }) as ArrayBuffer
 }
 
 describe('parseXlsx', () => {
