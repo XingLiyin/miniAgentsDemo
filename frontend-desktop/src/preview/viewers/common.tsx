@@ -31,11 +31,15 @@ export function useFileText(path: string) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
+    let cancelled = false
     setContent(null); setError(null)
     fetchOrThrow(textUrl(path))
       .then((r) => r.json())
-      .then((d) => setContent(d.content))
-      .catch((e) => setError(String(e)))
+      .then((d) => { if (!cancelled) setContent(d.content) })
+      .catch((e) => { if (!cancelled) setError(String(e)) })
+    // Ignore a stale resolution if `path` changed before this fetch settled,
+    // so an earlier file's content can't overwrite a later one.
+    return () => { cancelled = true }
   }, [path])
   return { content, error }
 }

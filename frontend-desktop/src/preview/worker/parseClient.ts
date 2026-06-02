@@ -67,6 +67,10 @@ function ensureWorker(): WorkerLike {
   return w
 }
 
+// NOTE: aborting only drops the client-side pending entry and rejects the promise;
+// it does NOT stop work already running inside the worker. The current xlsx parser
+// is synchronous so this is harmless today, but a future async parser (e.g. pptx in
+// Phase 2) must implement worker-side cancellation if mid-job abort needs to free CPU.
 export function parseInWorker<K extends ParseKind>(
   kind: K,
   buffer: ArrayBuffer,

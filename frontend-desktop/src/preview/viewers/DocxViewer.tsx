@@ -9,12 +9,15 @@ export function DocxViewer({ path, filename }: { path: string; filename: string 
   usePreviewToolbar({ download: { url: rawUrl(path), filename } }, [path, filename])
 
   useEffect(() => {
+    let cancelled = false
     setHtml(null); setError(null)
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
       .then((buf) => import('mammoth').then((m) => m.convertToHtml({ arrayBuffer: buf })))
-      .then((result) => setHtml(result.value))
-      .catch((e) => setError(String(e)))
+      .then((result) => { if (!cancelled) setHtml(result.value) })
+      .catch((e) => { if (!cancelled) setError(String(e)) })
+    // Ignore a stale resolution if `path` changed before mammoth finished.
+    return () => { cancelled = true }
   }, [path])
 
   if (error) return <ErrorMsg msg={error} />
