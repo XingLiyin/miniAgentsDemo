@@ -25,6 +25,10 @@ function post(m: WorkerOutMsg) { ctx.postMessage(m) }
 function dispatch(msg: ParseRequestMsg): unknown {
   switch (msg.kind) {
     case 'xlsx': return parseXlsx(msg.buffer, (msg.options ?? {}) as XlsxParseOptions)
-    default: throw new Error(`Unsupported parse kind: ${msg.kind}`)
+    default: {
+      // Compile-time exhaustiveness: adding a ParseKind without a case here is a TS error.
+      const _never: never = msg.kind
+      throw new Error(`Unsupported parse kind: ${String(_never)}`)
+    }
   }
 }

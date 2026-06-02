@@ -7,6 +7,7 @@ interface FakeWorker extends WorkerLike { sent: ParseRequestMsg[]; emit(m: Worke
 function makeFake(): FakeWorker {
   return {
     onmessage: null,
+    onerror: null,
     sent: [],
     postMessage(m: unknown) { this.sent.push(m as ParseRequestMsg) },
     terminate() {},
@@ -53,5 +54,15 @@ describe('parseInWorker', () => {
     ac.abort()
     await expect(parseInWorker('xlsx', new ArrayBuffer(8), { signal: ac.signal }))
       .rejects.toThrow(/abort/i)
+  })
+
+  it('rejects all pending requests when the worker crashes', async () => {
+    let fake!: FakeWorker
+    __setWorkerFactory(() => (fake = makeFake()))
+    const p1 = parseInWorker('xlsx', new ArrayBuffer(8))
+    const p2 = parseInWorker('xlsx', new ArrayBuffer(8))
+    fake.onerror?.({ message: 'kaboom', preventDefault() {} })
+    await expect(p1).rejects.toThrow(/crash/i)
+    await expect(p2).rejects.toThrow(/crash/i)
   })
 })
