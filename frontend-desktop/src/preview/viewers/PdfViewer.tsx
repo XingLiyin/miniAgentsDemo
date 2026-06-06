@@ -23,6 +23,7 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
   const containerRef = useRef<HTMLDivElement>(null)
   const viewerElRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<PdfApi | null>(null)
+  const lastQuery = useRef('')
 
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
@@ -54,9 +55,8 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     eventBus.on('pagechanging', (e: { pageNumber: number }) => setPage((p) => ({ ...p, current: e.pageNumber })))
     eventBus.on('updatefindmatchescount', (e: { matchesCount: { current: number; total: number } }) =>
       setMatches(e.matchesCount))
-    eventBus.on('updatefindcontrolstate', (e: { matchesCount?: { current: number; total: number } }) => {
-      if (e.matchesCount) setMatches(e.matchesCount)
-    })
+    eventBus.on('updatefindcontrolstate', (e: { matchesCount: { current: number; total: number } }) =>
+      setMatches(e.matchesCount))
 
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
@@ -82,6 +82,15 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     }
   }, [path])
 
+  // pdfjs's find controller replaces its whole state on every 'find' dispatch, so
+  // 'again' (next/prev) must re-send the query + flags or it wipes the active search.
+  function dispatchFind(again: boolean, findPrevious: boolean) {
+    apiRef.current?.eventBus.dispatch('find', {
+      source: null, type: again ? 'again' : '', query: lastQuery.current,
+      caseSensitive: false, entireWord: false, highlightAll: true, findPrevious,
+    })
+  }
+
   // Register toolbar capabilities; re-register when live state changes.
   usePreviewToolbar({
     zoom: {
@@ -97,12 +106,10 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
       goto: (n: number) => { const v = apiRef.current?.viewer; if (v) v.currentPageNumber = n },
     },
     search: {
-      run: (query: string) => apiRef.current?.eventBus.dispatch('find', {
-        source: null, type: '', query, caseSensitive: false, highlightAll: true, findPrevious: false,
-      }),
-      next: () => apiRef.current?.eventBus.dispatch('find', { source: null, type: 'again', findPrevious: false }),
-      prev: () => apiRef.current?.eventBus.dispatch('find', { source: null, type: 'again', findPrevious: true }),
-      clear: () => apiRef.current?.eventBus.dispatch('find', { source: null, type: '', query: '' }),
+      run: (query: string) => { lastQuery.current = query; dispatchFind(false, false) },
+      next: () => dispatchFind(true, false),
+      prev: () => dispatchFind(true, true),
+      clear: () => { lastQuery.current = ''; apiRef.current?.eventBus.dispatch('findbarclose', { source: null }) },
       count: matches.total,
       current: matches.current,
     },
