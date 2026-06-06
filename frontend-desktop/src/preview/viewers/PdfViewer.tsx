@@ -68,6 +68,32 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     eventBus.on('updatefindcontrolstate', (e: { matchesCount: { current: number; total: number } }) =>
       setMatches(e.matchesCount))
 
+    // Backstop in-line scroll. pdfjs's built-in scrollMatchIntoView depends on
+    // `element.offsetParent` being set at the moment of the scroll, which races
+    // with page-level scroll + textLayer (re)render — symptom: search lands on
+    // the right page but not the right line (esp. when an image precedes the
+    // matched text). Both `updatefindcontrolstate` (fires when the selected
+    // match advances) and `textlayerrendered` (fires when a page's text layer
+    // is fully mounted) give us a reliable moment to query .highlight.selected
+    // in the DOM and recentre it ourselves.
+    const recentreSelected = () => {
+      const c = containerRef.current
+      if (!c) return
+      const el = c.querySelector('.highlight.selected') as HTMLElement | null
+      el?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' })
+    }
+    eventBus.on('updatefindcontrolstate', () => {
+      // Let pdfjs's own scroll attempt run first; then guarantee the in-line
+      // position. 80ms is enough for the matching textLayer to render even on
+      // a fresh page jump while still feeling instant to the user.
+      setTimeout(recentreSelected, 80)
+    })
+    eventBus.on('textlayerrendered', () => {
+      // After a page's text layer becomes available, if the active match is on
+      // this page, recentre on it. Cheap when there's no selected match.
+      setTimeout(recentreSelected, 0)
+    })
+
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
       .then((data) => pdfjsLib.getDocument({ data, cMapUrl: CMAP_URL, cMapPacked: CMAP_PACKED }).promise)
