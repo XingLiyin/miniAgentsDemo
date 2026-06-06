@@ -11,6 +11,7 @@ import { CodeViewer } from '@/preview/viewers/CodeViewer'
 import { TextViewer } from '@/preview/viewers/TextViewer'
 import { DocxViewer } from '@/preview/viewers/DocxViewer'
 import { ExcelViewer } from '@/preview/viewers/ExcelViewer'
+import { PdfViewer } from '@/preview/viewers/PdfViewer'
 
 interface Props {
   path: string
@@ -56,7 +57,8 @@ export function FilePreviewModal({ path, onClose }: Props) {
             {type === 'excel' && <ExcelViewer path={path} filename={name} />}
             {type === 'code' && <CodeViewer path={path} lang={CODE_LANGS[ext]} filename={name} />}
             {type === 'text' && <TextViewer path={path} filename={name} />}
-            {(type === 'pdf' || type === 'pptx' || type === 'binary') && (
+            {type === 'pdf' && <PdfViewer path={path} filename={name} />}
+            {(type === 'pptx' || type === 'binary') && (
               <div className="flex h-full items-center justify-center text-sm" style={{ color: 'var(--t3)' }}>
                 {t('filePreview.unsupported', { ext: ext || t('filePreview.unknownExt') })}
               </div>
