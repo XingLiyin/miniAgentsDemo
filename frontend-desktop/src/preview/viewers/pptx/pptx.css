@@ -1,0 +1,31 @@
+/* Scope all NID-emitted shape CSS under this root so it can't leak into the
+ * rest of the app. Also defines the per-slide card + zoom variable used by
+ * PptxViewer to scale slides. NID's shape CSS uses `cqi` (container query
+ * inline) units that require an inline-size container — provided here. */
+
+.ipm-pptx-root {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg2);
+  --pptx-zoom: 1;
+  padding: 16px 0;
+}
+
+.ipm-pptx-slide {
+  /* Width drives the container query inside the slide. NID's shape CSS uses
+   * percentage positioning + container query inline units, so width is the
+   * only thing we need to control to drive scaling. */
+  width: calc(min(100%, 1280px) * var(--pptx-zoom));
+  max-width: none;
+  margin: 16px auto;
+  background: white;
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  position: relative;
+  container-type: inline-size;
+  overflow: hidden;
+  /* Aspect ratio is set by NID's emitted CSS for the slide background; we
+   * fall back to 16:9 here for the empty-shape case. */
+  aspect-ratio: 16 / 9;
+}

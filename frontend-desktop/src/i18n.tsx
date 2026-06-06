@@ -49,6 +49,7 @@ const zh: Dict = {
   'preview.nextMatch': '下一个',
   'preview.page': '页',
   'preview.toc': '目录',
+  'preview.slideN': '第 {n} 页',
   'preview.parsing': '解析中…',
 
   // sidebar
@@ -218,6 +219,7 @@ const en: Dict = {
   'preview.nextMatch': 'Next',
   'preview.page': 'Page',
   'preview.toc': 'Contents',
+  'preview.slideN': 'Slide {n}',
   'preview.parsing': 'Parsing…',
 
   // sidebar
