@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+// IMPORTANT: import pdfSetup BEFORE pdf_viewer.mjs. pdfSetup's body assigns
+// `globalThis.pdfjsLib`, which pdf_viewer.mjs destructures at module load time.
+// Swapping the import order crashes the renderer in production builds.
+import { pdfjsLib, CMAP_URL, CMAP_PACKED } from './pdf/pdfSetup'
 import { EventBus, PDFViewer, PDFLinkService, PDFFindController } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
-import { pdfjsLib, CMAP_URL, CMAP_PACKED } from './pdf/pdfSetup'
 import { flattenOutline, type OutlineDest } from './pdf/outline'
 import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
