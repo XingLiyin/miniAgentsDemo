@@ -10,7 +10,7 @@
  *      into a single <style> with N siblings.
  */
 import type { SlideData } from '../../worker/parsers/pptx'
-import { _buildShapeParts } from './ported/shapeBuilder'
+import { _buildShapeParts, _isDark } from './ported/shapeBuilder'
 
 /**
  * Prefix every selector in `css` with `prefix` (e.g. `.ipm-pptx-root `).
@@ -38,21 +38,49 @@ export function prefixSelectors(css: string, prefix: string): string {
  * injected with React's `dangerouslySetInnerHTML` inside the slide card.
  * The CSS is meant to be concatenated with sibling slides' CSS and rendered
  * once in a top-level `<style>` element.
+ *
+ * Three layers of CSS/HTML are emitted, mirroring NID's `_buildHtml`:
+ *   1. A per-slide rule `.sld-N { ... }` sets the `--pt` cqi factor and the
+ *      slide background. Every `var(--pt, 1pt)` inside shape CSS resolves
+ *      against this value so text/borders/spacing scale with slide width.
+ *   2. Three calls to `_buildShapeParts` (master → layout → content)
+ *      produce the absolutely-positioned shape boxes.
+ *   3. PptxViewer wraps the returned `html` in `<div class="sld-N">
+ *      <div class="slide-inner">…</div></div>` so the absolute shapes
+ *      position relative to .slide-inner (NID structure).
  */
 export function slideToHtml(
   slide: SlideData,
   slideIdx: number,
 ): { css: string; html: string } {
-  let css = ''
+  // --pt: pt → cqi factor. 1pt = 4/3px at 96 DPI; 1cqi = 1% of container
+  // width; Xpt at reference width = X * 400 / (3 * slideWidthPx) cqi.
+  const ptFactor = (400 / (3 * slide.width)).toFixed(5)
+  let slideRule = `.sld-${slideIdx}{--pt:${ptFactor}cqi;`
+  if (slide.bgImage) {
+    slideRule += `background-image:url(${slide.bgImage});background-size:cover;background-position:center;`
+  } else if (slide.bgColor) {
+    if (slide.bgColor.includes('gradient')) {
+      slideRule += `background:${slide.bgColor};`
+    } else {
+      slideRule += `background:#${slide.bgColor};`
+      if (_isDark(slide.bgColor)) slideRule += `color:#eee;`
+    }
+  }
+  slideRule += `}\n`
+
+  let css = slideRule
   let html = ''
 
   // Master shapes (NID _buildHtml stacks master shapes per slide too).
-  for (let shi = 0; shi < slide.masterShapes.length; shi++) {
-    const parts = _buildShapeParts(
-      slide.masterShapes[shi], slide.width, slide.height, `m${slideIdx}`, shi,
-    )
-    css += parts.css
-    html += parts.html
+  if (!slide.suppressMasterShapes) {
+    for (let shi = 0; shi < slide.masterShapes.length; shi++) {
+      const parts = _buildShapeParts(
+        slide.masterShapes[shi], slide.width, slide.height, `m${slideIdx}`, shi,
+      )
+      css += parts.css
+      html += parts.html
+    }
   }
 
   // Layout shapes.

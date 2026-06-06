@@ -1,11 +1,19 @@
-/* Scope all NID-emitted shape CSS under this root so it can't leak into the
- * rest of the app. Also defines the per-slide card + zoom variable used by
- * PptxViewer to scale slides. NID's shape CSS uses `cqi` (container query
- * inline) units that require an inline-size container — provided here. */
+/* PPTX viewer styles. The renderer is a verbatim port of NID's; NID's <style>
+ * block contained global helper classes (.slide-inner, .shape-text, .slide-table,
+ * .autofit-inner) that _buildShapeParts references but does NOT emit itself.
+ * They must live here for the port to render correctly. All rules are scoped
+ * under .ipm-pptx-root.
+ *
+ * NID's shape CSS uses var(--pt, 1pt) for all pt-derived sizes; the actual
+ * --pt value is emitted per-slide by slideToHtml (computed from slide.width)
+ * so font / padding / border / line-height scale with the slide card width
+ * via container queries (cqi units).
+ */
 
 .ipm-pptx-root {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  width: 100%;
+  height: 100%;
   overflow: auto;
   background: var(--bg2);
   --pptx-zoom: 1;
@@ -14,7 +22,7 @@
 
 .ipm-pptx-slide {
   /* Width drives the container query inside the slide. NID's shape CSS uses
-   * percentage positioning + container query inline units, so width is the
+   * percentage positioning + container-query inline units, so width is the
    * only thing we need to control to drive scaling. */
   width: calc(min(100%, 1280px) * var(--pptx-zoom));
   max-width: none;
@@ -28,3 +36,42 @@
   /* Aspect ratio is set per-slide via inline style from PptxViewer using
    * SlideData.width/height — handles 4:3 / A4 / custom-size decks. */
 }
+
+/* NID's _buildShapeParts emits shape <div>s with absolute positioning relative
+ * to the slide-inner box (NID uses <div class="slide-inner"> as the absolute
+ * container). Match that structure. */
+.ipm-pptx-root .slide-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* NID's <style> block defines .shape-text — the default text box styling that
+ * _buildShapeParts references via `class="shape-text ${cls}"`. */
+.ipm-pptx-root .shape-text {
+  padding: calc(3.6 * var(--pt, 1pt)) calc(7.2 * var(--pt, 1pt));
+  line-height: normal;
+  word-wrap: break-word;
+  font-size: calc(14 * var(--pt, 1pt));
+}
+.ipm-pptx-root .shape-text p { margin: 0; }
+.ipm-pptx-root .autofit-inner { transform-origin: top left; }
+
+/* NID's <style> block defines .slide-table — used by table shapes via
+ * `class="slide-table"`. */
+.ipm-pptx-root .slide-table {
+  border-collapse: collapse;
+  width: 100%;
+  height: 100%;
+  font-size: calc(8 * var(--pt, 1pt));
+}
+.ipm-pptx-root .slide-table th,
+.ipm-pptx-root .slide-table td {
+  border: calc(0.75 * var(--pt, 1pt)) solid #ccc;
+  padding: calc(1.5 * var(--pt, 1pt)) calc(2.5 * var(--pt, 1pt));
+  line-height: 1.15;
+  vertical-align: top;
+}
+.ipm-pptx-root .slide-table th { font-weight: 600; }

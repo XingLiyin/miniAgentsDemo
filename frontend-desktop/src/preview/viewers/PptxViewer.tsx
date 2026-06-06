@@ -148,11 +148,14 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         <div
           key={s.idx}
           ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
-          className="ipm-pptx-slide"
+          className={`ipm-pptx-slide sld-${s.idx}`}
           data-idx={s.idx}
           style={{ aspectRatio: `${s.aspect}` }}
-          dangerouslySetInnerHTML={{ __html: s.html }}
-        />
+        >
+          {/* slide-inner is NID's absolute-positioning container. Shape <div>s
+              from _buildShapeParts position relative to it. */}
+          <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+        </div>
       ))}
     </div>
   )
