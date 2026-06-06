@@ -6,7 +6,7 @@ import { pdfjsLib, CMAP_URL, CMAP_PACKED } from './pdf/pdfSetup'
 import { EventBus, PDFViewer, PDFLinkService, PDFFindController } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { flattenOutline, type OutlineDest } from './pdf/outline'
-import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
+import { usePreviewToolbar, useTocSidebar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
 import { fetchOrThrow, rawUrl, Loading, ErrorMsg } from './common'
 import './pdf/pdf.css'
@@ -27,6 +27,12 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
   const viewerElRef = useRef<HTMLDivElement>(null)
   const apiRef = useRef<PdfApi | null>(null)
   const lastQuery = useRef('')
+  // Whether the viewer is in a fit-mode (re-fits on container resize) vs. a
+  // fixed user-chosen zoom (does not auto-refit). Tracked as a ref because the
+  // ResizeObserver callback needs a stable reference and re-creating the
+  // observer on every fit-mode change would lose the in-flight ro.observe.
+  const fitModeRef = useRef(true)
+  const { setOpen: setTocOpen } = useTocSidebar()
 
   const [error, setError] = useState<string | null>(null)
   const [ready, setReady] = useState(false)
@@ -51,6 +57,7 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     linkService.setViewer(viewer)
 
     eventBus.on('pagesinit', () => {
+      fitModeRef.current = true
       viewer.currentScaleValue = 'page-width'
       setReady(true)
     })
@@ -73,7 +80,13 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
         const outline = await doc.getOutline().catch(() => null)
         const flat = flattenOutline(outline as never)
         apiRef.current = { viewer, linkService, eventBus, dests: flat.dests }
-        if (!destroyed) setToc(flat.items)
+        if (!destroyed) {
+          setToc(flat.items)
+          // Auto-open the TOC sidebar when the document has an outline (Acrobat
+          // default behaviour). Reapplied on every file load so opening another
+          // outline-rich PDF restores the sidebar even after the user closed it.
+          if (flat.items.length > 0) setTocOpen(true)
+        }
       })
       .catch((e) => { if (!destroyed) setError(String(e)) })
 
@@ -83,7 +96,23 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
       try { viewer.setDocument(null as never) } catch { /* ignore */ }
       pdfDoc?.destroy()
     }
-  }, [path])
+  }, [path, setTocOpen])
+
+  // Re-fit page width whenever the scrollable container resizes — covers the TOC
+  // sidebar toggling (which shrinks/expands available width) and the user
+  // dragging the app window. Only re-fits when in a fit-mode; explicit user zoom
+  // (in/out/reset) sets fitModeRef.current = false and is preserved.
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const ro = new ResizeObserver(() => {
+      if (!fitModeRef.current) return
+      const v = apiRef.current?.viewer
+      if (v) v.currentScaleValue = 'page-width'
+    })
+    ro.observe(container)
+    return () => ro.disconnect()
+  }, [])
 
   // pdfjs's find controller replaces its whole state on every 'find' dispatch, so
   // 'again' (next/prev) must re-send the query + flags or it wipes the active search.
@@ -97,10 +126,26 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
   // Register toolbar capabilities; re-register when live state changes.
   usePreviewToolbar({
     zoom: {
-      in: () => { const v = apiRef.current?.viewer; if (v) v.currentScale = Math.min(ZOOM_MAX, v.currentScale + ZOOM_STEP) },
-      out: () => { const v = apiRef.current?.viewer; if (v) v.currentScale = Math.max(ZOOM_MIN, v.currentScale - ZOOM_STEP) },
-      reset: () => { const v = apiRef.current?.viewer; if (v) v.currentScale = 1 },
-      fit: () => { const v = apiRef.current?.viewer; if (v) v.currentScaleValue = 'page-width' },
+      in: () => {
+        fitModeRef.current = false
+        const v = apiRef.current?.viewer
+        if (v) v.currentScale = Math.min(ZOOM_MAX, v.currentScale + ZOOM_STEP)
+      },
+      out: () => {
+        fitModeRef.current = false
+        const v = apiRef.current?.viewer
+        if (v) v.currentScale = Math.max(ZOOM_MIN, v.currentScale - ZOOM_STEP)
+      },
+      reset: () => {
+        fitModeRef.current = false
+        const v = apiRef.current?.viewer
+        if (v) v.currentScale = 1
+      },
+      fit: () => {
+        fitModeRef.current = true
+        const v = apiRef.current?.viewer
+        if (v) v.currentScaleValue = 'page-width'
+      },
       scale,
     },
     pages: {
