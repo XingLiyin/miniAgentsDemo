@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   ZoomIn, ZoomOut, Maximize, Download, Copy,
-  Check, Search, ChevronUp, ChevronDown,
+  Check, Search, ChevronUp, ChevronDown, ListTree,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
@@ -12,8 +12,9 @@ export function PreviewToolbar() {
   const caps = usePreviewToolbarState()
   const [copied, setCopied] = useState(false)
   const [query, setQuery] = useState('')
+  const [tocOpen, setTocOpen] = useState(false)
 
-  const hasAny = caps.zoom || caps.pages || caps.search || caps.download || caps.copy
+  const hasAny = caps.zoom || caps.pages || caps.search || caps.download || caps.copy || caps.toc
   if (!hasAny) return null
 
   function doCopy() {
@@ -42,6 +43,29 @@ export function PreviewToolbar() {
             <Maximize size={15} />
           </Button>
         </>
+      )}
+
+      {caps.toc && caps.toc.items.length > 0 && (
+        <div className="relative">
+          <Button variant="ghost" size="icon" title={t('preview.toc')} onClick={() => setTocOpen((o) => !o)}>
+            <ListTree size={15} />
+          </Button>
+          {tocOpen && (
+            <div className="absolute left-0 top-full mt-1 z-20 max-h-80 overflow-auto rounded py-1"
+              style={{ background: 'var(--bg1)', border: '1px solid var(--border)', minWidth: 220, boxShadow: '0 8px 24px rgba(15,31,61,.18)' }}>
+              {caps.toc.items.map((item) => (
+                <button
+                  key={item.id}
+                  onClick={() => { caps.toc!.goto(item.id); setTocOpen(false) }}
+                  className="block w-full text-left text-xs py-1 truncate"
+                  style={{ paddingLeft: 8 + (item.level ?? 0) * 12, paddingRight: 8, color: 'var(--t2)', background: 'transparent', border: 'none', cursor: 'pointer' }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {caps.pages && (
