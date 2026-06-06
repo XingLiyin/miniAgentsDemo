@@ -5,14 +5,14 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useI18n } from '@/i18n'
-import { usePreviewToolbarState } from './PreviewToolbarContext'
+import { usePreviewToolbarState, useTocSidebar } from './PreviewToolbarContext'
 
 export function PreviewToolbar() {
   const { t } = useI18n()
   const caps = usePreviewToolbarState()
+  const { open: tocOpen, setOpen: setTocOpen } = useTocSidebar()
   const [copied, setCopied] = useState(false)
   const [query, setQuery] = useState('')
-  const [tocOpen, setTocOpen] = useState(false)
 
   const hasAny = caps.zoom || caps.pages || caps.search || caps.download || caps.copy || caps.toc
   if (!hasAny) return null
@@ -46,26 +46,16 @@ export function PreviewToolbar() {
       )}
 
       {caps.toc && caps.toc.items.length > 0 && (
-        <div className="relative">
-          <Button variant="ghost" size="icon" title={t('preview.toc')} onClick={() => setTocOpen((o) => !o)}>
-            <ListTree size={15} />
-          </Button>
-          {tocOpen && (
-            <div className="absolute left-0 top-full mt-1 z-20 max-h-80 overflow-auto rounded py-1"
-              style={{ background: 'var(--bg1)', border: '1px solid var(--border)', minWidth: 220, boxShadow: '0 8px 24px rgba(15,31,61,.18)' }}>
-              {caps.toc.items.map((item) => (
-                <button
-                  key={item.id}
-                  onClick={() => { caps.toc!.goto(item.id); setTocOpen(false) }}
-                  className="block w-full text-left text-xs py-1 truncate"
-                  style={{ paddingLeft: 8 + (item.level ?? 0) * 12, paddingRight: 8, color: 'var(--t2)', background: 'transparent', border: 'none', cursor: 'pointer' }}
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          title={t('preview.toc')}
+          onClick={() => setTocOpen(!tocOpen)}
+          // Active visual when the sidebar is open — Acrobat-style affordance.
+          style={tocOpen ? { background: 'var(--blue-dim)', color: 'var(--blue)' } : undefined}
+        >
+          <ListTree size={15} />
+        </Button>
       )}
 
       {caps.pages && (
@@ -80,6 +70,14 @@ export function PreviewToolbar() {
           <input
             value={query}
             onChange={(e) => { setQuery(e.target.value); caps.search!.run(e.target.value) }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                // Word / Acrobat / Chrome convention: Enter = next, Shift+Enter = previous.
+                if (e.shiftKey) caps.search!.prev()
+                else caps.search!.next()
+              }
+            }}
             placeholder={t('preview.searchPlaceholder')}
             className="text-xs px-2 py-1 rounded outline-none"
             style={{ background: 'var(--bg1)', border: '1px solid var(--border)', color: 'var(--t1)', width: 160 }}

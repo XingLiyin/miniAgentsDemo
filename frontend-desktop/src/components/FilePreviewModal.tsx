@@ -5,6 +5,7 @@ import { useI18n } from '@/i18n'
 import { getExt, fileType, CODE_LANGS } from '@/preview/fileType'
 import { PreviewToolbarProvider } from '@/preview/toolbar/PreviewToolbarContext'
 import { PreviewToolbar } from '@/preview/toolbar/PreviewToolbar'
+import { TocSidebar } from '@/preview/toolbar/TocSidebar'
 import { ImageViewer } from '@/preview/viewers/ImageViewer'
 import { MarkdownViewer } from '@/preview/viewers/MarkdownViewer'
 import { CodeViewer } from '@/preview/viewers/CodeViewer'
@@ -49,20 +50,23 @@ export function FilePreviewModal({ path, onClose }: Props) {
           {/* Toolbar (renders nothing if the active viewer declares no capabilities) */}
           <PreviewToolbar />
 
-          {/* Content */}
-          <div className="flex-1 overflow-auto">
-            {type === 'image' && <ImageViewer path={path} filename={name} />}
-            {type === 'markdown' && <MarkdownViewer path={path} filename={name} />}
-            {type === 'docx' && <DocxViewer path={path} filename={name} />}
-            {type === 'excel' && <ExcelViewer path={path} filename={name} />}
-            {type === 'code' && <CodeViewer path={path} lang={CODE_LANGS[ext]} filename={name} />}
-            {type === 'text' && <TextViewer path={path} filename={name} />}
-            {type === 'pdf' && <PdfViewer path={path} filename={name} />}
-            {(type === 'pptx' || type === 'binary') && (
-              <div className="flex h-full items-center justify-center text-sm" style={{ color: 'var(--t3)' }}>
-                {t('filePreview.unsupported', { ext: ext || t('filePreview.unknownExt') })}
-              </div>
-            )}
+          {/* Content row: optional left sidebar (TOC) + main content */}
+          <div className="flex-1 flex flex-row overflow-hidden">
+            <TocSidebar />
+            <div className="flex-1 overflow-auto">
+              {type === 'image' && <ImageViewer path={path} filename={name} />}
+              {type === 'markdown' && <MarkdownViewer path={path} filename={name} />}
+              {type === 'docx' && <DocxViewer path={path} filename={name} />}
+              {type === 'excel' && <ExcelViewer path={path} filename={name} />}
+              {type === 'code' && <CodeViewer path={path} lang={CODE_LANGS[ext]} filename={name} />}
+              {type === 'text' && <TextViewer path={path} filename={name} />}
+              {type === 'pdf' && <PdfViewer path={path} filename={name} />}
+              {(type === 'pptx' || type === 'binary') && (
+                <div className="flex h-full items-center justify-center text-sm" style={{ color: 'var(--t3)' }}>
+                  {t('filePreview.unsupported', { ext: ext || t('filePreview.unknownExt') })}
+                </div>
+              )}
+            </div>
           </div>
         </PreviewToolbarProvider>
       </div>

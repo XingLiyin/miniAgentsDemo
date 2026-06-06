@@ -12,7 +12,13 @@
   margin: 12px auto;
   border: 1px solid var(--border);
 }
-/* Text selection / find highlight colors. */
-.ipm-pdf-container .textLayer ::selection { background: var(--blue-dim); }
-.ipm-pdf-container .textLayer .highlight { background: var(--blue-dim); }
-.ipm-pdf-container .textLayer .highlight.selected { background: var(--blue); }
+/* Text selection / find-highlight colors. pdfjs's textLayer is a transparent
+ * overlay above the canvas; opaque backgrounds hide the canvas text underneath,
+ * so all highlight colors are translucent (Acrobat / Word convention: all-matches
+ * = soft yellow, selected match = stronger orange). */
+.ipm-pdf-container .textLayer ::selection { background: rgba(59, 130, 246, 0.30); }
+.ipm-pdf-container .textLayer .highlight { background: rgba(250, 204, 21, 0.35); }
+.ipm-pdf-container .textLayer .highlight.selected { background: rgba(251, 146, 60, 0.55); }
+
+/* TOC sidebar item hover affordance (TocSidebar uses .ipm-toc-item). */
+.ipm-toc-item:hover { background: var(--bg1); }
