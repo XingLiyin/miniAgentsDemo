@@ -72,26 +72,34 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     // `element.offsetParent` being set at the moment of the scroll, which races
     // with page-level scroll + textLayer (re)render — symptom: search lands on
     // the right page but not the right line (esp. when an image precedes the
-    // matched text). Both `updatefindcontrolstate` (fires when the selected
-    // match advances) and `textlayerrendered` (fires when a page's text layer
-    // is fully mounted) give us a reliable moment to query .highlight.selected
-    // in the DOM and recentre it ourselves.
-    const recentreSelected = () => {
+    // matched text). We only scroll when the active match is NOT already in
+    // view (with a margin) — this avoids "first up, then down" jumps when the
+    // previous and next matches sit on adjacent visible lines: pdfjs's scroll
+    // already nudged the new match into view, so we leave the position alone
+    // instead of forcing a second correction to centre.
+    const ensureSelectedVisible = () => {
       const c = containerRef.current
       if (!c) return
       const el = c.querySelector('.highlight.selected') as HTMLElement | null
-      el?.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' })
+      if (!el) return
+      const elRect = el.getBoundingClientRect()
+      const cRect = c.getBoundingClientRect()
+      const MARGIN = 40 // px from each viewport edge
+      const inView = elRect.top >= cRect.top + MARGIN && elRect.bottom <= cRect.bottom - MARGIN
+      if (inView) return
+      el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'auto' })
     }
     eventBus.on('updatefindcontrolstate', () => {
-      // Let pdfjs's own scroll attempt run first; then guarantee the in-line
-      // position. 80ms is enough for the matching textLayer to render even on
-      // a fresh page jump while still feeling instant to the user.
-      setTimeout(recentreSelected, 80)
+      // Let pdfjs's own scroll attempt run first; then verify the match is
+      // visible (and only scroll if not). 80ms is enough for the matching
+      // textLayer to render even on a fresh page jump while still feeling
+      // instant to the user.
+      setTimeout(ensureSelectedVisible, 80)
     })
     eventBus.on('textlayerrendered', () => {
       // After a page's text layer becomes available, if the active match is on
-      // this page, recentre on it. Cheap when there's no selected match.
-      setTimeout(recentreSelected, 0)
+      // this page and out of view, scroll it in.
+      setTimeout(ensureSelectedVisible, 0)
     })
 
     fetchOrThrow(rawUrl(path))
