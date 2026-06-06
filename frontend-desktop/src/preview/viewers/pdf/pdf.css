@@ -1,0 +1,18 @@
+/* Required structural CSS from pdfjs's prebuilt viewer. */
+@import 'pdfjs-dist/web/pdf_viewer.css';
+
+/* Theme overrides to match the app. */
+.ipm-pdf-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--bg2);
+}
+.ipm-pdf-container .pdfViewer .page {
+  margin: 12px auto;
+  border: 1px solid var(--border);
+}
+/* Text selection / find highlight colors. */
+.ipm-pdf-container .textLayer ::selection { background: var(--blue-dim); }
+.ipm-pdf-container .textLayer .highlight { background: var(--blue-dim); }
+.ipm-pdf-container .textLayer .highlight.selected { background: var(--blue); }
