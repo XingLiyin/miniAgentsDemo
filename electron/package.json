@@ -1,6 +1,6 @@
 {
   "name": "ipmaster-cowork",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "description": "IPMaster-Cowork Desktop Application",
   "main": "main.js",
   "scripts": {

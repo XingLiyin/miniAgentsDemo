@@ -17,26 +17,25 @@
   overflow: auto;
   background: var(--bg2);
   --pptx-zoom: 1;
-  padding: 16px 0;
+  padding: 8px 0;
+  /* Scroll-snap makes wheel / trackpad scrolling settle on whole slides
+   * rather than mid-page, matching PowerPoint reading view. */
+  scroll-snap-type: y mandatory;
 }
 
 .ipm-pptx-slide {
-  /* Width drives the container query inside the slide. NID's shape CSS uses
-   * percentage positioning + container-query inline units, so width is the
-   * only thing we need to control to drive scaling. */
-  width: calc(min(100%, 1280px) * var(--pptx-zoom));
-  max-width: none;
-  /* Big gap between slides; PPT content often runs to the edges (footers,
-   * decorative bars) so a small margin reads as "no gap" to the eye. */
-  margin: 32px auto;
+  /* Width AND aspectRatio are set by PptxViewer's inline style each render
+   * (fit-page logic uses the container's real visible size). The CSS here
+   * provides the visual chrome and scroll-snap behaviour only. */
+  margin: 20px auto;
   background: white;
   border: 1px solid var(--t3);
   box-shadow: 0 6px 20px rgba(15, 31, 61, 0.18);
   position: relative;
   container-type: inline-size;
   overflow: hidden;
-  /* Aspect ratio is set per-slide via inline style from PptxViewer using
-   * SlideData.width/height — handles 4:3 / A4 / custom-size decks. */
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
 }
 
 /* NID's _buildShapeParts emits shape <div>s with absolute positioning relative

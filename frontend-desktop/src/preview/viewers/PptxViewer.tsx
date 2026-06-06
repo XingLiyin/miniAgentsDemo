@@ -34,6 +34,15 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   const [current, setCurrent] = useState(1)
   const [toc, setToc] = useState<TocItem[]>([])
   const [stage, setStage] = useState<LoadStage>('fetching')
+  // Visible viewport size of the scroll container, used to compute fit-page
+  // dimensions so each slide fits within both width AND height (not just width).
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
+  // Ref-mirrored "current" + "rendered length" so the keyboard listener can be
+  // installed once without re-attaching on every scroll tick.
+  const currentRef = useRef(1)
+  useEffect(() => { currentRef.current = current }, [current])
+  const slideCountRef = useRef(0)
+  useEffect(() => { slideCountRef.current = rendered.length }, [rendered.length])
 
   // Load + parse the PPTX.
   useEffect(() => {
@@ -86,6 +95,55 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       })
     return () => ac.abort()
   }, [path, t])
+
+  // ResizeObserver: track the scroll container's visible size so the slides
+  // can be sized to fit-page (width AND height) rather than just fit-width.
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const update = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // Keyboard navigation: PageDown / PageUp / Arrow keys to step one slide at a
+  // time, mirroring the PowerPoint reading view and Acrobat behaviour. Listener
+  // is installed once via refs so it doesn't re-attach on every IntersectionObserver
+  // tick.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // Ignore when the user is typing in an input/textarea/editable element.
+      const tgt = e.target as HTMLElement | null
+      if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return
+      if (e.key === 'PageDown' || e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+        const next = Math.min(currentRef.current + 1, slideCountRef.current)
+        const el = slideRefs.current[next - 1]
+        if (!el) return
+        e.preventDefault()
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      } else if (e.key === 'PageUp' || e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        const prev = Math.max(currentRef.current - 1, 1)
+        const el = slideRefs.current[prev - 1]
+        if (!el) return
+        e.preventDefault()
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      } else if (e.key === 'Home') {
+        const el = slideRefs.current[0]
+        if (!el) return
+        e.preventDefault()
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      } else if (e.key === 'End') {
+        const el = slideRefs.current[slideCountRef.current - 1]
+        if (!el) return
+        e.preventDefault()
+        el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // IntersectionObserver: track which slide centre is in the viewport.
   useEffect(() => {
@@ -165,19 +223,39 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       style={{ ['--pptx-zoom' as string]: String(scale) }}
     >
       <style dangerouslySetInnerHTML={{ __html: combinedCss }} />
-      {rendered.map((s) => (
-        <div
-          key={s.idx}
-          ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
-          className={`ipm-pptx-slide sld-${s.idx}`}
-          data-idx={s.idx}
-          style={{ aspectRatio: `${s.aspect}` }}
-        >
-          {/* slide-inner is NID's absolute-positioning container. Shape <div>s
-              from _buildShapeParts position relative to it. */}
-          <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
-        </div>
-      ))}
+      {rendered.map((s) => {
+        // Fit-page: each slide must fit within both container width and height.
+        // We compute the slide width as min(width-bound, height-bound) so a
+        // 16:9 deck inside a 4:3-ish modal isn't taller than the visible area.
+        // SIDE_MARGIN provides the white space the user wanted around each
+        // slide; TOP_MARGIN matches the per-slide CSS margin (so a fully-fit
+        // slide can scroll-snap cleanly to the next).
+        const SIDE_MARGIN = 48
+        const TOP_MARGIN = 48
+        const fitW = containerSize.w > 0
+          ? Math.min(
+              containerSize.w - SIDE_MARGIN,
+              (containerSize.h - TOP_MARGIN) * s.aspect,
+            )
+          : 0
+        const slideW = fitW > 0 ? fitW * scale : 0
+        return (
+          <div
+            key={s.idx}
+            ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
+            className={`ipm-pptx-slide sld-${s.idx}`}
+            data-idx={s.idx}
+            style={{
+              aspectRatio: `${s.aspect}`,
+              width: slideW > 0 ? `${slideW}px` : undefined,
+            }}
+          >
+            {/* slide-inner is NID's absolute-positioning container. Shape <div>s
+                from _buildShapeParts position relative to it. */}
+            <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+          </div>
+        )
+      })}
     </div>
   )
 }
