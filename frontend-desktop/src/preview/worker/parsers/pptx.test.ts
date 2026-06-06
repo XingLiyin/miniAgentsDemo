@@ -5,7 +5,7 @@ import { parsePptx } from './pptx'
 
 const fixture = resolve(__dirname, '__fixtures__/sample.pptx')
 
-describe('pptx parser port (spike)', () => {
+describe('pptx parser', () => {
   it('parses the sample deck into slides with extractable text', async () => {
     const buf = readFileSync(fixture)
     const ab = new Uint8Array(buf).buffer
@@ -18,7 +18,5 @@ describe('pptx parser port (spike)', () => {
       .flatMap((sh: any) => sh.paragraphs.flatMap((p: any) => p.runs.map((r: any) => r.text)))
       .join('')
     expect(allText.trim().length).toBeGreaterThan(0)
-    // Surface what we got for the spike report:
-    console.log(`[spike] slides=${slides.length} firstText=${JSON.stringify(allText.slice(0, 120))}`)
   })
 })
