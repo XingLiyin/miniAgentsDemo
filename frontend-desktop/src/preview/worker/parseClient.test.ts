@@ -65,4 +65,18 @@ describe('parseInWorker', () => {
     await expect(p1).rejects.toThrow(/crash/i)
     await expect(p2).rejects.toThrow(/crash/i)
   })
+
+  it('returns PptxResult for kind=pptx with typed result', async () => {
+    let fake!: FakeWorker
+    __setWorkerFactory(() => (fake = makeFake()))
+    const p = parseInWorker('pptx', new ArrayBuffer(8))
+    const id = fake.sent[0].id
+    const data = { slides: [], themeFonts: {} }
+    fake.emit({ type: 'result', id, kind: 'pptx', data })
+    const result = await p
+    // ParseResultData<'pptx'> typing: TypeScript treats result as PptxResult
+    expect(result).toEqual(data)
+    expect(Array.isArray(result.slides)).toBe(true)
+    expect(typeof result.themeFonts).toBe('object')
+  })
 })
