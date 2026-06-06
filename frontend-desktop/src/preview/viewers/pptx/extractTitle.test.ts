@@ -99,4 +99,29 @@ describe('extractTitle', () => {
     })
     expect(extractTitle(slide)).toBe('业务架构')
   })
+
+  it('falls back to layoutShapes when the slide itself has no text content', () => {
+    const layoutTitle: SlideData['layoutShapes'] = [{
+      type: 'text', left: 0, top: 0, width: 100, height: 20,
+      paragraphs: [{
+        runs: [{
+          text: '7.2 IP地址规划', bold: false, italic: false, underline: false,
+          strikethrough: false, fontSize: null, fontFamily: null,
+          color: null, spacing: null, href: null, baseline: null,
+          highlight: null,
+        }],
+        align: 'l', bullet: null,
+      }],
+    }]
+    const slide: SlideData = {
+      index: 0,
+      width: 960,
+      height: 540,
+      shapes: [],          // author didn't override anything on this slide
+      masterShapes: [],
+      layoutShapes: layoutTitle,
+      suppressMasterShapes: false,
+    }
+    expect(extractTitle(slide)).toBe('7.2 IP地址规划')
+  })
 })

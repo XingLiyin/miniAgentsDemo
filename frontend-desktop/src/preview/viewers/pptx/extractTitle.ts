@@ -1,25 +1,35 @@
-import type { SlideData } from '../../worker/parsers/pptx'
+import type { SlideData, SlideShape } from '../../worker/parsers/pptx'
 
 const MAX_TITLE_CHARS = 50
 
 /**
- * Returns the first non-empty run text from the first text shape with content
- * on the slide, trimmed to MAX_TITLE_CHARS code points (CJK-safe via Array.from).
- * Returns '' if no text shape has any non-whitespace content.
+ * Returns the first non-empty run text from the slide, trimmed to
+ * MAX_TITLE_CHARS code points (CJK-safe via Array.from). Returns '' only
+ * when neither the slide nor its layout has any usable text.
  *
- * Empty-title-placeholder slides are common: the title shape is laid out from
- * the master/layout but the deck author didn't override it, so the visible
- * heading is in the next text shape (body, content, or a free-standing
- * textbox). We continue past empty text shapes so the TOC label is still
- * useful in that case.
+ * Search order:
+ *   1. slide.shapes — author-provided content (overrides layout).
+ *   2. slide.layoutShapes — fallback. Many decks rely on the layout's title
+ *      placeholder default text and don't re-emit a title shape on each slide,
+ *      so without this fallback the TOC would show numeric placeholders for
+ *      every slide in the deck. Layout shapes usually have the title text
+ *      first (top-most placeholder is the title in standard layouts).
+ *
+ * Empty-text shapes are skipped within each list so a blank title placeholder
+ * doesn't end the search prematurely.
  *
  * This is a heuristic — PPT OOXML marks the title placeholder explicitly
  * (<ph type="title">), but the spike parser doesn't propagate that field
- * and NID didn't need it (NID has no TOC). When/if real decks expose mismatches,
- * upgrade the parser to surface the placeholder type and read it here.
+ * and NID didn't need it (NID has no TOC). When/if real decks expose
+ * mismatches, upgrade the parser to surface the placeholder type and read
+ * it here.
  */
 export function extractTitle(slide: SlideData): string {
-  for (const shape of slide.shapes) {
+  return extractFromShapes(slide.shapes) || extractFromShapes(slide.layoutShapes)
+}
+
+function extractFromShapes(shapes: SlideShape[]): string {
+  for (const shape of shapes) {
     if (shape.type !== 'text') continue
     for (const paragraph of shape.paragraphs) {
       for (const run of paragraph.runs) {

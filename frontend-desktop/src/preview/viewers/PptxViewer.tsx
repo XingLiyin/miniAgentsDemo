@@ -220,7 +220,15 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     <div
       ref={containerRef}
       className="ipm-pptx-root"
-      style={{ ['--pptx-zoom' as string]: String(scale) }}
+      style={{
+        ['--pptx-zoom' as string]: String(scale),
+        // Scroll-snap is great in fit-page mode (one slide per viewport, wheel
+        // settles on the next slide). But when the user has zoomed in, the
+        // slide is bigger than the viewport and mandatory snap locks the view
+        // to the slide's top edge — they can't actually pan around the zoomed
+        // content. Disable snap whenever scale != 1.
+        scrollSnapType: scale === 1 ? 'y mandatory' : 'none',
+      }}
     >
       <style dangerouslySetInnerHTML={{ __html: combinedCss }} />
       {rendered.map((s) => {
