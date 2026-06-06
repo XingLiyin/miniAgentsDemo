@@ -58,12 +58,34 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
 
     // Disable pdfjs's built-in in-line scroll. Its scrollMatchIntoView always
     // does `parent.scrollTop = absoluteOffset`, so every match advance nudges
-    // the page even when the match is already visible — a flicker the user
-    // sees on every Enter when stepping through matches on the same / adjacent
-    // lines. Cross-page page-level scroll (driven by linkService.page setter)
-    // is unaffected. Our ensureSelectedVisible below takes over in-line scroll
-    // and only runs when the match is actually off-screen.
+    // the page even when the match is already visible.
     ;(findController as unknown as { scrollMatchIntoView: () => void }).scrollMatchIntoView = () => {}
+
+    // Suppress the page-level scroll that pdfjs runs on every match advance.
+    // PDFFindController's #updatePage does `linkService.page = selectedPageIdx
+    // + 1` on every selected-match change. linkService.page → PDFViewer.
+    // currentPageNumber → _setCurrentPageNumber → #resetCurrentPageView →
+    // #scrollIntoView(pageView) — which forces the page back to the top of the
+    // container even when the page hasn't actually changed. That's the
+    // *real* source of the flicker users see when stepping through matches on
+    // the same page (the earlier scrollMatchIntoView override didn't catch it
+    // because it's a separate scroll path). We override the setter to skip the
+    // assignment when the page hasn't changed; cross-page navigation still
+    // works normally.
+    const linkProto = Object.getPrototypeOf(linkService) as object
+    const pageDesc = Object.getOwnPropertyDescriptor(linkProto, 'page')
+    if (pageDesc?.get && pageDesc?.set) {
+      const get = pageDesc.get
+      const set = pageDesc.set
+      Object.defineProperty(linkService, 'page', {
+        configurable: true,
+        get(this: typeof linkService) { return get.call(this) },
+        set(this: typeof linkService, v: number) {
+          if (get.call(this) === v) return
+          set.call(this, v)
+        },
+      })
+    }
 
     eventBus.on('pagesinit', () => {
       fitModeRef.current = true
