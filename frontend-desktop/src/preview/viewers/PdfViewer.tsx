@@ -56,6 +56,15 @@ export function PdfViewer({ path, filename }: { path: string; filename: string }
     const viewer = new PDFViewer({ container, viewer: viewerEl, eventBus, linkService, findController })
     linkService.setViewer(viewer)
 
+    // Disable pdfjs's built-in in-line scroll. Its scrollMatchIntoView always
+    // does `parent.scrollTop = absoluteOffset`, so every match advance nudges
+    // the page even when the match is already visible — a flicker the user
+    // sees on every Enter when stepping through matches on the same / adjacent
+    // lines. Cross-page page-level scroll (driven by linkService.page setter)
+    // is unaffected. Our ensureSelectedVisible below takes over in-line scroll
+    // and only runs when the match is actually off-screen.
+    ;(findController as unknown as { scrollMatchIntoView: () => void }).scrollMatchIntoView = () => {}
+
     eventBus.on('pagesinit', () => {
       fitModeRef.current = true
       viewer.currentScaleValue = 'page-width'
