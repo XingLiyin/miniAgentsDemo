@@ -3,9 +3,15 @@ import type { SlideData } from '../../worker/parsers/pptx'
 const MAX_TITLE_CHARS = 50
 
 /**
- * Returns the first non-empty run text from the first text shape on the slide,
- * trimmed to MAX_TITLE_CHARS code points (CJK-safe via Array.from). Returns
- * '' if no text shape or all runs are whitespace.
+ * Returns the first non-empty run text from the first text shape with content
+ * on the slide, trimmed to MAX_TITLE_CHARS code points (CJK-safe via Array.from).
+ * Returns '' if no text shape has any non-whitespace content.
+ *
+ * Empty-title-placeholder slides are common: the title shape is laid out from
+ * the master/layout but the deck author didn't override it, so the visible
+ * heading is in the next text shape (body, content, or a free-standing
+ * textbox). We continue past empty text shapes so the TOC label is still
+ * useful in that case.
  *
  * This is a heuristic — PPT OOXML marks the title placeholder explicitly
  * (<ph type="title">), but the spike parser doesn't propagate that field
@@ -25,9 +31,7 @@ export function extractTitle(slide: SlideData): string {
         }
       }
     }
-    // First text shape found but it was all whitespace — stop searching;
-    // matches the "first text shape" intent of NID-style heuristics.
-    return ''
+    // Empty text shape — continue to the next one rather than giving up.
   }
   return ''
 }

@@ -16,6 +16,9 @@ const ZOOM_MAX = 4
 interface RenderedSlide {
   idx: number
   html: string
+  // Slide's intrinsic aspect ratio, copied from SlideData. Without this every
+  // card would fall back to a fixed 16:9, letterboxing 4:3 / A4 decks.
+  aspect: number
 }
 
 export function PptxViewer({ path, filename }: { path: string; filename: string }) {
@@ -34,6 +37,11 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   useEffect(() => {
     const ac = new AbortController()
     setError(null); setResult(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
+    // Drop stale ref entries from the previously-loaded deck — otherwise after
+    // 30-slide → 6-slide switches the array keeps 24 detached DOM nodes (the
+    // ref callback only ever ASSIGNS, never nulls), which the IntersectionObserver
+    // would then try to observe.
+    slideRefs.current = []
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
       .then((buf) => parseInWorker('pptx', buf, { signal: ac.signal }))
@@ -44,9 +52,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         let css = ''
         const html: RenderedSlide[] = []
         for (let i = 0; i < res.slides.length; i++) {
-          const out = slideToHtml(res.slides[i], i)
+          const slide = res.slides[i]
+          const out = slideToHtml(slide, i)
           css += out.css
-          html.push({ idx: i, html: out.html })
+          html.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
         }
         setCombinedCss(css)
         setRendered(html)
@@ -141,6 +150,7 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
           ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
           className="ipm-pptx-slide"
           data-idx={s.idx}
+          style={{ aspectRatio: `${s.aspect}` }}
           dangerouslySetInnerHTML={{ __html: s.html }}
         />
       ))}

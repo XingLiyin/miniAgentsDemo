@@ -25,7 +25,6 @@
   position: relative;
   container-type: inline-size;
   overflow: hidden;
-  /* Aspect ratio is set by NID's emitted CSS for the slide background; we
-   * fall back to 16:9 here for the empty-shape case. */
-  aspect-ratio: 16 / 9;
+  /* Aspect ratio is set per-slide via inline style from PptxViewer using
+   * SlideData.width/height — handles 4:3 / A4 / custom-size decks. */
 }

@@ -47,7 +47,7 @@ describe('extractTitle', () => {
     expect(extractTitle(slide)).toBe('')
   })
 
-  it('returns empty string when all runs are whitespace', () => {
+  it('returns empty string when all text shapes are whitespace-only', () => {
     const slide = makeSlide({
       shapes: [{
         type: 'text', left: 0, top: 0, width: 100, height: 50,
@@ -63,5 +63,40 @@ describe('extractTitle', () => {
       }],
     })
     expect(extractTitle(slide)).toBe('')
+  })
+
+  it('continues past an empty title placeholder to find the next shape with text', () => {
+    const slide = makeSlide({
+      shapes: [
+        // Empty title-placeholder shape (very common — laid out from master,
+        // not overridden by deck author).
+        {
+          type: 'text', left: 0, top: 0, width: 100, height: 20,
+          paragraphs: [{
+            runs: [{
+              text: '', bold: false, italic: false, underline: false,
+              strikethrough: false, fontSize: null, fontFamily: null,
+              color: null, spacing: null, href: null, baseline: null,
+              highlight: null,
+            }],
+            align: 'l', bullet: null,
+          }],
+        },
+        // Body / content text where the visible heading actually lives.
+        {
+          type: 'text', left: 0, top: 30, width: 100, height: 50,
+          paragraphs: [{
+            runs: [{
+              text: '业务架构', bold: false, italic: false, underline: false,
+              strikethrough: false, fontSize: null, fontFamily: null,
+              color: null, spacing: null, href: null, baseline: null,
+              highlight: null,
+            }],
+            align: 'l', bullet: null,
+          }],
+        },
+      ],
+    })
+    expect(extractTitle(slide)).toBe('业务架构')
   })
 })
