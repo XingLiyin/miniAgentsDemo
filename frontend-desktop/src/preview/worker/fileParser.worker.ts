@@ -1,5 +1,6 @@
 import type { ParseRequestMsg, WorkerOutMsg } from './protocol'
 import { parseXlsx, type XlsxParseOptions } from './parsers/xlsx'
+import { parsePptx } from './parsers/pptx'
 
 // Minimal local view of the dedicated-worker global scope. Avoids pulling in the
 // WebWorker lib (which conflicts with the DOM lib used app-wide).
@@ -25,6 +26,7 @@ function post(m: WorkerOutMsg) { ctx.postMessage(m) }
 function dispatch(msg: ParseRequestMsg): unknown {
   switch (msg.kind) {
     case 'xlsx': return parseXlsx(msg.buffer, (msg.options ?? {}) as XlsxParseOptions)
+    case 'pptx': return parsePptx(msg.buffer)
     default: {
       // Compile-time exhaustiveness: adding a ParseKind without a case here is a TS error.
       const _never: never = msg.kind

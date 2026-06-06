@@ -1,6 +1,6 @@
 // Parse kinds handled by the shared worker. DOCX (docx-preview, DOM-bound) and
-// PDF (pdfjs's own worker) do NOT go through here. 'pptx' is added in Phase 2.
-export type ParseKind = 'xlsx'
+// PDF (pdfjs's own worker) do NOT go through here.
+export type ParseKind = 'xlsx' | 'pptx'
 
 export interface ParseProgress { phase: string; loaded?: number; total?: number }
 
@@ -20,8 +20,18 @@ export type WorkerOutMsg = ParseProgressMsg | ParseResultMsg | ParseErrorMsg
 // Result shape for kind 'xlsx'
 export interface SheetData { name: string; rows: string[][] }
 
-// Maps each ParseKind to its result payload type. Extend when adding kinds
-// (e.g. pptx in Phase 2). The parse client uses this to type its return value.
+// Result shape for kind 'pptx'. Slides + themeFonts come from parsePptx().
+// SlideData is re-exported from the parser module to keep the protocol file
+// dependency-free (parsing types live with the parser); the protocol just
+// declares the shape under ParseResultData.
+export interface PptxResult {
+  slides: import('./parsers/pptx').SlideData[]
+  themeFonts: Record<string, string>
+}
+
+// Maps each ParseKind to its result payload type. The parse client uses this
+// to type its return value.
 export interface ParseResultData {
   xlsx: SheetData[]
+  pptx: PptxResult
 }
