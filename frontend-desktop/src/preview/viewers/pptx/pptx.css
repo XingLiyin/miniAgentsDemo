@@ -26,10 +26,12 @@
    * only thing we need to control to drive scaling. */
   width: calc(min(100%, 1280px) * var(--pptx-zoom));
   max-width: none;
-  margin: 16px auto;
+  /* Big gap between slides; PPT content often runs to the edges (footers,
+   * decorative bars) so a small margin reads as "no gap" to the eye. */
+  margin: 32px auto;
   background: white;
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  border: 1px solid var(--t3);
+  box-shadow: 0 6px 20px rgba(15, 31, 61, 0.18);
   position: relative;
   container-type: inline-size;
   overflow: hidden;

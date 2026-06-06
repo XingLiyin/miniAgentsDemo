@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { fetchOrThrow, rawUrl, Loading, ErrorMsg } from './common'
+import { fetchOrThrow, rawUrl, ErrorMsg } from './common'
+import { Spinner } from '@/components/ui/spinner'
 import { parseInWorker } from '../worker/parseClient'
-import type { PptxResult } from '../worker/protocol'
 import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
 import { useI18n } from '@/i18n'
 import { slideToHtml } from './pptx/slideToHtml'
 import { extractTitle } from './pptx/extractTitle'
 import './pptx/pptx.css'
+
+type LoadStage = 'fetching' | 'parsing' | 'rendering' | 'done'
 
 const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.5
@@ -26,47 +28,56 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<HTMLDivElement[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<PptxResult | null>(null)
   const [combinedCss, setCombinedCss] = useState<string>('')
   const [rendered, setRendered] = useState<RenderedSlide[]>([])
   const [scale, setScale] = useState(1)
   const [current, setCurrent] = useState(1)
   const [toc, setToc] = useState<TocItem[]>([])
+  const [stage, setStage] = useState<LoadStage>('fetching')
 
   // Load + parse the PPTX.
   useEffect(() => {
     const ac = new AbortController()
-    setError(null); setResult(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
-    // Drop stale ref entries from the previously-loaded deck — otherwise after
-    // 30-slide → 6-slide switches the array keeps 24 detached DOM nodes (the
-    // ref callback only ever ASSIGNS, never nulls), which the IntersectionObserver
-    // would then try to observe.
+    setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
+    setStage('fetching')
     slideRefs.current = []
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
-      .then((buf) => parseInWorker('pptx', buf, { signal: ac.signal }))
+      .then((buf) => {
+        if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        setStage('parsing')
+        return parseInWorker('pptx', buf, { signal: ac.signal })
+      })
       .then((res) => {
         if (ac.signal.aborted) return
-        setResult(res)
-        // Render all slides + assemble CSS.
-        let css = ''
-        const html: RenderedSlide[] = []
-        for (let i = 0; i < res.slides.length; i++) {
-          const slide = res.slides[i]
-          const out = slideToHtml(slide, i)
-          css += out.css
-          html.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
-        }
-        setCombinedCss(css)
-        setRendered(html)
-        // Build TOC.
-        const tocItems: TocItem[] = res.slides.map((slide, i) => {
-          const title = extractTitle(slide)
-          const label = title || t('preview.slideN', { n: i + 1 })
-          const prefix = title ? `${i + 1}. ` : ''
-          return { id: `slide-${i}`, label: `${prefix}${label}` }
+        setStage('rendering')
+        // Defer the heavy slideToHtml + setState a tick so the "rendering"
+        // label paints before the main thread blocks. Without this the user
+        // sees no feedback between "parsing" and the fully-rendered viewer.
+        return new Promise<void>((resolve) => {
+          setTimeout(() => {
+            if (ac.signal.aborted) { resolve(); return }
+            let css = ''
+            const html: RenderedSlide[] = []
+            for (let i = 0; i < res.slides.length; i++) {
+              const slide = res.slides[i]
+              const out = slideToHtml(slide, i)
+              css += out.css
+              html.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
+            }
+            const tocItems: TocItem[] = res.slides.map((slide, i) => {
+              const title = extractTitle(slide)
+              const label = title || t('preview.slideN', { n: i + 1 })
+              const prefix = title ? `${i + 1}. ` : ''
+              return { id: `slide-${i}`, label: `${prefix}${label}` }
+            })
+            setCombinedCss(css)
+            setRendered(html)
+            setToc(tocItems)
+            setStage('done')
+            resolve()
+          }, 0)
         })
-        setToc(tocItems)
       })
       .catch((e: unknown) => {
         if ((e as { name?: string }).name !== 'AbortError') {
@@ -135,7 +146,17 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   }, [rendered.length, current, scale, toc, path, filename])
 
   if (error) return <ErrorMsg msg={error} />
-  if (result === null) return <Loading />
+  if (stage !== 'done') {
+    const label =
+      stage === 'fetching' ? t('preview.pptxFetching') :
+      stage === 'parsing'  ? t('preview.pptxParsing')  :
+                             t('preview.pptxRendering')
+    return (
+      <div className="flex h-full items-center justify-center gap-3 text-sm" style={{ color: 'var(--t3)' }}>
+        <Spinner className="h-4 w-4" /> <span>{label}</span>
+      </div>
+    )
+  }
 
   return (
     <div
