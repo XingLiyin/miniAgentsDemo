@@ -65,4 +65,9 @@ describe('parseInWorker', () => {
     await expect(p1).rejects.toThrow(/crash/i)
     await expect(p2).rejects.toThrow(/crash/i)
   })
+
+  // PPTX no longer goes through the worker — it moved to the main thread in
+  // the post-0.2.23 pivot so the parser could use native DOMParser. Only
+  // 'xlsx' remains as a ParseKind; the typed-result test above for xlsx
+  // covers ParseResultData<K> generics.
 })

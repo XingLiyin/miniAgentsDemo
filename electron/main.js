@@ -546,6 +546,73 @@ ipcMain.handle('open-path', async (_, p) => {
   await shell.openPath(p);
 });
 
+// Convert EMF/WMF (Windows vector metafiles, which Chromium cannot render in
+// <img>) to PNG using the OS's built-in GDI+ via PowerShell System.Drawing.
+// Input:  items = [{ key, b64 }]  (b64 = raw EMF/WMF bytes, base64)
+// Output: [{ key, png }]          (png = base64 PNG, or null on failure)
+// All items are converted in ONE PowerShell invocation to amortise its ~300ms
+// startup. Renderer batches a whole deck's metafiles into a single call.
+ipcMain.handle('convert-emf', async (_e, items) => {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  const tmpDir = path.join(app.getPath('temp'), 'ipm-emf-' + crypto.randomBytes(6).toString('hex'));
+  try {
+    fs.mkdirSync(tmpDir, { recursive: true });
+    const jobs = items.map((it, i) => {
+      const inPath = path.join(tmpDir, `in${i}.emf`);
+      const outPath = path.join(tmpDir, `out${i}.png`);
+      try { fs.writeFileSync(inPath, Buffer.from(String(it.b64 || ''), 'base64')); } catch { /* skip */ }
+      return { key: it.key, inPath, outPath };
+    });
+    const manifestPath = path.join(tmpDir, 'manifest.json');
+    fs.writeFileSync(manifestPath, JSON.stringify(jobs.map((j) => ({ inPath: j.inPath, outPath: j.outPath }))), 'utf8');
+    // Render each metafile at 2x onto a white background (PPT composites these
+    // on the slide, usually white). Per-item try/catch so one bad file doesn't
+    // abort the batch.
+    const ps = [
+      'Add-Type -AssemblyName System.Drawing',
+      '$jobs = Get-Content -LiteralPath $env:IPM_EMF_MANIFEST -Raw | ConvertFrom-Json',
+      'foreach ($j in $jobs) {',
+      '  try {',
+      '    $img = [System.Drawing.Image]::FromFile($j.inPath)',
+      '    $w = [int]($img.Width * 2); $h = [int]($img.Height * 2)',
+      '    if ($w -lt 1) { $w = 1 }; if ($h -lt 1) { $h = 1 }',
+      // Clamp the LONGER side to 4000px and scale both by the same factor so
+      // the aspect ratio is preserved (clamping w/h independently would squash
+      // metafiles that are large in only one dimension).
+      '    $mx = [Math]::Max($w, $h)',
+      '    if ($mx -gt 4000) { $f = 4000.0 / $mx; $w = [int]($w * $f); $h = [int]($h * $f); if ($w -lt 1) { $w = 1 }; if ($h -lt 1) { $h = 1 } }',
+      '    $bmp = New-Object System.Drawing.Bitmap($w, $h)',
+      '    $g = [System.Drawing.Graphics]::FromImage($bmp)',
+      '    $g.Clear([System.Drawing.Color]::White)',
+      '    $g.DrawImage($img, 0, 0, $w, $h)',
+      '    $bmp.Save($j.outPath, [System.Drawing.Imaging.ImageFormat]::Png)',
+      '    $g.Dispose(); $bmp.Dispose(); $img.Dispose()',
+      '  } catch {}',
+      '}',
+    ].join('\n');
+    const scriptPath = path.join(tmpDir, 'convert.ps1');
+    fs.writeFileSync(scriptPath, ps, 'utf8');
+    await new Promise((resolve) => {
+      const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', scriptPath], {
+        windowsHide: true,
+        env: { ...process.env, IPM_EMF_MANIFEST: manifestPath },
+      });
+      const timer = setTimeout(() => { try { child.kill(); } catch { /* ignore */ } resolve(); }, 30000);
+      child.on('exit', () => { clearTimeout(timer); resolve(); });
+      child.on('error', () => { clearTimeout(timer); resolve(); });
+    });
+    return jobs.map((j) => {
+      try { return { key: j.key, png: fs.readFileSync(j.outPath).toString('base64') }; }
+      catch { return { key: j.key, png: null }; }
+    });
+  } catch (e) {
+    elog('convert-emf error: ' + (e && e.message));
+    return items.map((it) => ({ key: it.key, png: null }));
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
 ipcMain.handle('app-version', () => app.getVersion());
 
 ipcMain.handle('select-directory', async () => {

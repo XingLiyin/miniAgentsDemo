@@ -8,12 +8,12 @@ const ctx = self as unknown as {
   postMessage(msg: WorkerOutMsg): void
 }
 
-ctx.onmessage = (ev) => {
+ctx.onmessage = async (ev) => {
   const msg = ev.data
   if (msg?.type !== 'parse') return
   try {
     post({ type: 'progress', id: msg.id, progress: { phase: 'parsing' } })
-    const data = dispatch(msg)
+    const data = await dispatch(msg)
     post({ type: 'result', id: msg.id, kind: msg.kind, data })
   } catch (e) {
     post({ type: 'error', id: msg.id, error: e instanceof Error ? e.message : String(e) })
@@ -22,7 +22,7 @@ ctx.onmessage = (ev) => {
 
 function post(m: WorkerOutMsg) { ctx.postMessage(m) }
 
-function dispatch(msg: ParseRequestMsg): unknown {
+async function dispatch(msg: ParseRequestMsg): Promise<unknown> {
   switch (msg.kind) {
     case 'xlsx': return parseXlsx(msg.buffer, (msg.options ?? {}) as XlsxParseOptions)
     default: {

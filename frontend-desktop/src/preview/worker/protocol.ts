@@ -1,8 +1,15 @@
 // Parse kinds handled by the shared worker. DOCX (docx-preview, DOM-bound) and
-// PDF (pdfjs's own worker) do NOT go through here. 'pptx' is added in Phase 2.
+// PDF (pdfjs's own worker) do NOT go through here. PPTX used to go through
+// here in 0.2.10–0.2.23 but the spike's xmldom-based parser was so slow on
+// heavy layouts that we moved it to the main thread (where native DOMParser
+// is available) — see file-rendering-upgrade memory entry for context.
 export type ParseKind = 'xlsx'
 
-export interface ParseProgress { phase: string; loaded?: number; total?: number }
+export interface ParseProgress {
+  phase: string
+  loaded?: number
+  total?: number
+}
 
 export interface ParseRequestMsg {
   type: 'parse'
@@ -20,8 +27,8 @@ export type WorkerOutMsg = ParseProgressMsg | ParseResultMsg | ParseErrorMsg
 // Result shape for kind 'xlsx'
 export interface SheetData { name: string; rows: string[][] }
 
-// Maps each ParseKind to its result payload type. Extend when adding kinds
-// (e.g. pptx in Phase 2). The parse client uses this to type its return value.
+// Maps each ParseKind to its result payload type. The parse client uses this
+// to type its return value.
 export interface ParseResultData {
   xlsx: SheetData[]
 }
