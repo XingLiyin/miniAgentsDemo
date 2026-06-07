@@ -528,7 +528,7 @@ async function _processShapeContainer(
         const shape = _extractTableShape(el, groupEmu, themeColors, themeFonts);
         if (shape) { shapes.push(shape); }
         else {
-          // SmartArt / Chart fallback: try to find a fallback drawing image
+          // SmartArt / Chart / OLE fallback: try to find an embedded preview image
           const fallback = await _extractGraphicFrameFallback(el, relsMap, zip, groupEmu, basePath);
           if (fallback) { shapes.push(fallback); }
         }
@@ -1345,16 +1345,20 @@ async function _extractGraphicFrameFallback(
   }
   if (!transform) { return null; }
 
-  // Try to find a fallback image rId in the graphic data
-  // SmartArt: <dgm:relIds r:dm="rId..." /> — the drawing rels may include an image
-  // Charts: <c:chart r:id="rId..." /> — rarely has a fallback image
-  // General: look for any image relationship in the frame's rels
-  for (const [rId, target] of relsMap) {
-    // Skip non-image targets
-    if (!target.match(/\.(png|jpg|jpeg|gif|bmp|svg|emf|wmf)$/i)) { continue; }
-    // Check if this rId is referenced from within the graphicFrame
-    const frameXml = graphicFrame.toString();
-    if (!frameXml.includes(rId)) { continue; }
+  // Find the embedded preview image by DOM query — NOT by string-matching
+  // graphicFrame.toString(). xmldom fails to serialize OLE / SmartArt subtrees
+  // wrapped in <mc:AlternateContent> (toString returns just "<p:graphicFrame/>"),
+  // so the old `frameXml.includes(rId)` check always missed. This is exactly
+  // how Visio/Excel OLE objects embed their EMF preview (slide 8's flowchart):
+  // <p:graphicFrame><a:graphic><a:graphicData uri=".../ole"><mc:AlternateContent>
+  //   …<p:oleObj><p:pic><p:blipFill><a:blip r:embed="rId2"/>. getElementsByTagNameNS
+  // still walks the parsed tree correctly, so we read the blip rIds directly.
+  const blips = graphicFrame.getElementsByTagNameNS(NS_A, 'blip');
+  for (let i = 0; i < blips.length; i++) {
+    const rId = blips[i].getAttributeNS(NS_R, 'embed') ?? blips[i].getAttribute('r:embed');
+    if (!rId) { continue; }
+    const target = relsMap.get(rId);
+    if (!target || !target.match(/\.(png|jpg|jpeg|gif|bmp|svg|emf|wmf|tiff)$/i)) { continue; }
     const imgPath = target.startsWith('../')
       ? 'ppt/' + target.slice(3)
       : basePath + target;
