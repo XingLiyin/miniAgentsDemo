@@ -86,7 +86,12 @@
   word-wrap: break-word;
   font-size: calc(14 * var(--pt, 1pt));
 }
-.ipm-pptx-root .shape-text p { margin: 0; }
+/* NOTE: do NOT add a `.shape-text p { margin: 0 }` reset here. Its specificity
+ * (0,2,1 — two classes + element) beats the per-paragraph `.sh-X-pN` rules
+ * (0,2,0) that shapeBuilder emits, which would clobber paragraph space-before/
+ * after (spcBef/spcAft) and collapse intentionally-spaced paragraphs (e.g.
+ * a CONTENTS list with 20pt gaps between items). Every emitted <p> already
+ * carries an explicit margin from its .sh-X-pN class, so no reset is needed. */
 .ipm-pptx-root .autofit-inner { transform-origin: top left; }
 
 /* NID's <style> block defines .slide-table — used by table shapes via

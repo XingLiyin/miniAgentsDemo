@@ -142,6 +142,7 @@ interface PlaceholderTransform {
   defFontSz?: number;   // pt — from master txStyles defRPr sz/100
   defAlign?: string;    // CSS text-align — from master txStyles pPr algn
   defBullet?: string;   // bullet char — from master txStyles buChar/@char
+  defColor?: string;    // CSS color — from master txStyles / layout lstStyle defRPr solidFill
 }
 
 /** Coordinate mapping for a <p:grpSp> group shape.
@@ -242,7 +243,6 @@ export async function parsePptx(
     if (masterXml) {
       const masterDoc = parser.parseFromString(masterXml, 'text/xml');
       _collectPlaceholderTransforms(masterDoc, phMap);
-      _applyMasterTxStyles(masterDoc, phMap);
 
       // Resolve master → theme via master rels
       const masterRelsPath = masterPath.replace(/\/([^/]+)$/, '/_rels/$1') + '.rels';
@@ -265,6 +265,11 @@ export async function parsePptx(
           break;
         }
       }
+
+      // Overlay master txStyles defaults onto phMap AFTER the master theme is
+      // loaded into `tc`, so title/body default colors expressed as schemeClr
+      // resolve against the master's real theme (not just theme1 defaults).
+      _applyMasterTxStyles(masterDoc, phMap, tc);
 
       shapes = await _extractShapes(masterDoc, masterRelsMap, zip, parser, new Map(), true, tc, tf, masterDir);
       bg = await _extractBg(masterDoc, masterRelsMap, zip, tc, masterDir);
@@ -389,7 +394,7 @@ export async function parsePptx(
         // is the big win.
         suppressMasterShapes = layoutEntry.suppressMasterShapes;
         _collectPlaceholderTransforms(layoutEntry.doc as unknown as Parameters<typeof _collectPlaceholderTransforms>[0], phMap);
-        _applyLayoutLstStyles(layoutEntry.doc as unknown as Parameters<typeof _applyLayoutLstStyles>[0], phMap);
+        _applyLayoutLstStyles(layoutEntry.doc as unknown as Parameters<typeof _applyLayoutLstStyles>[0], phMap, themeColors);
         layoutShapes = layoutEntry.shapes;
         layoutBg = layoutEntry.bg;
       }
@@ -667,9 +672,13 @@ async function _extractTextShape(
     let align = phInfo?.defAlign ?? 'left';
     let bullet: string | null = phInfo?.defBullet ?? null;
 
-    // Paragraph-level default run properties (from <a:pPr><a:defRPr>)
+    // Paragraph-level default run properties (from <a:pPr><a:defRPr>).
+    // defColor seeds from the placeholder's inherited text color (master
+    // txStyles / layout lstStyle defRPr solidFill) so e.g. a title placeholder
+    // whose run has no explicit color still gets its themed color (the slide-11
+    // 目录 title is white from the master title style, not the default dark).
     let defFont: string | null = null;
-    let defColor: string | null = null;
+    let defColor: string | null = phInfo?.defColor ?? null;
     let defBold = false;
     let defItalic = false;
     let defFontSz: number | null = null;
@@ -791,7 +800,10 @@ async function _extractTextShape(
       const defRPr = _firstChildNS(pPr, NS_A, 'defRPr');
       if (defRPr) {
         defFont = _resolveFont(defRPr, themeFonts);
-        defColor = _resolveRunColor(defRPr, themeColors);
+        // Only override the inherited placeholder color when this defRPr
+        // actually specifies one — otherwise keep phInfo.defColor.
+        const dc = _resolveRunColor(defRPr, themeColors);
+        if (dc) { defColor = dc; }
         defBold = defRPr.getAttribute('b') === '1';
         defItalic = defRPr.getAttribute('i') === '1';
         const dSz = defRPr.getAttribute('sz');
@@ -2000,6 +2012,7 @@ function _collectPlaceholderTransforms(
 function _applyLayoutLstStyles(
   layoutDoc: Document,
   phMap: Map<string, PlaceholderTransform>,
+  themeColors: Map<string, string>,
 ): void {
   const spTree = layoutDoc.getElementsByTagNameNS(NS_P, 'spTree')[0];
   if (!spTree) { return; }
@@ -2038,11 +2051,13 @@ function _applyLayoutLstStyles(
       entry.defBullet = _resolveBulletChar(raw, buFontName);
     }
 
-    // Font size
+    // Font size + color
     const defRPr = lvl1pPr.getElementsByTagNameNS(NS_A, 'defRPr')[0];
     if (defRPr) {
       const sz = defRPr.getAttribute('sz');
       if (sz) { entry.defFontSz = Math.round(parseInt(sz, 10) / 100); }
+      const c = _resolveRunColor(defRPr, themeColors);
+      if (c) { entry.defColor = c; }
     }
   }
 }
@@ -2051,8 +2066,8 @@ function _applyLayoutLstStyles(
  * Parse the default paragraph style from a single <p:titleStyle>/<p:bodyStyle>
  * element inside <p:txStyles>.  Returns only the fields we care about.
  */
-function _parseLvl1Style(styleEl: Element): Pick<PlaceholderTransform, 'defFontSz' | 'defAlign' | 'defBullet'> {
-  const result: Pick<PlaceholderTransform, 'defFontSz' | 'defAlign' | 'defBullet'> = {};
+function _parseLvl1Style(styleEl: Element, themeColors: Map<string, string>): Pick<PlaceholderTransform, 'defFontSz' | 'defAlign' | 'defBullet' | 'defColor'> {
+  const result: Pick<PlaceholderTransform, 'defFontSz' | 'defAlign' | 'defBullet' | 'defColor'> = {};
   const lvl1pPr = styleEl.getElementsByTagNameNS(NS_A, 'lvl1pPr')[0];
   if (!lvl1pPr) { return result; }
 
@@ -2066,6 +2081,8 @@ function _parseLvl1Style(styleEl: Element): Pick<PlaceholderTransform, 'defFontS
   if (defRPr) {
     const sz = defRPr.getAttribute('sz');
     if (sz) { result.defFontSz = Math.round(parseInt(sz, 10) / 100); }
+    const c = _resolveRunColor(defRPr, themeColors);
+    if (c) { result.defColor = c; }
   }
 
   const buFontEl = lvl1pPr.getElementsByTagNameNS(NS_A, 'buFont')[0];
@@ -2089,6 +2106,7 @@ function _parseLvl1Style(styleEl: Element): Pick<PlaceholderTransform, 'defFontS
 function _applyMasterTxStyles(
   masterDoc: Document,
   phMap: Map<string, PlaceholderTransform>,
+  themeColors: Map<string, string>,
 ): void {
   const txStyles = masterDoc.getElementsByTagNameNS(NS_P, 'txStyles')[0];
   if (!txStyles) { return; }
@@ -2114,7 +2132,7 @@ function _applyMasterTxStyles(
 
   for (const { localName, apply } of sectionMap) {
     const el = _firstChildNS(txStyles, NS_P, localName);
-    if (el) { apply(_parseLvl1Style(el)); }
+    if (el) { apply(_parseLvl1Style(el, themeColors)); }
   }
 }
 
