@@ -1190,8 +1190,15 @@ function _extractTableShape(
       // Extract cell borders from <a:tcBorders>
       let borders: TableCell['borders'] | undefined;
       if (tcPr) {
-        const extractBorderSide = (parent: Element, side: string): CellBorder | undefined => {
-          const sideEl = _firstChildNS(parent, NS_A, side);
+        // DrawingML cell borders are DIRECT children of <a:tcPr>, named
+        // lnL/lnR/lnT/lnB (ECMA-376 §21.1.3.x). The original port looked for
+        // a <a:tcBorders> wrapper with top/right/bottom/left children — that
+        // is the WordprocessingML (<w:tcBorders>) convention and never exists
+        // in PPTX, so cell borders were NEVER extracted and every table fell
+        // back to the blanket #ccc grid in pptx.css (wrong color, and a
+        // doubled seam where two stacked tables meet).
+        const extractBorderSide = (ln: string): CellBorder | undefined => {
+          const sideEl = _firstChildNS(tcPr, NS_A, ln);
           if (!sideEl) { return undefined; }
           if (_firstChildNS(sideEl, NS_A, 'noFill')) { return undefined; }
           const sf = _firstChildNS(sideEl, NS_A, 'solidFill');
@@ -1202,15 +1209,12 @@ function _extractTableShape(
           const widthPx = w ? Math.max(1, _emuToPx(parseInt(w, 10))) : 1;
           return { color, widthPx };
         };
-        const tcBorders = _firstChildNS(tcPr, NS_A, 'tcBorders');
-        if (tcBorders) {
-          const top = extractBorderSide(tcBorders, 'top');
-          const right = extractBorderSide(tcBorders, 'right');
-          const bottom = extractBorderSide(tcBorders, 'bottom');
-          const left = extractBorderSide(tcBorders, 'left');
-          if (top || right || bottom || left) {
-            borders = { ...(top ? { top } : {}), ...(right ? { right } : {}), ...(bottom ? { bottom } : {}), ...(left ? { left } : {}) };
-          }
+        const top = extractBorderSide('lnT');
+        const right = extractBorderSide('lnR');
+        const bottom = extractBorderSide('lnB');
+        const left = extractBorderSide('lnL');
+        if (top || right || bottom || left) {
+          borders = { ...(top ? { top } : {}), ...(right ? { right } : {}), ...(bottom ? { bottom } : {}), ...(left ? { left } : {}) };
         }
       }
 
@@ -1570,6 +1574,45 @@ function _applyColorModifiers(hex: string, colorEl: Element): string {
  * Resolve a CSS color from a <a:solidFill> element.
  * Shared logic used by both shape fill extraction and run color extraction.
  */
+/** DrawingML preset color names → hex (ECMA-376 §20.1.10.47, common subset). */
+const PRESET_COLORS: Record<string, string> = {
+  black: '000000', white: 'ffffff', red: 'ff0000', blue: '0000ff',
+  green: '008000', yellow: 'ffff00', cyan: '00ffff', magenta: 'ff00ff',
+  gray: '808080', grey: '808080', darkGray: '404040', lightGray: 'c0c0c0',
+  orange: 'ffa500', purple: '800080', dkBlue: '00008b', ltBlue: 'add8e6',
+};
+
+/** True for #RRGGBB whose channels are all near-max (text would be invisible
+ * on a white slide). Used to trigger the glow-color fallback for headings. */
+function _isNearWhite(color: string): boolean {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(color);
+  if (!m) { return false; }
+  const [r, g, b] = _hexToRgb(m[1]);
+  return r >= 224 && g >= 224 && b >= 224;
+}
+
+/** Resolve the color of a run's <a:effectLst><a:glow> (if any), ignoring the
+ * glow's own alpha — we want a solid, readable text color, not a faded halo. */
+function _resolveGlowColor(rPr: Element, themeColors: Map<string, string>): string | null {
+  const effectLst = rPr.getElementsByTagNameNS(NS_A, 'effectLst')[0];
+  if (!effectLst) { return null; }
+  const glow = effectLst.getElementsByTagNameNS(NS_A, 'glow')[0];
+  if (!glow) { return null; }
+  const schemeClr = glow.getElementsByTagNameNS(NS_A, 'schemeClr')[0];
+  if (schemeClr) {
+    const hex = themeColors.get(schemeClr.getAttribute('val') ?? '');
+    if (hex) { return `#${_applyColorModifiers(hex, schemeClr)}`; }
+  }
+  const colorEl =
+    glow.getElementsByTagNameNS(NS_A, 'srgbClr')[0] ??
+    glow.getElementsByTagNameNS(NS_A, 'prstClr')[0] ??
+    glow.getElementsByTagNameNS(NS_A, 'sysClr')[0];
+  const hex = _extractColor(glow);  // srgb/sys/prst → raw hex (no alpha)
+  if (hex && colorEl) { return `#${_applyColorModifiers(hex, colorEl)}`; }
+  if (hex) { return `#${hex}`; }
+  return null;
+}
+
 function _resolveSolidFillColor(solidFill: Element, themeColors: Map<string, string>): string | null {
   const applyModifiersAndAlpha = (hex: string, colorEl: Element): string => {
     // Apply color transforms (lumMod, lumOff, tint, shade, satMod)
@@ -1601,14 +1644,31 @@ function _resolveSolidFillColor(solidFill: Element, themeColors: Map<string, str
     if (hex) { return `#${hex}`; }
   }
 
+  const prstClr = solidFill.getElementsByTagNameNS(NS_A, 'prstClr')[0];
+  if (prstClr) {
+    const v = prstClr.getAttribute('val') ?? '';
+    if (PRESET_COLORS[v]) { return applyModifiersAndAlpha(PRESET_COLORS[v], prstClr); }
+  }
+
   return null;
 }
 
 /** Extract font color from <a:rPr> inner <a:solidFill> */
 function _resolveRunColor(rPr: Element, themeColors: Map<string, string>): string | null {
   const solidFill = rPr.getElementsByTagNameNS(NS_A, 'solidFill')[0];
-  if (!solidFill) { return null; }
-  return _resolveSolidFillColor(solidFill, themeColors);
+  const fillColor = solidFill ? _resolveSolidFillColor(solidFill, themeColors) : null;
+  // "White text + colored glow" is a common PPTX idiom for a colored heading:
+  // the glow, not the fill, is what the eye reads (PowerPoint/LibreOffice
+  // render the halo). We don't render glow as a halo, so white-on-transparent
+  // text would be invisible. When the fill is missing or white/near-white and
+  // the run has a colored glow, use the glow color as the text color — both
+  // visible and the intended hue. (Slide 17 headings 设备配置概述/硬件选型规划
+  // are exactly this: <a:prstClr val="white"/> + <a:glow><a:srgbClr 0070C0>.)
+  if (!fillColor || _isNearWhite(fillColor)) {
+    const glowColor = _resolveGlowColor(rPr, themeColors);
+    if (glowColor) { return glowColor; }
+  }
+  return fillColor;
 }
 
 /** Resolve font family from <a:rPr> → <a:latin>/<a:ea>/<a:cs>, with theme font token resolution */
@@ -1846,13 +1906,8 @@ function _extractColor(fillEl: Element): string | null {
   // Preset color
   const prstClr = fillEl.getElementsByTagNameNS(NS_A, 'prstClr')[0];
   if (prstClr) {
-    const presets: Record<string, string> = {
-      black: '000000', white: 'ffffff', red: 'ff0000', blue: '0000ff',
-      green: '008000', yellow: 'ffff00', cyan: '00ffff', magenta: 'ff00ff',
-      gray: '808080', grey: '808080', darkGray: '404040', lightGray: 'c0c0c0',
-    };
     const v = prstClr.getAttribute('val');
-    if (v && presets[v]) { return presets[v]; }
+    if (v && PRESET_COLORS[v]) { return PRESET_COLORS[v]; }
   }
   return null;
 }
