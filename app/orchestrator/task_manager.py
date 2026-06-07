@@ -74,6 +74,8 @@ class TaskManager:
         self._memory_svc = memory_svc
         self._agent_store = agent_store
         self._session_locks: dict[str, threading.Lock] = {}
+        self._pending: dict[str, list[str]] = {}
+        self._pending_lock = threading.Lock()
 
         if event_bus is not None:
             event_bus.subscribe(TASK_CREATED, self.on_task_created)
@@ -87,6 +89,8 @@ class TaskManager:
 
     def cleanup_session(self, session_id: str) -> None:
         self._session_locks.pop(session_id, None)
+        with self._pending_lock:
+            self._pending.pop(session_id, None)
 
     # ── Session start ─────────────────────────────────────────────────────────
 
@@ -104,7 +108,8 @@ class TaskManager:
             logger.exception("TM: failed to activate session %s", session_id)
             return
 
-        next_task = self._q_pop(session_id)
+        with self._get_lock(session_id):
+            next_task = self._q_pop(session_id)
         if not next_task:
             logger.error("TM: no ready task for session %s", session_id)
             return
@@ -179,11 +184,16 @@ class TaskManager:
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def on_task_created(self, event_type: str, payload: dict) -> None:
-        """Push newly created task onto the stack."""
+        """Buffer newly created task; the actual (reversed) push happens at the next _q_pop.
+
+        Same-batch tasks created within one agent turn are pushed together in reverse
+        order so they pop in submission order (FIFO within a batch, LIFO across batches).
+        """
         task_id = payload.get("task_id", "")
         session_id = payload.get("session_id", "")
         if task_id and session_id:
-            self._q_push(session_id, task_id)
+            with self._pending_lock:
+                self._pending.setdefault(session_id, []).append(task_id)
 
     def on_task_finished(self, event_type: str, payload: dict) -> None:
         session_id = payload.get("session_id", "")
@@ -236,11 +246,25 @@ class TaskManager:
                             running, session_id,
                         )
                     else:
-                        try:
-                            self._session_svc.transition(session_id, "SUCCEEDED")
-                        except Exception:
-                            logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
-                        _session_done = True
+                        # Reconcile against the store before declaring success: the queue
+                        # is in-memory and can lose a task (e.g. pop() dropping it on a
+                        # transient load failure). Re-queue any orphaned PENDING task so we
+                        # never SUCCEED while real work remains.
+                        orphans = self._orphan_pending_ids(session_id)
+                        if orphans:
+                            for tid in orphans:
+                                self._q_push(session_id, tid)
+                            logger.warning(
+                                "TM: recovered %d orphan PENDING task(s) for session %s, "
+                                "deferring SUCCEEDED: %s", len(orphans), session_id, orphans,
+                            )
+                            next_task = self._q_pop(session_id)
+                        else:
+                            try:
+                                self._session_svc.transition(session_id, "SUCCEEDED")
+                            except Exception:
+                                logger.exception("TM: failed to transition session %s to SUCCEEDED", session_id)
+                            _session_done = True
                 else:
                     # _blocked has tasks waiting on deps; they will be promoted
                     # when further active tasks complete
@@ -615,8 +639,16 @@ class TaskManager:
         session.task_queue.push(task_id)
         self._session_svc.save(session)
 
+    def _drain_pending(self, session_id: str) -> list[str]:
+        with self._pending_lock:
+            return self._pending.pop(session_id, [])
+
     def _q_pop(self, session_id: str) -> "Task | None":
         session = self._session_svc.get(session_id)
+        # Flush the turn's buffered tasks in reverse so the first-submitted lands on
+        # top of the stack (batch-internal FIFO), above any pre-existing tasks (LIFO).
+        for task_id in reversed(self._drain_pending(session_id)):
+            session.task_queue.push(task_id)
         task = session.task_queue.pop()
         self._session_svc.save(session)
         return task
@@ -632,12 +664,40 @@ class TaskManager:
         self._session_svc.save(session)
 
     def _q_clear(self, session_id: str) -> None:
+        self._drain_pending(session_id)
         session = self._session_svc.get(session_id)
         session.task_queue.clear()
         self._session_svc.save(session)
 
     def _q_is_empty(self, session_id: str) -> bool:
+        # Buffered-but-not-yet-flushed tasks count as work; never report empty while they exist.
+        with self._pending_lock:
+            if self._pending.get(session_id):
+                return False
         return self._session_svc.get(session_id).task_queue.is_empty()
+
+    def _orphan_pending_ids(self, session_id: str) -> list[str]:
+        """PENDING tasks in the store that the queue no longer tracks.
+
+        The TaskQueue is in-memory; a task can fall out of it (e.g. pop() drops an
+        entry when its load fails transiently) while still PENDING in the store.
+        Returns such ids so the session is reconciled instead of succeeding with
+        real work left behind.
+        """
+        try:
+            q = self._session_svc.get(session_id).task_queue.to_dict()
+            known = set(q.get("ready", [])) | set(q.get("blocked", []))
+        except Exception:
+            known = set()
+        with self._pending_lock:
+            known |= set(self._pending.get(session_id, []))
+        try:
+            return [
+                t.id for t in self._task_svc.list_by_session(session_id)
+                if t.status == "PENDING" and t.id not in known
+            ]
+        except Exception:
+            return []
 
     def _get_lock(self, session_id: str) -> threading.Lock:
         return self._session_locks.setdefault(session_id, threading.Lock())

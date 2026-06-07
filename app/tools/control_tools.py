@@ -495,8 +495,9 @@ def submit_plan(
     )
 
     if task is not None and task_ids:
-        task_svc.transition(task.id, "SUSPENDED", task.session_id)
-        task.status = "SUSPENDED"
+        if task.status != "SUSPENDED":
+            task_svc.transition(task.id, "SUSPENDED", task.session_id)
+            task.status = "SUSPENDED"
         task.actor_done = True
     return ToolResult(content=result_text)
 
@@ -544,9 +545,10 @@ def submit_task(
     if creator_id:
         _add_tracking_tasks(session_id_val, [creator_id], t.id)
     _track_parent_and_siblings(session_id_val, task.id if task else None, t.id, task_svc)
-    if task is not None:                                                                                        
-        task_svc.transition(task.id, "SUSPENDED", task.session_id)                                              
-        task.status = "SUSPENDED"                                                                               
+    if task is not None:
+        if task.status != "SUSPENDED":
+            task_svc.transition(task.id, "SUSPENDED", task.session_id)
+            task.status = "SUSPENDED"
         task.actor_done = True
     return ToolResult(content=f"Task created: id={t.id}, title={t.title!r}")
 
