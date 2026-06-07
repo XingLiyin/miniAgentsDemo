@@ -59,6 +59,8 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     let tFetchDone = 0
     let tFirstSlide = 0
     let tLastSlide = 0
+    let tPrev = 0
+    const perSlideMs: number[] = []
     console.log('[pptx-timing] load start')
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
@@ -76,7 +78,11 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
             const now = performance.now()
             if (p.slideIdx === 0) {
               tFirstSlide = now
+              tPrev = now
               console.log(`[pptx-timing] worker step1+step2 (before first slide): ${(tFirstSlide - tFetchDone).toFixed(0)} ms`)
+            } else {
+              perSlideMs.push(now - tPrev)
+              tPrev = now
             }
             tLastSlide = now
             const slide = p.slide
@@ -103,6 +109,14 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         if (res && tFirstSlide > 0) {
           console.log(`[pptx-timing] streaming step3 (${res.slides.length} slides): ${(tLastSlide - tFirstSlide).toFixed(0)} ms`)
           console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
+          if (perSlideMs.length > 0) {
+            const avg = perSlideMs.reduce((a, b) => a + b, 0) / perSlideMs.length
+            const slowest = perSlideMs
+              .map((ms, i) => ({ slide: i + 2, ms }))  // i=0 corresponds to slide #2 (slide #1 is the first one, no delta)
+              .sort((a, b) => b.ms - a.ms)
+              .slice(0, 5)
+            console.log(`[pptx-timing] per-slide avg: ${avg.toFixed(0)} ms — slowest 5:`, slowest.map(s => `#${s.slide}=${s.ms.toFixed(0)}ms`).join(', '))
+          }
         }
       })
       .catch((e: unknown) => {

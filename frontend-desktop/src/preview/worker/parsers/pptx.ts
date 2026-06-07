@@ -164,10 +164,31 @@ function _emuToPx(emu: number): number {
   return Math.round(emu / 914400 * 96 * 10) / 10;
 }
 
+/** Image base64 cache (module-level, cleared at the start of each parsePptx
+ * call). The worker processes one file at a time so module-level state is
+ * safe here. Without dedupe, a logo or decorative background referenced from
+ * every slide is base64-encoded N times — measurably the dominant cost on
+ * corporate decks that reuse a small set of images. JSZip caches decompressed
+ * bytes internally; this cache layers on top so we skip the (CPU-bound)
+ * base64 encode step as well. */
+let _imageBase64Cache: Map<string, string> | null = null;
+
+async function _encodeImageOnce(imgFile: { async(t: 'base64'): Promise<string> }, key: string): Promise<string> {
+  if (_imageBase64Cache) {
+    const hit = _imageBase64Cache.get(key);
+    if (hit !== undefined) return hit;
+  }
+  const blob: string = await imgFile.async('base64');
+  if (_imageBase64Cache) _imageBase64Cache.set(key, blob);
+  return blob;
+}
+
 export async function parsePptx(
   data: ArrayBuffer | Uint8Array,
   onSlide?: (slide: SlideData, idx: number, total: number) => void,
 ): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
+  _imageBase64Cache = new Map();
+  try {
   const zip = await JSZip.loadAsync(data);
   const parser = new DOMParser();
 
@@ -359,6 +380,11 @@ export async function parsePptx(
   }
 
   return { slides, themeFonts: lastThemeFonts };
+  } finally {
+    // Drop the cache so the (potentially large) base64 strings are GC'd
+    // as soon as parsing finishes. The next parsePptx call gets a fresh Map.
+    _imageBase64Cache = null;
+  }
 }
 
 async function _extractShapes(
@@ -512,7 +538,7 @@ async function _extractTextShape(
             const imgPath = target.startsWith('../') ? 'ppt/' + target.slice(3) : basePath + target;
             const imgFile = zip.file(imgPath);
             if (imgFile) {
-              const blob = await imgFile.async('base64');
+              const blob = await _encodeImageOnce(imgFile, imgPath);
               const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
               const mimeMap: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml' };
               bgImage = `data:${mimeMap[ext] ?? 'image/png'};base64,${blob}`;
@@ -940,7 +966,7 @@ async function _extractImageShape(
   const imgFile = zip.file(imgPath);
   if (!imgFile) { return null; }
 
-  const blob = await imgFile.async('base64');
+  const blob = await _encodeImageOnce(imgFile, imgPath);
   const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
   const mimeMap: Record<string, string> = {
     '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -1233,7 +1259,7 @@ async function _extractGraphicFrameFallback(
       : basePath + target;
     const imgFile = zip.file(imgPath);
     if (!imgFile) { continue; }
-    const blob = await imgFile.async('base64');
+    const blob = await _encodeImageOnce(imgFile, imgPath);
     const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
     const mimeMap: Record<string, string> = {
       '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -2081,7 +2107,7 @@ async function _extractBg(
               : basePath + target;
             const imgFile = zip.file(imgPath);
             if (imgFile) {
-              const blob = await imgFile.async('base64');
+              const blob = await _encodeImageOnce(imgFile, imgPath);
               const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
               const mimeMap: Record<string, string> = {
                 '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
