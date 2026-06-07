@@ -1,13 +1,23 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { fetchOrThrow, rawUrl, ErrorMsg } from './common'
 import { Spinner } from '@/components/ui/spinner'
-import { parsePptx, type SlideData } from '../worker/parsers/pptx'
+import { parsePptx, setEmfConverter, type SlideData } from '../worker/parsers/pptx'
 import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
 import { useI18n } from '@/i18n'
 import { slideToHtml } from './pptx/slideToHtml'
 import { extractTitle } from './pptx/extractTitle'
 import './pptx/pptx.css'
+
+// Register the EMF/WMF → PNG converter backed by the Electron main process
+// (Windows GDI+ via System.Drawing). Browsers can't render Windows metafiles
+// in <img>, so the parser delegates conversion to this host bridge. Absent in
+// dev / plain browser / tests → the parser renders nothing for metafiles.
+// (window.electronAPI is typed in NewSessionDialog.tsx's global declaration.)
+{
+  const bridge = typeof window !== 'undefined' ? window.electronAPI?.convertEmf : undefined
+  setEmfConverter(bridge ? (items) => bridge(items) : null)
+}
 
 const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.5

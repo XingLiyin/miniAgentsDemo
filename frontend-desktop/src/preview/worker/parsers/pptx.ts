@@ -175,6 +175,58 @@ function _emuToPx(emu: number): number {
   return Math.round(emu / 914400 * 96 * 10) / 10;
 }
 
+/**
+ * EMF/WMF conversion hook. Browsers can't render Windows metafiles in <img>,
+ * so the host (Electron main process, via GDI+) converts them to PNG. The
+ * viewer injects a converter via setEmfConverter; when absent (tests, plain
+ * browser, dev) metafiles are left unconverted and render as a placeholder.
+ * Input: [{key, b64}] (raw metafile bytes); Output: [{key, png|null}] (PNG base64).
+ */
+type EmfConverter = (items: { key: string; b64: string }[]) => Promise<{ key: string; png: string | null }[]>;
+let _emfConverter: EmfConverter | null = null;
+export function setEmfConverter(fn: EmfConverter | null): void { _emfConverter = fn; }
+// Per-parse cache: media path (e.g. 'ppt/media/image4.emf') → PNG data URI.
+let _emfCache: Map<string, string> = new Map();
+
+/** True for paths the browser can't render directly (Windows metafiles). */
+function _isMetafile(pathLower: string): boolean {
+  return pathLower.endsWith('.emf') || pathLower.endsWith('.wmf');
+}
+
+/**
+ * Convert every EMF/WMF in the zip up-front, in ONE batch, and cache the
+ * resulting PNG data URIs by media path. Called once at the start of parse so
+ * later per-shape image lookups just read the cache. No-op without a converter.
+ */
+async function _prefetchMetafiles(zip: JSZip): Promise<void> {
+  _emfCache = new Map();
+  if (!_emfConverter) { return; }
+  const paths = Object.keys(zip.files).filter((p) => _isMetafile(p.toLowerCase()));
+  if (paths.length === 0) { return; }
+  try {
+    const items = await Promise.all(paths.map(async (p) => ({ key: p, b64: await zip.file(p)!.async('base64') })));
+    const results = await _emfConverter(items);
+    for (const r of results) {
+      if (r.png) { _emfCache.set(r.key, `data:image/png;base64,${r.png}`); }
+    }
+  } catch { /* leave cache empty → placeholders */ }
+}
+
+/** Resolve a media path + already-read base64 + ext into a final image data
+ * URI. Metafiles (.emf/.wmf) come from the converted-PNG cache; everything
+ * else is the raw base64 under its real mime. Returns '' for an unconverted
+ * metafile so the caller can render a placeholder instead of a broken <img>. */
+function _imageDataUri(imgPath: string, ext: string, blob: string): string {
+  if (_isMetafile(imgPath.toLowerCase())) {
+    return _emfCache.get(imgPath) ?? '';
+  }
+  const mimeMap: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml', '.tiff': 'image/tiff',
+  };
+  return `data:${mimeMap[ext] ?? 'image/png'};base64,${blob}`;
+}
+
 export async function parsePptx(
   data: ArrayBuffer | Uint8Array,
   /** Called after each slide is parsed: (done, total). Lets the caller show
@@ -184,6 +236,10 @@ export async function parsePptx(
 ): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
   const zip = await JSZip.loadAsync(data);
   const parser = new DOMParser();
+
+  // Convert all EMF/WMF metafiles to PNG up-front (one batch) so per-shape
+  // image lookups below can read the cache. No-op without an injected converter.
+  await _prefetchMetafiles(zip);
 
   // 0. Load default theme color scheme + font scheme (theme1 as fallback)
   const defaultThemeColors = new Map<string, string>();
@@ -574,8 +630,8 @@ async function _extractTextShape(
             if (imgFile) {
               const blob = await imgFile.async('base64');
               const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
-              const mimeMap: Record<string, string> = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml' };
-              bgImage = `data:${mimeMap[ext] ?? 'image/png'};base64,${blob}`;
+              const uri = _imageDataUri(imgPath, ext, blob);
+              if (uri) { bgImage = uri; }
             }
           }
         }
@@ -1011,12 +1067,10 @@ async function _extractImageShape(
 
   const blob = await imgFile.async('base64');
   const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
-  const mimeMap: Record<string, string> = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
-    '.emf': 'image/x-emf', '.wmf': 'image/x-wmf', '.tiff': 'image/tiff',
-  };
-  const mime = mimeMap[ext] ?? 'image/png';
+  const dataUri = _imageDataUri(imgPath, ext, blob);
+  // Unconverted metafile (no host converter) → no usable image; skip the shape
+  // so the caller can render nothing rather than a broken <img>.
+  if (!dataUri) { return null; }
 
   // Extract image crop from <a:srcRect>
   let crop: { l: number; t: number; r: number; b: number } | undefined;
@@ -1031,7 +1085,7 @@ async function _extractImageShape(
     }
   }
 
-  return { type: 'image', ...transform, dataUri: `data:${mime};base64,${blob}`, ...(crop ? { crop } : {}) };
+  return { type: 'image', ...transform, dataUri, ...(crop ? { crop } : {}) };
 }
 
 function _extractTableShape(
@@ -1308,13 +1362,9 @@ async function _extractGraphicFrameFallback(
     if (!imgFile) { continue; }
     const blob = await imgFile.async('base64');
     const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
-    const mimeMap: Record<string, string> = {
-      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-      '.gif': 'image/gif', '.bmp': 'image/bmp', '.svg': 'image/svg+xml',
-      '.emf': 'image/x-emf', '.wmf': 'image/x-wmf',
-    };
-    const mime = mimeMap[ext] ?? 'image/png';
-    return { type: 'image', ...transform, dataUri: `data:${mime};base64,${blob}` };
+    const dataUri = _imageDataUri(imgPath, ext, blob);
+    if (!dataUri) { continue; }
+    return { type: 'image', ...transform, dataUri };
   }
   return null;
 }
@@ -1894,6 +1944,7 @@ const _wingdingsMap: Record<number, string> = {
   0x57: '⛏', 0x74: '◼', 0x75: '◻', 0x77: '⬥', 0x7D: '⌂',
   0x21: '✏', 0x23: '✇', 0x25: '☜', 0x27: '☝', 0x29: '☠',
   0x31: '☐', 0x32: '☑', 0x33: '☒',
+  0x70: '▪', 0x71: '▫', 0x72: '□', 0xA7: '▪',
 };
 
 const _wingdings2Map: Record<number, string> = {
@@ -1913,7 +1964,13 @@ const _knownSymbolFonts = ['symbol', 'marlett', 'webdings',
 function _resolveSymbolChar(char: string, font?: string | null): string {
   if (!char) { return ''; }
   const f = (font ?? '').toLowerCase().trim();
-  const code = char.charCodeAt(0);
+  let code = char.charCodeAt(0);
+  // PowerPoint stores symbol-font glyphs in the Unicode Private Use Area as
+  // 0xF000 + the font's byte index (e.g. Wingdings 'ü' = byte 0xFC → 0xF0FC).
+  // Strip that 0xF000 offset so the map lookup (keyed by the byte index) hits.
+  // Without this, a bullet like 0xF0FC ('✓') misses every map and renders as
+  // a tofu box □.
+  if (code >= 0xF000 && code <= 0xF0FF) { code -= 0xF000; }
   if (f === 'wingdings 2' && _wingdings2Map[code]) { return _wingdings2Map[code]; }
   if (f === 'wingdings' && _wingdingsMap[code]) { return _wingdingsMap[code]; }
   if (f === 'wingdings 3' && _wingdings3Map[code]) { return _wingdings3Map[code]; }
@@ -2218,12 +2275,8 @@ async function _extractBg(
             if (imgFile) {
               const blob = await imgFile.async('base64');
               const ext = ('.' + (imgPath.split('.').pop() ?? '')).toLowerCase();
-              const mimeMap: Record<string, string> = {
-                '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-                '.gif': 'image/gif', '.bmp': 'image/bmp',
-              };
-              const mime = mimeMap[ext] ?? 'image/png';
-              return { bgImage: `data:${mime};base64,${blob}` };
+              const uri = _imageDataUri(imgPath, ext, blob);
+              if (uri) { return { bgImage: uri }; }
             }
           }
         }
