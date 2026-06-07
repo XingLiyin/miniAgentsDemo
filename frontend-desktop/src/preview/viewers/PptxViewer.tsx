@@ -74,6 +74,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
           onProgress: (p) => {
             // Worker emits one progress message per slide it finishes parsing.
             if (ac.signal.aborted) return
+            // Diagnostic message routed from the parser (e.g. per-slide
+            // sub-step timing). Forward to the main-thread console so the
+            // user sees it in DevTools.
+            if (p.diag) { console.log(p.diag); return }
             if (!p.slide || typeof p.slideIdx !== 'number') return
             const now = performance.now()
             if (p.slideIdx === 0) {

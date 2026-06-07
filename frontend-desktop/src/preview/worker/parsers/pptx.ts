@@ -186,6 +186,11 @@ async function _encodeImageOnce(imgFile: { async(t: 'base64'): Promise<string> }
 export async function parsePptx(
   data: ArrayBuffer | Uint8Array,
   onSlide?: (slide: SlideData, idx: number, total: number) => void,
+  /** Diagnostic channel — receives one string per slow slide. Routed to the
+   * main thread by the worker dispatch so it shows up in the renderer's
+   * DevTools console (the worker's own console output is hidden by default
+   * filters in Electron, so this is the only reliable path). */
+  onDiag?: (msg: string) => void,
 ): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
   _imageBase64Cache = new Map();
   try {
@@ -388,8 +393,8 @@ export async function parsePptx(
     const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
     slides.push(slide);
     if (_tBg - _tStart > 1000) {
-      // eslint-disable-next-line no-console
-      console.log(`[pptx-slide-perf] #${i + 1}: xml=${(_tXml - _tStart).toFixed(0)} layoutChain=${(_tLayout - _tXml).toFixed(0)} (master=${(_tMaster - _tXml).toFixed(0)} layout=${(_tLayout - _tMaster).toFixed(0)}) docParse=${(_tDoc - _tLayout).toFixed(0)} extractShapes=${(_tExtract - _tDoc).toFixed(0)} extractBg=${(_tBg - _tExtract).toFixed(0)} TOTAL=${(_tBg - _tStart).toFixed(0)}ms shapes=${shapes.length}`);
+      const diag = `[pptx-slide-perf] #${i + 1}: xml=${(_tXml - _tStart).toFixed(0)} layoutChain=${(_tLayout - _tXml).toFixed(0)} (master=${(_tMaster - _tXml).toFixed(0)} layout=${(_tLayout - _tMaster).toFixed(0)}) docParse=${(_tDoc - _tLayout).toFixed(0)} extractShapes=${(_tExtract - _tDoc).toFixed(0)} extractBg=${(_tBg - _tExtract).toFixed(0)} TOTAL=${(_tBg - _tStart).toFixed(0)}ms shapes=${shapes.length}`;
+      onDiag?.(diag);
     }
     onSlide?.(slide, i, slideFiles.length);
   }

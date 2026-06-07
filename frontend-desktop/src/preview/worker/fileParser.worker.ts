@@ -30,13 +30,26 @@ async function dispatch(msg: ParseRequestMsg): Promise<unknown> {
       // Stream each slide back as a progress message the moment it's parsed,
       // so the viewer can render the first page within ~1s instead of waiting
       // for the entire deck. The final 'result' message confirms completion.
-      const result = await parsePptx(msg.buffer, (slide, idx, total) => {
-        post({
-          type: 'progress',
-          id: msg.id,
-          progress: { phase: 'pptx-slide', loaded: idx + 1, total, slide, slideIdx: idx },
-        })
-      })
+      const result = await parsePptx(
+        msg.buffer,
+        (slide, idx, total) => {
+          post({
+            type: 'progress',
+            id: msg.id,
+            progress: { phase: 'pptx-slide', loaded: idx + 1, total, slide, slideIdx: idx },
+          })
+        },
+        (diag) => {
+          // Forward diagnostic messages from the parser to the main thread,
+          // where they get console.logged. The worker's own console output
+          // is filtered out by default in Electron's DevTools.
+          post({
+            type: 'progress',
+            id: msg.id,
+            progress: { phase: 'pptx-diag', diag },
+          })
+        },
+      )
       // themeFonts is a Map<string,string>; protocol declares it as
       // Record<string,string>. Convert before postMessage so consumers
       // get the documented shape.

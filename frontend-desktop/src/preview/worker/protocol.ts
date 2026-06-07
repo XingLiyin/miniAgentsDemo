@@ -11,6 +11,10 @@ export interface ParseProgress {
    * visible long before the full deck finishes parsing on a slow doc. */
   slide?: import('./parsers/pptx').SlideData
   slideIdx?: number
+  /** Free-form diagnostic message routed through the worker → main thread
+   * progress channel so it appears in the renderer's DevTools console
+   * (the worker's own console output is filtered out by default). */
+  diag?: string
 }
 
 export interface ParseRequestMsg {
