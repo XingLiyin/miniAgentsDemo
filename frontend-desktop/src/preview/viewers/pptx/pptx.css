@@ -17,19 +17,35 @@
   overflow: auto;
   background: var(--bg2);
   --pptx-zoom: 1;
-  padding: 8px 0;
   /* Scroll-snap makes wheel / trackpad scrolling settle on whole slides
    * rather than mid-page, matching PowerPoint reading view. */
   scroll-snap-type: y mandatory;
 }
 
+/* Page wrapper. Each one fills exactly one viewport-height of the scroll
+ * container, with the slide centred inside. This is what makes paging clean:
+ * scroll-snap-align: start on this wrapper means the next wrapper starts
+ * exactly one viewport below, with no leftover sliver of the previous slide. */
+.ipm-pptx-slide-page {
+  min-height: 100%;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  padding: 16px 24px;
+  box-sizing: border-box;
+}
+
 .ipm-pptx-slide {
   /* Fit-page: the slide takes the smaller of two constraints —
    *   - horizontal: container width minus side breathing room
-   *   - vertical:   container height minus top/bottom margins, multiplied
-   *                 by the slide aspect (width = height × aspect)
-   * Multiplied by --pptx-zoom for user zoom. CSS handles everything natively
-   * so resize/zoom updates are immediate without a React re-render.
+   *   - vertical:   container height multiplied by the slide aspect
+   *                 (width = height × aspect)
+   * Multiplied by --pptx-zoom for user zoom. The page wrapper above gives
+   * the breathing space, so we subtract only what we need for the slide's
+   * own padding/border, not the inter-page gap.
    *
    * The outer `max(200px, ...)` is a defensive floor: if the ResizeObserver
    * hasn't reported a size yet (--pptx-container-* still 0px), the inner
@@ -39,19 +55,16 @@
   width: max(200px, calc(
     min(
       var(--pptx-container-w, 100vw) - 48px,
-      (var(--pptx-container-h, 100vh) - 48px) * var(--slide-aspect, 1.778)
+      (var(--pptx-container-h, 100vh) - 32px) * var(--slide-aspect, 1.778)
     ) * var(--pptx-zoom, 1)
   ));
   aspect-ratio: var(--slide-aspect, 1.778);
-  margin: 20px auto;
   background: white;
   border: 1px solid var(--t3);
   box-shadow: 0 6px 20px rgba(15, 31, 61, 0.18);
   position: relative;
   container-type: inline-size;
   overflow: hidden;
-  scroll-snap-align: start;
-  scroll-snap-stop: always;
 }
 
 /* NID's _buildShapeParts emits shape <div>s with absolute positioning relative

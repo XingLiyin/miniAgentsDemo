@@ -51,10 +51,21 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
     setStage('fetching')
     slideRefs.current = []
+    // Timing diagnostics — surfaces step-1 (fetch) / step-2+pre-stream (master
+    // + layout + theme parse) / step-3 (per-slide loop) durations to the F12
+    // console so we can identify which phase is the actual bottleneck without
+    // shipping a UI for it.
+    const tStart = performance.now()
+    let tFetchDone = 0
+    let tFirstSlide = 0
+    let tLastSlide = 0
+    console.log('[pptx-timing] load start')
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
       .then((buf) => {
         if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
+        tFetchDone = performance.now()
+        console.log(`[pptx-timing] fetch+arrayBuffer done: ${(tFetchDone - tStart).toFixed(0)} ms`)
         setStage('parsing')
         return parseInWorker('pptx', buf, {
           signal: ac.signal,
@@ -62,6 +73,12 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
             // Worker emits one progress message per slide it finishes parsing.
             if (ac.signal.aborted) return
             if (!p.slide || typeof p.slideIdx !== 'number') return
+            const now = performance.now()
+            if (p.slideIdx === 0) {
+              tFirstSlide = now
+              console.log(`[pptx-timing] worker step1+step2 (before first slide): ${(tFirstSlide - tFetchDone).toFixed(0)} ms`)
+            }
+            tLastSlide = now
             const slide = p.slide
             const idx = p.slideIdx
             const out = slideToHtml(slide, idx)
@@ -83,6 +100,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         // Edge case: empty deck → onProgress never fired, so leave the
         // spinner state in place and render "no slides" gracefully.
         if (res && res.slides.length === 0) setStage('done')
+        if (res && tFirstSlide > 0) {
+          console.log(`[pptx-timing] streaming step3 (${res.slides.length} slides): ${(tLastSlide - tFirstSlide).toFixed(0)} ms`)
+          console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
+        }
       })
       .catch((e: unknown) => {
         if ((e as { name?: string }).name !== 'AbortError') {
@@ -245,16 +266,24 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     >
       <style dangerouslySetInnerHTML={{ __html: combinedCss }} />
       {rendered.map((s) => (
+        // .ipm-pptx-slide-page is a full-viewport "page" container. Its
+        // min-height = container height so consecutive page wrappers don't
+        // share viewport space — scroll-snap then pages cleanly one at a
+        // time, with no leftover of the previous/next slide visible.
         <div
           key={s.idx}
           ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
-          className={`ipm-pptx-slide sld-${s.idx}`}
+          className="ipm-pptx-slide-page"
           data-idx={s.idx}
-          style={{ ['--slide-aspect' as string]: String(s.aspect) }}
         >
-          {/* slide-inner is NID's absolute-positioning container. Shape <div>s
-              from _buildShapeParts position relative to it. */}
-          <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+          <div
+            className={`ipm-pptx-slide sld-${s.idx}`}
+            style={{ ['--slide-aspect' as string]: String(s.aspect) }}
+          >
+            {/* slide-inner is NID's absolute-positioning container. Shape
+                <div>s from _buildShapeParts position relative to it. */}
+            <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+          </div>
         </div>
       ))}
     </div>

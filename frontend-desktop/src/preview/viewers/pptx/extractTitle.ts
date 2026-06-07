@@ -1,4 +1,4 @@
-import type { SlideData, SlideShape } from '../../worker/parsers/pptx'
+import type { SlideData, SlideShape, TextShape } from '../../worker/parsers/pptx'
 
 const MAX_TITLE_CHARS = 50
 
@@ -30,8 +30,16 @@ export function extractTitle(slide: SlideData): string {
 }
 
 function extractFromShapes(shapes: SlideShape[]): string {
-  for (const shape of shapes) {
-    if (shape.type !== 'text') continue
+  // Sort text shapes by vertical position — titles are typically near the
+  // top of the slide, while footers (page numbers, copyright notices) live
+  // at the bottom. Without this sort, a slide whose first author-defined
+  // text shape happens to be the footer would surface the footer instead
+  // of the real title.
+  const textShapes = shapes
+    .filter((s): s is TextShape => s.type === 'text')
+    .slice()
+    .sort((a, b) => a.top - b.top)
+  for (const shape of textShapes) {
     for (const paragraph of shape.paragraphs) {
       for (const run of paragraph.runs) {
         const text = run.text.trim()
