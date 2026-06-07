@@ -43,21 +43,42 @@ function SlideItem({
     if (rendered) return
     const el = ref.current
     if (!el) return
-    // rootMargin pre-renders slides 500px before/after the visible window so
-    // the user almost never sees a blank slide while scrolling at normal speed.
+    let cancelled = false
+    let pendingTimeout: ReturnType<typeof setTimeout> | null = null
+
+    const doRender = () => {
+      pendingTimeout = null
+      if (cancelled || rendered) return
+      const out = slideToHtml(slide, idx)
+      setRendered(out)
+    }
+
+    // 200px rootMargin (NOT 500) so only slides that are actually about to
+    // be seen trigger render. With a wider margin the next slide's expensive
+    // render piles onto the same observer-callback batch, blocking the
+    // paint of the visible slide. With 200px, only the in-view slide(s)
+    // fire on initial mount.
+    //
+    // setTimeout(0) defers each render to its own macrotask so React can
+    // commit and the browser can paint BETWEEN successive slide renders.
+    // Without this, multiple observers firing in one IO batch all run
+    // slideToHtml synchronously and React batches every setRendered call
+    // together — user sees nothing until the slowest slide finishes.
     const observer = new IntersectionObserver(
       ([entry]) => {
         if (entry.isIntersecting) {
-          const out = slideToHtml(slide, idx)
-          setRendered(out)
-          // One-shot: once rendered, we don't need to keep observing.
           observer.disconnect()
+          pendingTimeout = setTimeout(doRender, 0)
         }
       },
-      { rootMargin: '500px 0px' },
+      { rootMargin: '200px 0px' },
     )
     observer.observe(el)
-    return () => observer.disconnect()
+    return () => {
+      cancelled = true
+      observer.disconnect()
+      if (pendingTimeout) clearTimeout(pendingTimeout)
+    }
   }, [slide, idx, rendered])
 
   return (
