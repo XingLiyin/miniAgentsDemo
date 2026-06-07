@@ -289,8 +289,14 @@ export async function parsePptx(
   let lastThemeFonts = defaultThemeFonts;
 
   for (let i = 0; i < slideFiles.length; i++) {
+    // Per-slide sub-step timing. Only log to worker console when a slide is
+    // unusually slow (>1s) so we can see WHAT in that slide is expensive
+    // (xml decompress / layout chain / shape extract / background extract)
+    // without spamming the console for normal slides.
+    const _tStart = performance.now();
     const slideFile = slideFiles[i];
     const xml = await zip.file(slideFile)?.async('string');
+    const _tXml = performance.now();
     if (!xml) { continue; }
 
     // Load relationship file for images + resolve slide layout path
@@ -336,6 +342,7 @@ export async function parsePptx(
     }
 
     const master = await _loadMaster(masterPath);
+    const _tMaster = performance.now();
     const themeColors = master.themeColors;
     const themeFonts = master.themeFonts;
     lastThemeFonts = themeFonts;
@@ -365,17 +372,25 @@ export async function parsePptx(
         layoutBg = await _extractBg(layoutDoc, layoutRelsMap, zip, themeColors, 'ppt/slideLayouts/');
       }
     }
+    const _tLayout = performance.now();
 
     const doc = parser.parseFromString(xml, 'text/xml');
+    const _tDoc = performance.now();
     const shapes = await _extractShapes(doc, relsMap, zip, parser, phMap, false, themeColors, themeFonts);
+    const _tExtract = performance.now();
 
     // Background inheritance: slide → layout → master
     let bg = await _extractBg(doc, relsMap, zip, themeColors);
     if (!bg.bgColor && !bg.bgImage) { bg = layoutBg; }
     if (!bg.bgColor && !bg.bgImage) { bg = masterBg; }
+    const _tBg = performance.now();
 
     const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
     slides.push(slide);
+    if (_tBg - _tStart > 1000) {
+      // eslint-disable-next-line no-console
+      console.log(`[pptx-slide-perf] #${i + 1}: xml=${(_tXml - _tStart).toFixed(0)} layoutChain=${(_tLayout - _tXml).toFixed(0)} (master=${(_tMaster - _tXml).toFixed(0)} layout=${(_tLayout - _tMaster).toFixed(0)}) docParse=${(_tDoc - _tLayout).toFixed(0)} extractShapes=${(_tExtract - _tDoc).toFixed(0)} extractBg=${(_tBg - _tExtract).toFixed(0)} TOTAL=${(_tBg - _tStart).toFixed(0)}ms shapes=${shapes.length}`);
+    }
     onSlide?.(slide, i, slideFiles.length);
   }
 
