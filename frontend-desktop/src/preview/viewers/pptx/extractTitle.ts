@@ -40,15 +40,28 @@ function extractFromShapes(shapes: SlideShape[]): string {
     .slice()
     .sort((a, b) => a.top - b.top)
   for (const shape of textShapes) {
+    // Concatenate ALL runs across ALL paragraphs of this shape, not just
+    // the first non-empty run. PowerPoint splits a single visible title
+    // line into multiple runs whenever there's a formatting change — and
+    // a mixed-script title like "5.1 IP承载网络规划流程" is almost always
+    // split because Latin and East Asian glyphs use different fonts.
+    // Taking only the first run would yield "5.1 IP" and lose the (real,
+    // Chinese) title text.
+    let combined = ''
     for (const paragraph of shape.paragraphs) {
       for (const run of paragraph.runs) {
-        const text = run.text.trim()
-        if (text) {
-          const codePoints = Array.from(text)
-          if (codePoints.length <= MAX_TITLE_CHARS) return text
-          return codePoints.slice(0, MAX_TITLE_CHARS).join('') + '…'
-        }
+        combined += run.text
       }
+      // Soft return between paragraphs inside the same shape — usually a
+      // chapter number and the chapter name. Join with a space so the
+      // words don't smash together.
+      combined += ' '
+    }
+    const trimmed = combined.replace(/\s+/g, ' ').trim()
+    if (trimmed) {
+      const codePoints = Array.from(trimmed)
+      if (codePoints.length <= MAX_TITLE_CHARS) return trimmed
+      return codePoints.slice(0, MAX_TITLE_CHARS).join('') + '…'
     }
     // Empty text shape — continue to the next one rather than giving up.
   }

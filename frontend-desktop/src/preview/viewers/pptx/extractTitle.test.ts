@@ -100,6 +100,29 @@ describe('extractTitle', () => {
     expect(extractTitle(slide)).toBe('业务架构')
   })
 
+  it('concatenates all runs of a title split by font/script change', () => {
+    // PowerPoint splits a mixed-script title into separate runs because
+    // Latin and CJK glyphs use different fonts. Real-world case observed
+    // in the 网络规划与配置.pptx test deck: "5.1 IP承载网络规划流程"
+    // came out as three runs.
+    const mkRun = (text: string) => ({
+      text, bold: false, italic: false, underline: false,
+      strikethrough: false, fontSize: null, fontFamily: null,
+      color: null, spacing: null, href: null, baseline: null,
+      highlight: null,
+    })
+    const slide = makeSlide({
+      shapes: [{
+        type: 'text', left: 0, top: 0, width: 800, height: 50,
+        paragraphs: [{
+          runs: [mkRun('5.1 '), mkRun('IP'), mkRun('承载网络规划流程')],
+          align: 'l', bullet: null,
+        }],
+      }],
+    })
+    expect(extractTitle(slide)).toBe('5.1 IP承载网络规划流程')
+  })
+
   it('falls back to layoutShapes when the slide itself has no text content', () => {
     const layoutTitle: SlideData['layoutShapes'] = [{
       type: 'text', left: 0, top: 0, width: 100, height: 20,
