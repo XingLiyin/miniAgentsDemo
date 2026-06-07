@@ -20,8 +20,24 @@ import { _buildShapeParts, _isDark } from './ported/shapeBuilder'
  * A regex over the start of each selector list is sufficient.
  */
 export function prefixSelectors(css: string, prefix: string): string {
-  // Match `<selectors> {` at rule heads. The capture group is the selector list.
-  return css.replace(/([^{}]+)\{/g, (_match, selectorList: string) => {
+  // Walk the CSS rule by rule using indexOf — O(N) where N is the input
+  // length. The previous regex (/([^{}]+)\{/g) backtracked catastrophically
+  // on rules with large value content. Real-world hit: slide #1's
+  // background-image was a 107KB data URL, the regex tried to match
+  // `[^{}]+` greedily inside the rule body, failed to find `{` at the
+  // tail, then backtracked one character at a time across the 107KB.
+  // O(N²) on 100KB+ values = 10+ seconds per slide. indexOf has no
+  // backtracking and handles the same input in microseconds.
+  let result = ''
+  let pos = 0
+  const n = css.length
+  while (pos < n) {
+    const braceOpen = css.indexOf('{', pos)
+    if (braceOpen === -1) {
+      result += css.slice(pos)
+      break
+    }
+    const selectorList = css.slice(pos, braceOpen)
     const trimmed = selectorList.replace(/\s+$/, '')
     const trailing = selectorList.slice(trimmed.length)
     const parts = trimmed.split(',').map((s) => {
@@ -29,8 +45,20 @@ export function prefixSelectors(css: string, prefix: string): string {
       const body = s.slice(leading.length)
       return `${leading}${prefix}${body}`
     })
-    return `${parts.join(',')}${trailing}{`
-  })
+    result += `${parts.join(',')}${trailing}{`
+    pos = braceOpen + 1
+    // Copy the rule body verbatim up to and including the matching `}`.
+    // CSS values we emit never contain `{` or `}` (no nested rules, no
+    // content:'...' strings with braces) so a flat indexOf is sufficient.
+    const braceClose = css.indexOf('}', pos)
+    if (braceClose === -1) {
+      result += css.slice(pos)
+      break
+    }
+    result += css.slice(pos, braceClose + 1)
+    pos = braceClose + 1
+  }
+  return result
 }
 
 /**

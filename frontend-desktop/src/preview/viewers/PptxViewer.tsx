@@ -1,10 +1,11 @@
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchOrThrow, rawUrl, ErrorMsg } from './common'
 import { Spinner } from '@/components/ui/spinner'
-import { parsePptx, type SlideData } from '../worker/parsers/pptx'
+import { parsePptx } from '../worker/parsers/pptx'
 import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
 import { useI18n } from '@/i18n'
+import { slideToHtml } from './pptx/slideToHtml'
 import { extractTitle } from './pptx/extractTitle'
 import './pptx/pptx.css'
 
@@ -13,76 +14,20 @@ const ZOOM_MIN = 0.5
 const ZOOM_MAX = 4
 
 interface RenderedSlide {
-  css: string
+  idx: number
   html: string
+  // Slide's intrinsic aspect ratio, copied from SlideData. Without this every
+  // card would fall back to a fixed 16:9, letterboxing 4:3 / A4 decks.
+  aspect: number
 }
-
-/**
- * Per-slide display. Receives the rendered { css, html } from the parent
- * (which gets them from the render worker) and shows them, or a blank
- * placeholder of the correct aspect ratio while waiting. The page wrapper
- * reserves vertical space using the slide's intrinsic aspect ratio so the
- * scroll position is stable even before later slides finish rendering.
- *
- * React.memo on the comparator ensures only the SlideItem whose `rendered`
- * prop just got populated re-renders — sibling SlideItems short-circuit.
- * Without this, every worker-progress setState would re-render all 45
- * children, drowning out the responsiveness gain from moving the rendering
- * off-main-thread in the first place.
- */
-const SlideItem = memo(
-  function SlideItem({
-    slide,
-    idx,
-    rendered,
-    registerRef,
-  }: {
-    slide: SlideData
-    idx: number
-    rendered: RenderedSlide | undefined
-    registerRef: (idx: number, el: HTMLDivElement | null) => void
-  }) {
-    return (
-      <div
-        ref={(el) => registerRef(idx, el)}
-        className="ipm-pptx-slide-page"
-        data-idx={idx}
-      >
-        <div
-          className={`ipm-pptx-slide sld-${idx}`}
-          style={{ ['--slide-aspect' as string]: String(slide.width / slide.height) }}
-        >
-          {rendered ? (
-            <>
-              {/* Per-slide <style>. CSS is already scoped to .ipm-pptx-root
-                  .sld-N via prefixSelectors so siblings don't collide. */}
-              <style dangerouslySetInnerHTML={{ __html: rendered.css }} />
-              {/* slide-inner is NID's absolute-positioning container. Shape
-                  <div>s from _buildShapeParts position relative to it. */}
-              <div className="slide-inner" dangerouslySetInnerHTML={{ __html: rendered.html }} />
-            </>
-          ) : null}
-        </div>
-      </div>
-    )
-  },
-  (prev, next) =>
-    prev.rendered === next.rendered &&
-    prev.slide === next.slide &&
-    prev.idx === next.idx &&
-    prev.registerRef === next.registerRef,
-)
 
 export function PptxViewer({ path, filename }: { path: string; filename: string }) {
   const { t } = useI18n()
   const containerRef = useRef<HTMLDivElement>(null)
   const slideRefs = useRef<HTMLDivElement[]>([])
   const [error, setError] = useState<string | null>(null)
-  const [slides, setSlides] = useState<SlideData[]>([])
-  // Render results from the worker. Keyed by slide index. As each slide
-  // finishes rendering in the worker, its entry is added here and the
-  // corresponding SlideItem flips from placeholder to content.
-  const [renderedMap, setRenderedMap] = useState<Record<number, RenderedSlide>>({})
+  const [combinedCss, setCombinedCss] = useState<string>('')
+  const [rendered, setRendered] = useState<RenderedSlide[]>([])
   const [scale, setScale] = useState(1)
   const [current, setCurrent] = useState(1)
   const [toc, setToc] = useState<TocItem[]>([])
@@ -90,32 +35,23 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   // Visible viewport size of the scroll container, used to compute fit-page
   // dimensions so each slide fits within both width AND height (not just width).
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
-  // Ref-mirrored "current" + "slide count" so the keyboard listener can be
+  // Ref-mirrored "current" + "rendered length" so the keyboard listener can be
   // installed once without re-attaching on every scroll tick.
   const currentRef = useRef(1)
   useEffect(() => { currentRef.current = current }, [current])
   const slideCountRef = useRef(0)
-  useEffect(() => { slideCountRef.current = slides.length }, [slides.length])
+  useEffect(() => { slideCountRef.current = rendered.length }, [rendered.length])
 
-  // Stable callback for SlideItem to publish its DOM ref. Used by keyboard
-  // nav, page goto, and IntersectionObserver for "current slide" tracking.
-  // Stable identity is required so memo'd SlideItems don't re-render when
-  // the parent re-renders.
-  const registerSlideRef = useCallback((idx: number, el: HTMLDivElement | null) => {
-    if (el) slideRefs.current[idx] = el
-  }, [])
-
-  // Fetch + parse + spawn the render worker. Parse runs on main thread (native
-  // DOMParser) and is ~900ms for a 45-slide deck. Render runs in a separate
-  // Web Worker so the ~700ms-per-slide slideToHtml work doesn't block the
-  // main thread — modal close stays responsive, scroll stays responsive,
-  // future input events get processed promptly. As each slide finishes
-  // rendering, the worker posts it back and the corresponding SlideItem
-  // flips from placeholder to content.
+  // Fetch + parse + render. Total budget for a 45-slide corporate deck:
+  // ~70ms (fetch) + ~900ms (parsePptx on main thread with native DOMParser)
+  // + ~15ms (slideToHtml × 45 + extractTitle × 45) = ~1 second to spinner-
+  // clear and skeleton fully painted. No worker, no streaming, no
+  // virtualisation — slideToHtml is fast enough after the O(N²) regex fix
+  // in prefixSelectors that a single batch render fits comfortably in one
+  // loading window without freezing the modal close button.
   useEffect(() => {
     let cancelled = false
-    let worker: Worker | null = null
-    setError(null); setSlides([]); setRenderedMap({}); setCurrent(1); setToc([])
+    setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
     setLoading(true)
     slideRefs.current = []
     const tStart = performance.now()
@@ -130,61 +66,29 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         if (cancelled) return
         const tParseDone = performance.now()
         console.log(`[pptx-timing] parse done (${result.slides.length} slides): ${(tParseDone - tFetchDone).toFixed(0)} ms`)
-        // Eager pass: extract titles for the TOC. Cheap (~milliseconds) and
-        // means the TOC is fully populated before any slide finishes rendering.
+        // Render all slides inline. slideToHtml is fast (~0.3ms per slide
+        // after the prefixSelectors fix); 45 slides finish in well under
+        // 100ms in steady state, well within the loading-spinner window.
+        const allRendered: RenderedSlide[] = []
         const allToc: TocItem[] = []
+        let combined = ''
         for (let i = 0; i < result.slides.length; i++) {
-          const title = extractTitle(result.slides[i])
+          const slide = result.slides[i]
+          const out = slideToHtml(slide, i)
+          combined += out.css
+          allRendered.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
+          const title = extractTitle(slide)
           const label = title || t('preview.slideN', { n: i + 1 })
           const prefix = title ? `${i + 1}. ` : ''
           allToc.push({ id: `slide-${i}`, label: `${prefix}${label}` })
         }
-        const tTitlesDone = performance.now()
-        console.log(`[pptx-timing] extractTitle (${result.slides.length} slides): ${(tTitlesDone - tParseDone).toFixed(0)} ms`)
-        setSlides(result.slides)
+        const tRenderDone = performance.now()
+        console.log(`[pptx-timing] slideToHtml + extractTitle (${result.slides.length} slides): ${(tRenderDone - tParseDone).toFixed(0)} ms`)
+        setCombinedCss(combined)
+        setRendered(allRendered)
         setToc(allToc)
         setLoading(false)
-        console.log(`[pptx-timing] skeleton ready (parse + titles): ${(performance.now() - tStart).toFixed(0)} ms`)
-        // Spawn the render worker. We send slides ONE AT A TIME instead of
-        // all in one batch — structured-clone of the full deck blocked the
-        // main thread for ~8s on the test deck (45 slides × heavy nested
-        // shapes / image strings). Per-slide messages clone in 10-50ms each.
-        //
-        // The next slide is dispatched from the worker's onmessage handler so
-        // we don't queue all 45 sends synchronously; each send happens only
-        // after the previous result lands. This gives the browser room to
-        // paint each rendered slide before kicking off the next render.
-        let firstSlideLogged = false
-        let lastSlideLogged = false
-        let nextToSend = 0
-        const totalSlides = result.slides.length
-        const sendNext = () => {
-          if (cancelled || !worker || nextToSend >= totalSlides) return
-          const idx = nextToSend++
-          worker.postMessage({ slide: result.slides[idx], idx })
-        }
-        worker = new Worker(new URL('../worker/pptxRender.worker.ts', import.meta.url), { type: 'module' })
-        worker.onmessage = (ev: MessageEvent<{ idx: number; css: string; html: string }>) => {
-          if (cancelled) return
-          const { idx, css, html } = ev.data
-          if (idx === 0 && !firstSlideLogged) {
-            firstSlideLogged = true
-            console.log(`[pptx-timing] first slide rendered: ${(performance.now() - tStart).toFixed(0)} ms`)
-          }
-          if (idx === totalSlides - 1 && !lastSlideLogged) {
-            lastSlideLogged = true
-            console.log(`[pptx-timing] all slides rendered: ${(performance.now() - tStart).toFixed(0)} ms`)
-          }
-          setRenderedMap((prev) => ({ ...prev, [idx]: { css, html } }))
-          // Queue the next render. setTimeout(0) yields a macrotask so React
-          // commits + paints this slide before the next render starts in the
-          // worker (otherwise rapid back-to-back postMessages can starve the
-          // paint pipeline despite the worker being on a separate thread).
-          setTimeout(sendNext, 0)
-        }
-        // Kick off the chain. First send happens immediately so the worker
-        // starts rendering as soon as it's ready.
-        sendNext()
+        console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
       })
       .catch((e: unknown) => {
         if (cancelled) return
@@ -193,10 +97,7 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
           setLoading(false)
         }
       })
-    return () => {
-      cancelled = true
-      if (worker) worker.terminate()
-    }
+    return () => { cancelled = true }
   }, [path, t])
 
   // ResizeObserver attached via callback ref. We CANNOT do this in a useEffect
@@ -258,11 +159,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // IntersectionObserver: track which slide centre is in the viewport, for the
-  // toolbar "current slide" indicator.
+  // IntersectionObserver: track which slide centre is in the viewport.
   useEffect(() => {
     const container = containerRef.current
-    if (!container || slides.length === 0) return
+    if (!container || rendered.length === 0) return
     const observer = new IntersectionObserver(
       (entries) => {
         let best = -1
@@ -285,12 +185,12 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       if (el) observer.observe(el)
     }
     return () => observer.disconnect()
-  }, [slides])
+  }, [rendered])
 
   // Register toolbar capabilities.
   usePreviewToolbar({
     pages: {
-      count: slides.length,
+      count: rendered.length,
       current,
       goto: (n: number) => {
         const el = slideRefs.current[n - 1]
@@ -315,7 +215,7 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       },
     } : {}),
     download: { url: rawUrl(path), filename },
-  }, [slides.length, current, scale, toc, path, filename])
+  }, [rendered.length, current, scale, toc, path, filename])
 
   if (error) return <ErrorMsg msg={error} />
   if (loading) {
@@ -347,14 +247,27 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         scrollSnapType: scale === 1 ? 'y mandatory' : 'none',
       }}
     >
-      {slides.map((slide, idx) => (
-        <SlideItem
-          key={idx}
-          slide={slide}
-          idx={idx}
-          rendered={renderedMap[idx]}
-          registerRef={registerSlideRef}
-        />
+      <style dangerouslySetInnerHTML={{ __html: combinedCss }} />
+      {rendered.map((s) => (
+        // .ipm-pptx-slide-page is a full-viewport "page" container. Its
+        // min-height = container height so consecutive page wrappers don't
+        // share viewport space — scroll-snap then pages cleanly one at a
+        // time, with no leftover of the previous/next slide visible.
+        <div
+          key={s.idx}
+          ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
+          className="ipm-pptx-slide-page"
+          data-idx={s.idx}
+        >
+          <div
+            className={`ipm-pptx-slide sld-${s.idx}`}
+            style={{ ['--slide-aspect' as string]: String(s.aspect) }}
+          >
+            {/* slide-inner is NID's absolute-positioning container. Shape
+                <div>s from _buildShapeParts position relative to it. */}
+            <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+          </div>
+        </div>
       ))}
     </div>
   )
