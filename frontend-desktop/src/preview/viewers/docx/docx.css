@@ -51,3 +51,15 @@
   box-shadow: 0 2px 8px rgba(15, 31, 61, 0.25);
   margin: 0 auto;
 }
+
+/* Fix a docx-preview bug: it maps the table-cell text direction `lrTb`
+ * (left-to-right, top-to-bottom = NORMAL horizontal text, the default) to
+ * `writing-mode: vertical-lr`, so cells that explicitly declare normal
+ * direction render with their text stacked vertically. `vertical-lr` is
+ * produced ONLY by that buggy lrTb mapping (genuine vertical cells — tbRl /
+ * btLr — use vertical-rl), so forcing horizontal-tb here corrects the bug
+ * without affecting legitimately-vertical cells. docx-preview sets the
+ * writing-mode inline, hence the [style*=] selector + !important. */
+.ipm-docx-root [style*="vertical-lr"] {
+  writing-mode: horizontal-tb !important;
+}
