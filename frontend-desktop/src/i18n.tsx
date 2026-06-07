@@ -51,9 +51,6 @@ const zh: Dict = {
   'preview.toc': '目录',
   'preview.slideN': '第 {n} 页',
   'preview.parsing': '解析中…',
-  'preview.pptxFetching': '正在加载文件…',
-  'preview.pptxParsing': '正在解析幻灯片…',
-  'preview.pptxRendering': '正在渲染幻灯片…',
 
   // sidebar
   'sidebar.sessions': '会话',
@@ -224,9 +221,6 @@ const en: Dict = {
   'preview.toc': 'Contents',
   'preview.slideN': 'Slide {n}',
   'preview.parsing': 'Parsing…',
-  'preview.pptxFetching': 'Loading file…',
-  'preview.pptxParsing': 'Parsing slides…',
-  'preview.pptxRendering': 'Rendering slides…',
 
   // sidebar
   'sidebar.sessions': 'Sessions',

@@ -3,30 +3,41 @@ import type { SlideData, SlideShape, TextShape } from '../../worker/parsers/pptx
 const MAX_TITLE_CHARS = 50
 
 /**
- * Returns the first non-empty run text from the slide, trimmed to
- * MAX_TITLE_CHARS code points (CJK-safe via Array.from). Returns '' only
- * when nothing in the slide/layout/master has usable text.
+ * Best-effort slide title for the TOC.
  *
- * Search order:
- *   1. slide.shapes — author-provided content (overrides layout).
- *   2. slide.layoutShapes — fallback when the slide author didn't override
- *      anything on this slide and just relies on the layout's placeholder.
- *   3. slide.masterShapes — fallback when the title lives in the master
- *      template (corporate decks often put the section heading there).
+ * Primary signal: the parser flags the OOXML title placeholder
+ * (`<ph type="title"|"ctrTitle">`) as `TextShape.isTitle`. That is the
+ * authoritative answer, so we use it first — across slide → layout → master,
+ * since the title text may be authored at any of those levels.
  *
- * Empty-text shapes are skipped within each list so a blank title placeholder
- * doesn't end the search prematurely.
+ * Fallback heuristic (older decks / shapes with no placeholder type): the
+ * first non-empty text shape, scanned top-to-bottom by vertical position
+ * (titles sit near the top; footers/page-numbers sit at the bottom).
  *
- * This is a heuristic — PPT OOXML marks the title placeholder explicitly
- * (<ph type="title">), but the spike parser doesn't propagate that field
- * and NID didn't need it (NID has no TOC). When/if real decks expose
- * mismatches, upgrade the parser to surface the placeholder type and read
- * it here.
+ * Returns '' only when nothing in the slide/layout/master has usable text.
  */
 export function extractTitle(slide: SlideData): string {
-  return extractFromShapes(slide.shapes)
-      || extractFromShapes(slide.layoutShapes)
-      || extractFromShapes(slide.masterShapes)
+  // 1. Authoritative: an explicitly-flagged title placeholder.
+  const flagged =
+    titleFromFlagged(slide.shapes) ||
+    titleFromFlagged(slide.layoutShapes) ||
+    titleFromFlagged(slide.masterShapes)
+  if (flagged) return flagged
+
+  // 2. Heuristic fallback: top-most non-empty text shape.
+  return extractFromShapes(slide.shapes) ||
+    extractFromShapes(slide.layoutShapes) ||
+    extractFromShapes(slide.masterShapes)
+}
+
+/** Text of the first non-empty shape flagged isTitle, or '' if none. */
+function titleFromFlagged(shapes: SlideShape[]): string {
+  for (const shape of shapes) {
+    if (shape.type !== 'text' || !shape.isTitle) continue
+    const text = shapeText(shape)
+    if (text) return text
+  }
+  return ''
 }
 
 function extractFromShapes(shapes: SlideShape[]): string {
@@ -40,30 +51,39 @@ function extractFromShapes(shapes: SlideShape[]): string {
     .slice()
     .sort((a, b) => a.top - b.top)
   for (const shape of textShapes) {
-    // Concatenate ALL runs across ALL paragraphs of this shape, not just
-    // the first non-empty run. PowerPoint splits a single visible title
-    // line into multiple runs whenever there's a formatting change — and
-    // a mixed-script title like "5.1 IP承载网络规划流程" is almost always
-    // split because Latin and East Asian glyphs use different fonts.
-    // Taking only the first run would yield "5.1 IP" and lose the (real,
-    // Chinese) title text.
-    let combined = ''
-    for (const paragraph of shape.paragraphs) {
-      for (const run of paragraph.runs) {
-        combined += run.text
-      }
-      // Soft return between paragraphs inside the same shape — usually a
-      // chapter number and the chapter name. Join with a space so the
-      // words don't smash together.
-      combined += ' '
-    }
-    const trimmed = combined.replace(/\s+/g, ' ').trim()
-    if (trimmed) {
-      const codePoints = Array.from(trimmed)
-      if (codePoints.length <= MAX_TITLE_CHARS) return trimmed
-      return codePoints.slice(0, MAX_TITLE_CHARS).join('') + '…'
-    }
+    const text = shapeText(shape)
+    if (text) return text
     // Empty text shape — continue to the next one rather than giving up.
   }
   return ''
+}
+
+/**
+ * Concatenate ALL runs across ALL paragraphs of a shape, normalise
+ * whitespace, and truncate to MAX_TITLE_CHARS code points (CJK-safe via
+ * Array.from). Returns '' for a whitespace-only shape.
+ *
+ * Concatenating every run (not just the first non-empty one) matters because
+ * PowerPoint splits a single visible title line into multiple runs whenever
+ * there's a formatting change — and a mixed-script title like
+ * "5.1 IP承载网络规划流程" is almost always split because Latin and East
+ * Asian glyphs use different fonts. Taking only the first run would yield
+ * "5.1 IP" and lose the (real, Chinese) title text.
+ */
+function shapeText(shape: TextShape): string {
+  let combined = ''
+  for (const paragraph of shape.paragraphs) {
+    for (const run of paragraph.runs) {
+      combined += run.text
+    }
+    // Soft return between paragraphs inside the same shape — usually a
+    // chapter number and the chapter name. Join with a space so the words
+    // don't smash together.
+    combined += ' '
+  }
+  const trimmed = combined.replace(/\s+/g, ' ').trim()
+  if (!trimmed) return ''
+  const codePoints = Array.from(trimmed)
+  if (codePoints.length <= MAX_TITLE_CHARS) return trimmed
+  return codePoints.slice(0, MAX_TITLE_CHARS).join('') + '…'
 }

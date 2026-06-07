@@ -147,4 +147,51 @@ describe('extractTitle', () => {
     }
     expect(extractTitle(slide)).toBe('7.2 IP地址规划')
   })
+
+  it('prefers the isTitle-flagged shape over a higher top-positioned non-title shape', () => {
+    const mkRun = (text: string) => ({
+      text, bold: false, italic: false, underline: false,
+      strikethrough: false, fontSize: null, fontFamily: null,
+      color: null, spacing: null, href: null, baseline: null,
+      highlight: null,
+    })
+    // A decorative kicker/date text box sits ABOVE the real title (smaller
+    // top). The spatial heuristic alone would surface the kicker; the
+    // isTitle flag must win.
+    const slide = makeSlide({
+      shapes: [
+        {
+          type: 'text', left: 0, top: 5, width: 300, height: 20,
+          paragraphs: [{ runs: [mkRun('2026年第一季度')], align: 'l', bullet: null }],
+        },
+        {
+          type: 'text', left: 0, top: 80, width: 600, height: 60, isTitle: true,
+          paragraphs: [{ runs: [mkRun('网络承载方案汇报')], align: 'l', bullet: null }],
+        },
+      ],
+    })
+    expect(extractTitle(slide)).toBe('网络承载方案汇报')
+  })
+
+  it('falls back to the spatial heuristic when no shape is flagged isTitle', () => {
+    const mkRun = (text: string) => ({
+      text, bold: false, italic: false, underline: false,
+      strikethrough: false, fontSize: null, fontFamily: null,
+      color: null, spacing: null, href: null, baseline: null,
+      highlight: null,
+    })
+    const slide = makeSlide({
+      shapes: [
+        {
+          type: 'text', left: 0, top: 500, width: 300, height: 20,
+          paragraphs: [{ runs: [mkRun('页脚版权')], align: 'l', bullet: null }],
+        },
+        {
+          type: 'text', left: 0, top: 10, width: 600, height: 60,
+          paragraphs: [{ runs: [mkRun('顶部标题')], align: 'l', bullet: null }],
+        },
+      ],
+    })
+    expect(extractTitle(slide)).toBe('顶部标题')
+  })
 })

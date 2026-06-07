@@ -54,18 +54,12 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
     setLoading(true)
     slideRefs.current = []
-    const tStart = performance.now()
-    console.log('[pptx-timing] load start')
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
       .then(async (buf) => {
         if (cancelled) return
-        const tFetchDone = performance.now()
-        console.log(`[pptx-timing] fetch+arrayBuffer done: ${(tFetchDone - tStart).toFixed(0)} ms`)
         const result = await parsePptx(buf)
         if (cancelled) return
-        const tParseDone = performance.now()
-        console.log(`[pptx-timing] parse done (${result.slides.length} slides): ${(tParseDone - tFetchDone).toFixed(0)} ms`)
         // Render all slides inline. slideToHtml is fast (~0.3ms per slide
         // after the prefixSelectors fix); 45 slides finish in well under
         // 100ms in steady state, well within the loading-spinner window.
@@ -82,13 +76,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
           const prefix = title ? `${i + 1}. ` : ''
           allToc.push({ id: `slide-${i}`, label: `${prefix}${label}` })
         }
-        const tRenderDone = performance.now()
-        console.log(`[pptx-timing] slideToHtml + extractTitle (${result.slides.length} slides): ${(tRenderDone - tParseDone).toFixed(0)} ms`)
         setCombinedCss(combined)
         setRendered(allRendered)
         setToc(allToc)
         setLoading(false)
-        console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
       })
       .catch((e: unknown) => {
         if (cancelled) return
