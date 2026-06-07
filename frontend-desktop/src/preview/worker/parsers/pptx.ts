@@ -176,6 +176,10 @@ function _emuToPx(emu: number): number {
 
 export async function parsePptx(
   data: ArrayBuffer | Uint8Array,
+  /** Called after each slide is parsed: (done, total). Lets the caller show
+   * progress on very large decks (the test corpus has a 368-slide / 48MB
+   * deck whose parse takes ~22s). */
+  onProgress?: (done: number, total: number) => void,
 ): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
   const zip = await JSZip.loadAsync(data);
   const parser = new DOMParser();
@@ -401,6 +405,12 @@ export async function parsePptx(
 
     const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
     slides.push(slide);
+    onProgress?.(i + 1, slideFiles.length);
+    // Yield to the event loop periodically so the (main-thread) parse of a
+    // huge deck doesn't freeze the UI — the loading spinner keeps animating
+    // and the modal close button stays responsive. Negligible overhead on
+    // small decks (one yield per 16 slides).
+    if ((i & 15) === 15) { await new Promise((resolve) => setTimeout(resolve, 0)); }
   }
 
   return { slides, themeFonts: lastThemeFonts };

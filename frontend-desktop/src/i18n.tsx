@@ -51,6 +51,7 @@ const zh: Dict = {
   'preview.toc': '目录',
   'preview.slideN': '第 {n} 页',
   'preview.parsing': '解析中…',
+  'preview.parsingN': '解析中 {n}/{total}…',
 
   // sidebar
   'sidebar.sessions': '会话',
@@ -221,6 +222,7 @@ const en: Dict = {
   'preview.toc': 'Contents',
   'preview.slideN': 'Slide {n}',
   'preview.parsing': 'Parsing…',
+  'preview.parsingN': 'Parsing {n}/{total}…',
 
   // sidebar
   'sidebar.sessions': 'Sessions',
