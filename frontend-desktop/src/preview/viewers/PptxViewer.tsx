@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchOrThrow, rawUrl, ErrorMsg } from './common'
 import { Spinner } from '@/components/ui/spinner'
 import { parseInWorker } from '../worker/parseClient'
@@ -92,16 +92,26 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
     return () => ac.abort()
   }, [path, t])
 
-  // ResizeObserver: track the scroll container's visible size so the slides
-  // can be sized to fit-page (width AND height) rather than just fit-width.
-  useEffect(() => {
-    const el = containerRef.current
+  // ResizeObserver attached via callback ref. We CANNOT do this in a useEffect
+  // with deps=[] because the container <div> is only rendered when stage==='done';
+  // useEffect runs at mount time, when the container ref is still null (the
+  // viewer is showing the loading spinner). With useEffect the observer would
+  // never attach and containerSize would stay at {0,0}, making the CSS calc
+  // produce a negative width and slides render as blank boxes.
+  const observerRef = useRef<ResizeObserver | null>(null)
+  const setContainer = useCallback((el: HTMLDivElement | null) => {
+    if (observerRef.current) {
+      observerRef.current.disconnect()
+      observerRef.current = null
+    }
+    containerRef.current = el
     if (!el) return
-    const update = () => setContainerSize({ w: el.clientWidth, h: el.clientHeight })
-    update()
-    const ro = new ResizeObserver(update)
+    setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    const ro = new ResizeObserver(() => {
+      setContainerSize({ w: el.clientWidth, h: el.clientHeight })
+    })
     ro.observe(el)
-    return () => ro.disconnect()
+    observerRef.current = ro
   }, [])
 
   // Keyboard navigation: PageDown / PageUp / Arrow keys to step one slide at a
@@ -214,7 +224,7 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
 
   return (
     <div
-      ref={containerRef}
+      ref={setContainer}
       className="ipm-pptx-root"
       style={{
         // Zoom is a CSS variable consumed by .ipm-pptx-slide's width calc().
