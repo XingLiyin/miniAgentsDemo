@@ -99,9 +99,17 @@
 }
 .ipm-pptx-root .slide-table th,
 .ipm-pptx-root .slide-table td {
+  /* #ccc is only a FALLBACK — cells that define their own borders (lnL/lnR/
+   * lnT/lnB) emit higher-specificity per-cell border rules that override this. */
   border: calc(0.75 * var(--pt, 1pt)) solid #ccc;
-  padding: calc(1.5 * var(--pt, 1pt)) calc(2.5 * var(--pt, 1pt));
-  line-height: 1.15;
-  vertical-align: top;
+  /* Tight vertical metrics: PPT row heights are authoritative and assume
+   * compact cell text (cell marT≈0.75pt, marB=0, ~1.0 line spacing). Our
+   * previous 1.5pt vertical padding + 1.15 line-height made each cell ~17%
+   * taller than its allocated row, so multi-row tables overflowed their
+   * fixed-height container and a stacked second table got overlapped.
+   * Matching PPT's compact metrics keeps content within the row height. */
+  padding: calc(0.4 * var(--pt, 1pt)) calc(2.5 * var(--pt, 1pt));
+  line-height: 1.0;
+  vertical-align: middle;
 }
 .ipm-pptx-root .slide-table th { font-weight: 600; }

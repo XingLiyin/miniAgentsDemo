@@ -24,11 +24,11 @@ describe('extractTitle', () => {
             { text: '  ', bold: false, italic: false, underline: false,
               strikethrough: false, fontSize: null, fontFamily: null,
               color: null, spacing: null, href: null, baseline: null,
-              highlight: null },
+              highlight: null, glow: null },
             { text: '系统架构', bold: false, italic: false, underline: false,
               strikethrough: false, fontSize: null, fontFamily: null,
               color: null, spacing: null, href: null, baseline: null,
-              highlight: null },
+              highlight: null, glow: null },
           ],
           align: 'l', bullet: null,
         }],
@@ -56,7 +56,7 @@ describe('extractTitle', () => {
             text: '   \n\t', bold: false, italic: false, underline: false,
             strikethrough: false, fontSize: null, fontFamily: null,
             color: null, spacing: null, href: null, baseline: null,
-            highlight: null,
+            highlight: null, glow: null,
           }],
           align: 'l', bullet: null,
         }],
@@ -77,7 +77,7 @@ describe('extractTitle', () => {
               text: '', bold: false, italic: false, underline: false,
               strikethrough: false, fontSize: null, fontFamily: null,
               color: null, spacing: null, href: null, baseline: null,
-              highlight: null,
+              highlight: null, glow: null,
             }],
             align: 'l', bullet: null,
           }],
@@ -90,7 +90,7 @@ describe('extractTitle', () => {
               text: '业务架构', bold: false, italic: false, underline: false,
               strikethrough: false, fontSize: null, fontFamily: null,
               color: null, spacing: null, href: null, baseline: null,
-              highlight: null,
+              highlight: null, glow: null,
             }],
             align: 'l', bullet: null,
           }],
@@ -109,7 +109,7 @@ describe('extractTitle', () => {
       text, bold: false, italic: false, underline: false,
       strikethrough: false, fontSize: null, fontFamily: null,
       color: null, spacing: null, href: null, baseline: null,
-      highlight: null,
+      highlight: null, glow: null,
     })
     const slide = makeSlide({
       shapes: [{
@@ -131,7 +131,7 @@ describe('extractTitle', () => {
           text: '7.2 IP地址规划', bold: false, italic: false, underline: false,
           strikethrough: false, fontSize: null, fontFamily: null,
           color: null, spacing: null, href: null, baseline: null,
-          highlight: null,
+          highlight: null, glow: null,
         }],
         align: 'l', bullet: null,
       }],
@@ -153,7 +153,7 @@ describe('extractTitle', () => {
       text, bold: false, italic: false, underline: false,
       strikethrough: false, fontSize: null, fontFamily: null,
       color: null, spacing: null, href: null, baseline: null,
-      highlight: null,
+      highlight: null, glow: null,
     })
     // A decorative kicker/date text box sits ABOVE the real title (smaller
     // top). The spatial heuristic alone would surface the kicker; the
@@ -178,7 +178,7 @@ describe('extractTitle', () => {
       text, bold: false, italic: false, underline: false,
       strikethrough: false, fontSize: null, fontFamily: null,
       color: null, spacing: null, href: null, baseline: null,
-      highlight: null,
+      highlight: null, glow: null,
     })
     const slide = makeSlide({
       shapes: [

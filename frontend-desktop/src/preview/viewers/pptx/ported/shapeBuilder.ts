@@ -236,6 +236,10 @@ export function _buildShapeParts(
           if (r.fontSize) { rCss += `font-size:calc(${r.fontSize} * var(--pt, 1pt));`; }
           if (r.fontFamily && displayText === r.text) { rCss += `font-family:${r.fontFamily};`; }
           if (r.color) { rCss += `color:${r.color};`; }
+          // NON-NID ADDITION: glow → text-shadow (colored halo around light
+          // headings; see _resolveGlow in the parser). Kept minimal so the
+          // rest of this file stays a faithful NID port.
+          if (r.glow) { rCss += `text-shadow:${r.glow};`; }
           if (r.underline && r.strikethrough) { rCss += 'text-decoration:underline line-through;'; }
           else if (r.underline) { rCss += 'text-decoration:underline;'; }
           else if (r.strikethrough) { rCss += 'text-decoration:line-through;'; }

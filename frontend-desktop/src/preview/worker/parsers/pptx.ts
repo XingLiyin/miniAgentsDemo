@@ -39,6 +39,7 @@ export interface TextRun {
   href: string | null;        // hyperlink URL (from hlinkClick)
   baseline: number | null;    // superscript (>0) / subscript (<0) in 1000ths of %
   highlight: string | null;   // text highlight background color
+  glow: string | null;        // CSS text-shadow from <a:effectLst><a:glow> (colored halo)
 }
 
 export interface TextParagraph {
@@ -826,6 +827,7 @@ async function _extractTextShape(
         href,
         baseline,
         highlight,
+        glow: rPr ? _resolveGlow(rPr, themeColors) : null,
       });
     }
 
@@ -850,6 +852,7 @@ async function _extractTextShape(
           href: null,
           baseline: null,
           highlight: null,
+          glow: rPr ? _resolveGlow(rPr, themeColors) : null,
         });
       }
     }
@@ -1582,17 +1585,8 @@ const PRESET_COLORS: Record<string, string> = {
   orange: 'ffa500', purple: '800080', dkBlue: '00008b', ltBlue: 'add8e6',
 };
 
-/** True for #RRGGBB whose channels are all near-max (text would be invisible
- * on a white slide). Used to trigger the glow-color fallback for headings. */
-function _isNearWhite(color: string): boolean {
-  const m = /^#([0-9a-fA-F]{6})$/.exec(color);
-  if (!m) { return false; }
-  const [r, g, b] = _hexToRgb(m[1]);
-  return r >= 224 && g >= 224 && b >= 224;
-}
-
 /** Resolve the color of a run's <a:effectLst><a:glow> (if any), ignoring the
- * glow's own alpha — we want a solid, readable text color, not a faded halo. */
+ * glow's own alpha — we want a solid halo color, not a faded one. */
 function _resolveGlowColor(rPr: Element, themeColors: Map<string, string>): string | null {
   const effectLst = rPr.getElementsByTagNameNS(NS_A, 'effectLst')[0];
   if (!effectLst) { return null; }
@@ -1611,6 +1605,31 @@ function _resolveGlowColor(rPr: Element, themeColors: Map<string, string>): stri
   if (hex && colorEl) { return `#${_applyColorModifiers(hex, colorEl)}`; }
   if (hex) { return `#${hex}`; }
   return null;
+}
+
+/**
+ * Resolve a run's <a:glow> effect into a CSS text-shadow string, or null.
+ *
+ * "White/light text + colored glow" is a common PPTX heading idiom: the text
+ * fill is white (invisible on a light slide) and a colored glow makes it
+ * visible. PowerPoint/LibreOffice render the halo; to match, we keep the
+ * faithful (white) text color and add the glow as a text-shadow. We stack
+ * the shadow a few times because a single soft blur washes out when the text
+ * and background are both light — stacking thickens the halo into a readable
+ * colored outline.
+ */
+function _resolveGlow(rPr: Element, themeColors: Map<string, string>): string | null {
+  const effectLst = rPr.getElementsByTagNameNS(NS_A, 'effectLst')[0];
+  if (!effectLst) { return null; }
+  const glow = effectLst.getElementsByTagNameNS(NS_A, 'glow')[0];
+  if (!glow) { return null; }
+  const color = _resolveGlowColor(rPr, themeColors);
+  if (!color) { return null; }
+  const radEmu = parseInt(glow.getAttribute('rad') ?? '0', 10);
+  const radPt = radEmu > 0 ? radEmu / 12700 : 4;  // EMU → pt (12700 EMU/pt)
+  const b = `calc(${radPt.toFixed(1)} * var(--pt, 1pt))`;
+  // Three stacked copies → a denser, more visible halo than a single blur.
+  return `0 0 ${b} ${color},0 0 ${b} ${color},0 0 ${b} ${color}`;
 }
 
 function _resolveSolidFillColor(solidFill: Element, themeColors: Map<string, string>): string | null {
@@ -1656,19 +1675,8 @@ function _resolveSolidFillColor(solidFill: Element, themeColors: Map<string, str
 /** Extract font color from <a:rPr> inner <a:solidFill> */
 function _resolveRunColor(rPr: Element, themeColors: Map<string, string>): string | null {
   const solidFill = rPr.getElementsByTagNameNS(NS_A, 'solidFill')[0];
-  const fillColor = solidFill ? _resolveSolidFillColor(solidFill, themeColors) : null;
-  // "White text + colored glow" is a common PPTX idiom for a colored heading:
-  // the glow, not the fill, is what the eye reads (PowerPoint/LibreOffice
-  // render the halo). We don't render glow as a halo, so white-on-transparent
-  // text would be invisible. When the fill is missing or white/near-white and
-  // the run has a colored glow, use the glow color as the text color — both
-  // visible and the intended hue. (Slide 17 headings 设备配置概述/硬件选型规划
-  // are exactly this: <a:prstClr val="white"/> + <a:glow><a:srgbClr 0070C0>.)
-  if (!fillColor || _isNearWhite(fillColor)) {
-    const glowColor = _resolveGlowColor(rPr, themeColors);
-    if (glowColor) { return glowColor; }
-  }
-  return fillColor;
+  if (!solidFill) { return null; }
+  return _resolveSolidFillColor(solidFill, themeColors);
 }
 
 /** Resolve font family from <a:rPr> → <a:latin>/<a:ea>/<a:cs>, with theme font token resolution */
