@@ -576,7 +576,11 @@ ipcMain.handle('convert-emf', async (_e, items) => {
       '    $img = [System.Drawing.Image]::FromFile($j.inPath)',
       '    $w = [int]($img.Width * 2); $h = [int]($img.Height * 2)',
       '    if ($w -lt 1) { $w = 1 }; if ($h -lt 1) { $h = 1 }',
-      '    if ($w -gt 4000) { $w = 4000 }; if ($h -gt 4000) { $h = 4000 }',
+      // Clamp the LONGER side to 4000px and scale both by the same factor so
+      // the aspect ratio is preserved (clamping w/h independently would squash
+      // metafiles that are large in only one dimension).
+      '    $mx = [Math]::Max($w, $h)',
+      '    if ($mx -gt 4000) { $f = 4000.0 / $mx; $w = [int]($w * $f); $h = [int]($h * $f); if ($w -lt 1) { $w = 1 }; if ($h -lt 1) { $h = 1 } }',
       '    $bmp = New-Object System.Drawing.Bitmap($w, $h)',
       '    $g = [System.Drawing.Graphics]::FromImage($bmp)',
       '    $g.Clear([System.Drawing.Color]::White)',
