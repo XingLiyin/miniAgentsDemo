@@ -9,13 +9,13 @@
  */
 
 import JSZip from 'jszip'
-// Use the browser-native DOMParser instead of @xmldom/xmldom (the spike was
-// ported from a Node-only NID build where xmldom was required). The native
-// parser builds a real DOM with internal indices, making getElementsByTagName
-// roughly O(1) amortised — vs xmldom's O(subtree) per call. With ~101 query
-// sites in this parser and a 100KB layout that one slide had to cold-parse,
-// the swap collapses slide #2 from 13s to well under a second. API is
-// compatible (both expose parseFromString and standard DOM query methods).
+// We have to keep @xmldom/xmldom even though we run in an Electron Web Worker.
+// Native DOMParser is NOT in DedicatedWorkerGlobalScope per spec — it only
+// lives on Window. (TS will let `DOMParser` type-check because lib.dom is
+// included for the rest of the project, but at runtime in the worker
+// `new DOMParser()` throws "DOMParser is not defined".) An attempt to swap
+// to native in 0.2.22 hit exactly this and had to be reverted in 0.2.23.
+import { DOMParser } from '@xmldom/xmldom'
 
 // ── OOXML Namespaces ─────────────────────────────────────────────────────────
 
@@ -294,6 +294,24 @@ export async function parsePptx(
     return entry;
   }
 
+  // 2c. Cache for slide layouts (keyed by layout path). Without this, EVERY
+  // slide using the same layout re-extracts the layout shapes — and on this
+  // codebase's xmldom-backed _extractShapes, that's the dominant per-slide
+  // cost on layouts with many shapes (~300ms on a 9-shape layout). For
+  // corporate decks where 30+ slides share a single content layout, this
+  // cache is the biggest steady-state win available without changing the
+  // XML library. It does NOT help slide #2 in the user's test deck (slide
+  // #2 is the only user of slideLayout1, so it pays the cold cost itself),
+  // but every slide after it benefits.
+  interface LayoutCache {
+    doc: Document;
+    relsMap: Map<string, string>;
+    shapes: SlideShape[];
+    bg: { bgColor?: string; bgImage?: string };
+    suppressMasterShapes: boolean;
+  }
+  const layoutCache = new Map<string, LayoutCache>();
+
   // 3. Parse each slide
   const slides: SlideData[] = [];
   // Track the last-used themeFonts for HTML rendering (used for CSS font-family)
@@ -367,20 +385,39 @@ export async function parsePptx(
     let suppressMasterShapes = false;   // default: show master shapes
     let layoutBg: { bgColor?: string; bgImage?: string } = {};
     if (layoutPath) {
-      const layoutXml = await zip.file(layoutPath)?.async('string');
-      if (layoutXml) {
-        const layoutDoc = parser.parseFromString(layoutXml, 'text/xml');
-        // Check showMasterSp attribute — "0" means hide all master shapes for this layout
-        const sldLayoutEl = layoutDoc.getElementsByTagNameNS(NS_P, 'sldLayout')[0];
-        suppressMasterShapes = sldLayoutEl?.getAttribute('showMasterSp') === '0';
-
-        _collectPlaceholderTransforms(layoutDoc, phMap);
-        _applyLayoutLstStyles(layoutDoc, phMap);
-        const layoutRelsPath = layoutPath.replace(/\/([^/]+)$/, '/_rels/$1') + '.rels';
-        const layoutRelsXml = await zip.file(layoutRelsPath)?.async('string');
-        const layoutRelsMap = _parseRelsXml(layoutRelsXml, parser);
-        layoutShapes = await _extractShapes(layoutDoc, layoutRelsMap, zip, parser, new Map(), true, themeColors, themeFonts, 'ppt/slideLayouts/');
-        layoutBg = await _extractBg(layoutDoc, layoutRelsMap, zip, themeColors, 'ppt/slideLayouts/');
+      let layoutEntry = layoutCache.get(layoutPath);
+      if (!layoutEntry) {
+        // Cold path: parse the layout XML, extract everything, cache it.
+        const layoutXml = await zip.file(layoutPath)?.async('string');
+        if (layoutXml) {
+          const layoutDoc = parser.parseFromString(layoutXml, 'text/xml');
+          const sldLayoutEl = layoutDoc.getElementsByTagNameNS(NS_P, 'sldLayout')[0];
+          const suppress = sldLayoutEl?.getAttribute('showMasterSp') === '0';
+          const layoutRelsPath = layoutPath.replace(/\/([^/]+)$/, '/_rels/$1') + '.rels';
+          const layoutRelsXml = await zip.file(layoutRelsPath)?.async('string');
+          const layoutRelsMap = _parseRelsXml(layoutRelsXml, parser);
+          const lShapes = await _extractShapes(layoutDoc, layoutRelsMap, zip, parser, new Map(), true, themeColors, themeFonts, 'ppt/slideLayouts/');
+          const lBg = await _extractBg(layoutDoc, layoutRelsMap, zip, themeColors, 'ppt/slideLayouts/');
+          layoutEntry = {
+            doc: layoutDoc as unknown as Document,
+            relsMap: layoutRelsMap,
+            shapes: lShapes,
+            bg: lBg,
+            suppressMasterShapes: suppress,
+          };
+          layoutCache.set(layoutPath, layoutEntry);
+        }
+      }
+      if (layoutEntry) {
+        // Per-slide phMap merge still runs every time (it mutates the
+        // slide-specific phMap from masterPhMap baseline). These calls are
+        // cheap relative to _extractShapes so caching just _extractShapes
+        // is the big win.
+        suppressMasterShapes = layoutEntry.suppressMasterShapes;
+        _collectPlaceholderTransforms(layoutEntry.doc as unknown as Parameters<typeof _collectPlaceholderTransforms>[0], phMap);
+        _applyLayoutLstStyles(layoutEntry.doc as unknown as Parameters<typeof _applyLayoutLstStyles>[0], phMap);
+        layoutShapes = layoutEntry.shapes;
+        layoutBg = layoutEntry.bg;
       }
     }
     const _tLayout = performance.now();
@@ -422,7 +459,7 @@ async function _extractShapes(
   doc: Document,
   relsMap: Map<string, string>,
   zip: InstanceType<typeof import('jszip')>,
-  _parser: DOMParser,
+  _parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
   phMap: Map<string, PlaceholderTransform>,
   nonPhOnly = false,
   themeColors: Map<string, string> = new Map(),
@@ -1787,7 +1824,7 @@ function _getGroupTransformInfo(
 /** Parse a rels XML string into a rId → target map */
 function _parseRelsXml(
   relsXml: string | undefined | null,
-  parser: DOMParser,
+  parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (!relsXml) { return map; }
