@@ -9,7 +9,13 @@
  */
 
 import JSZip from 'jszip'
-import { DOMParser } from '@xmldom/xmldom'
+// Use the browser-native DOMParser instead of @xmldom/xmldom (the spike was
+// ported from a Node-only NID build where xmldom was required). The native
+// parser builds a real DOM with internal indices, making getElementsByTagName
+// roughly O(1) amortised — vs xmldom's O(subtree) per call. With ~101 query
+// sites in this parser and a 100KB layout that one slide had to cold-parse,
+// the swap collapses slide #2 from 13s to well under a second. API is
+// compatible (both expose parseFromString and standard DOM query methods).
 
 // ── OOXML Namespaces ─────────────────────────────────────────────────────────
 
@@ -392,7 +398,12 @@ export async function parsePptx(
 
     const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
     slides.push(slide);
-    if (_tBg - _tStart > 1000) {
+    // Always emit pipe-sanity for slide #1 so we know the diag channel works
+    // (0.2.21 user report had no diag lines at all — could be either gate
+    // misfire or pipe break; this disambiguates definitively). For other
+    // slides, only emit when >200ms so we see anything noteworthy without
+    // 45 lines of spam.
+    if (i === 0 || _tBg - _tStart > 200) {
       const diag = `[pptx-slide-perf] #${i + 1}: xml=${(_tXml - _tStart).toFixed(0)} layoutChain=${(_tLayout - _tXml).toFixed(0)} (master=${(_tMaster - _tXml).toFixed(0)} layout=${(_tLayout - _tMaster).toFixed(0)}) docParse=${(_tDoc - _tLayout).toFixed(0)} extractShapes=${(_tExtract - _tDoc).toFixed(0)} extractBg=${(_tBg - _tExtract).toFixed(0)} TOTAL=${(_tBg - _tStart).toFixed(0)}ms shapes=${shapes.length}`;
       onDiag?.(diag);
     }
@@ -411,7 +422,7 @@ async function _extractShapes(
   doc: Document,
   relsMap: Map<string, string>,
   zip: InstanceType<typeof import('jszip')>,
-  _parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
+  _parser: DOMParser,
   phMap: Map<string, PlaceholderTransform>,
   nonPhOnly = false,
   themeColors: Map<string, string> = new Map(),
@@ -1776,7 +1787,7 @@ function _getGroupTransformInfo(
 /** Parse a rels XML string into a rId → target map */
 function _parseRelsXml(
   relsXml: string | undefined | null,
-  parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
+  parser: DOMParser,
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (!relsXml) { return map; }
