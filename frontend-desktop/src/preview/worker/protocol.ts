@@ -2,7 +2,16 @@
 // PDF (pdfjs's own worker) do NOT go through here.
 export type ParseKind = 'xlsx' | 'pptx'
 
-export interface ParseProgress { phase: string; loaded?: number; total?: number }
+export interface ParseProgress {
+  phase: string
+  loaded?: number
+  total?: number
+  /** For kind='pptx' streaming: a single slide just parsed in the worker.
+   * The viewer can render this slide immediately so the first page is
+   * visible long before the full deck finishes parsing on a slow doc. */
+  slide?: import('./parsers/pptx').SlideData
+  slideIdx?: number
+}
 
 export interface ParseRequestMsg {
   type: 'parse'

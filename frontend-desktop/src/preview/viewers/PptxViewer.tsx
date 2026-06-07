@@ -44,7 +44,8 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   const slideCountRef = useRef(0)
   useEffect(() => { slideCountRef.current = rendered.length }, [rendered.length])
 
-  // Load + parse the PPTX.
+  // Load + parse the PPTX. Streams each slide back via worker progress so the
+  // first page becomes visible long before the full deck finishes parsing.
   useEffect(() => {
     const ac = new AbortController()
     setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
@@ -55,38 +56,33 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       .then((buf) => {
         if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
         setStage('parsing')
-        return parseInWorker('pptx', buf, { signal: ac.signal })
+        return parseInWorker('pptx', buf, {
+          signal: ac.signal,
+          onProgress: (p) => {
+            // Worker emits one progress message per slide it finishes parsing.
+            if (ac.signal.aborted) return
+            if (!p.slide || typeof p.slideIdx !== 'number') return
+            const slide = p.slide
+            const idx = p.slideIdx
+            const out = slideToHtml(slide, idx)
+            const title = extractTitle(slide)
+            const label = title || t('preview.slideN', { n: idx + 1 })
+            const prefix = title ? `${idx + 1}. ` : ''
+            setCombinedCss((prev) => prev + out.css)
+            setRendered((prev) => [...prev, { idx, html: out.html, aspect: slide.width / slide.height }])
+            setToc((prev) => [...prev, { id: `slide-${idx}`, label: `${prefix}${label}` }])
+            // The first slide on screen → we can transition out of the
+            // spinner so the user sees real content, even while later slides
+            // are still arriving from the worker.
+            if (idx === 0) setStage('done')
+          },
+        })
       })
       .then((res) => {
         if (ac.signal.aborted) return
-        setStage('rendering')
-        // Defer the heavy slideToHtml + setState a tick so the "rendering"
-        // label paints before the main thread blocks. Without this the user
-        // sees no feedback between "parsing" and the fully-rendered viewer.
-        return new Promise<void>((resolve) => {
-          setTimeout(() => {
-            if (ac.signal.aborted) { resolve(); return }
-            let css = ''
-            const html: RenderedSlide[] = []
-            for (let i = 0; i < res.slides.length; i++) {
-              const slide = res.slides[i]
-              const out = slideToHtml(slide, i)
-              css += out.css
-              html.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
-            }
-            const tocItems: TocItem[] = res.slides.map((slide, i) => {
-              const title = extractTitle(slide)
-              const label = title || t('preview.slideN', { n: i + 1 })
-              const prefix = title ? `${i + 1}. ` : ''
-              return { id: `slide-${i}`, label: `${prefix}${label}` }
-            })
-            setCombinedCss(css)
-            setRendered(html)
-            setToc(tocItems)
-            setStage('done')
-            resolve()
-          }, 0)
-        })
+        // Edge case: empty deck → onProgress never fired, so leave the
+        // spinner state in place and render "no slides" gracefully.
+        if (res && res.slides.length === 0) setStage('done')
       })
       .catch((e: unknown) => {
         if ((e as { name?: string }).name !== 'AbortError') {
@@ -221,49 +217,36 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
       ref={containerRef}
       className="ipm-pptx-root"
       style={{
+        // Zoom is a CSS variable consumed by .ipm-pptx-slide's width calc().
+        // Driving width through CSS (not React inline style) means the
+        // browser handles the resize natively the instant zoom changes,
+        // without waiting for a React re-render of every slide.
         ['--pptx-zoom' as string]: String(scale),
-        // Scroll-snap is great in fit-page mode (one slide per viewport, wheel
-        // settles on the next slide). But when the user has zoomed in, the
-        // slide is bigger than the viewport and mandatory snap locks the view
-        // to the slide's top edge — they can't actually pan around the zoomed
+        // Container dimensions expose to slide CSS for fit-page calc.
+        ['--pptx-container-w' as string]: `${containerSize.w}px`,
+        ['--pptx-container-h' as string]: `${containerSize.h}px`,
+        // Scroll-snap is great in fit-page mode (one slide per viewport,
+        // wheel settles on the next slide). But when the user has zoomed in,
+        // the slide is bigger than the viewport and mandatory snap locks the
+        // view to the slide's top edge — they can't pan around the zoomed
         // content. Disable snap whenever scale != 1.
         scrollSnapType: scale === 1 ? 'y mandatory' : 'none',
       }}
     >
       <style dangerouslySetInnerHTML={{ __html: combinedCss }} />
-      {rendered.map((s) => {
-        // Fit-page: each slide must fit within both container width and height.
-        // We compute the slide width as min(width-bound, height-bound) so a
-        // 16:9 deck inside a 4:3-ish modal isn't taller than the visible area.
-        // SIDE_MARGIN provides the white space the user wanted around each
-        // slide; TOP_MARGIN matches the per-slide CSS margin (so a fully-fit
-        // slide can scroll-snap cleanly to the next).
-        const SIDE_MARGIN = 48
-        const TOP_MARGIN = 48
-        const fitW = containerSize.w > 0
-          ? Math.min(
-              containerSize.w - SIDE_MARGIN,
-              (containerSize.h - TOP_MARGIN) * s.aspect,
-            )
-          : 0
-        const slideW = fitW > 0 ? fitW * scale : 0
-        return (
-          <div
-            key={s.idx}
-            ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
-            className={`ipm-pptx-slide sld-${s.idx}`}
-            data-idx={s.idx}
-            style={{
-              aspectRatio: `${s.aspect}`,
-              width: slideW > 0 ? `${slideW}px` : undefined,
-            }}
-          >
-            {/* slide-inner is NID's absolute-positioning container. Shape <div>s
-                from _buildShapeParts position relative to it. */}
-            <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
-          </div>
-        )
-      })}
+      {rendered.map((s) => (
+        <div
+          key={s.idx}
+          ref={(el) => { if (el) slideRefs.current[s.idx] = el }}
+          className={`ipm-pptx-slide sld-${s.idx}`}
+          data-idx={s.idx}
+          style={{ ['--slide-aspect' as string]: String(s.aspect) }}
+        >
+          {/* slide-inner is NID's absolute-positioning container. Shape <div>s
+              from _buildShapeParts position relative to it. */}
+          <div className="slide-inner" dangerouslySetInnerHTML={{ __html: s.html }} />
+        </div>
+      ))}
     </div>
   )
 }

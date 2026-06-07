@@ -27,7 +27,16 @@ async function dispatch(msg: ParseRequestMsg): Promise<unknown> {
   switch (msg.kind) {
     case 'xlsx': return parseXlsx(msg.buffer, (msg.options ?? {}) as XlsxParseOptions)
     case 'pptx': {
-      const result = await parsePptx(msg.buffer)
+      // Stream each slide back as a progress message the moment it's parsed,
+      // so the viewer can render the first page within ~1s instead of waiting
+      // for the entire deck. The final 'result' message confirms completion.
+      const result = await parsePptx(msg.buffer, (slide, idx, total) => {
+        post({
+          type: 'progress',
+          id: msg.id,
+          progress: { phase: 'pptx-slide', loaded: idx + 1, total, slide, slideIdx: idx },
+        })
+      })
       // themeFonts is a Map<string,string>; protocol declares it as
       // Record<string,string>. Convert before postMessage so consumers
       // get the documented shape.

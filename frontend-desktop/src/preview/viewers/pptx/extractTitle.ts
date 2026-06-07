@@ -5,15 +5,14 @@ const MAX_TITLE_CHARS = 50
 /**
  * Returns the first non-empty run text from the slide, trimmed to
  * MAX_TITLE_CHARS code points (CJK-safe via Array.from). Returns '' only
- * when neither the slide nor its layout has any usable text.
+ * when nothing in the slide/layout/master has usable text.
  *
  * Search order:
  *   1. slide.shapes — author-provided content (overrides layout).
- *   2. slide.layoutShapes — fallback. Many decks rely on the layout's title
- *      placeholder default text and don't re-emit a title shape on each slide,
- *      so without this fallback the TOC would show numeric placeholders for
- *      every slide in the deck. Layout shapes usually have the title text
- *      first (top-most placeholder is the title in standard layouts).
+ *   2. slide.layoutShapes — fallback when the slide author didn't override
+ *      anything on this slide and just relies on the layout's placeholder.
+ *   3. slide.masterShapes — fallback when the title lives in the master
+ *      template (corporate decks often put the section heading there).
  *
  * Empty-text shapes are skipped within each list so a blank title placeholder
  * doesn't end the search prematurely.
@@ -25,7 +24,9 @@ const MAX_TITLE_CHARS = 50
  * it here.
  */
 export function extractTitle(slide: SlideData): string {
-  return extractFromShapes(slide.shapes) || extractFromShapes(slide.layoutShapes)
+  return extractFromShapes(slide.shapes)
+      || extractFromShapes(slide.layoutShapes)
+      || extractFromShapes(slide.masterShapes)
 }
 
 function extractFromShapes(shapes: SlideShape[]): string {

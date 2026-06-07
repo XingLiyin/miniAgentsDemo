@@ -164,7 +164,10 @@ function _emuToPx(emu: number): number {
   return Math.round(emu / 914400 * 96 * 10) / 10;
 }
 
-export async function parsePptx(data: ArrayBuffer | Uint8Array): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
+export async function parsePptx(
+  data: ArrayBuffer | Uint8Array,
+  onSlide?: (slide: SlideData, idx: number, total: number) => void,
+): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
   const zip = await JSZip.loadAsync(data);
   const parser = new DOMParser();
 
@@ -350,7 +353,9 @@ export async function parsePptx(data: ArrayBuffer | Uint8Array): Promise<{ slide
     if (!bg.bgColor && !bg.bgImage) { bg = layoutBg; }
     if (!bg.bgColor && !bg.bgImage) { bg = masterBg; }
 
-    slides.push({ index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage });
+    const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
+    slides.push(slide);
+    onSlide?.(slide, i, slideFiles.length);
   }
 
   return { slides, themeFonts: lastThemeFonts };
