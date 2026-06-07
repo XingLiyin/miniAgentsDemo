@@ -66,17 +66,8 @@ describe('parseInWorker', () => {
     await expect(p2).rejects.toThrow(/crash/i)
   })
 
-  it('returns PptxResult for kind=pptx with typed result', async () => {
-    let fake!: FakeWorker
-    __setWorkerFactory(() => (fake = makeFake()))
-    const p = parseInWorker('pptx', new ArrayBuffer(8))
-    const id = fake.sent[0].id
-    const data = { slides: [], themeFonts: {} }
-    fake.emit({ type: 'result', id, kind: 'pptx', data })
-    const result = await p
-    // ParseResultData<'pptx'> typing: TypeScript treats result as PptxResult
-    expect(result).toEqual(data)
-    expect(Array.isArray(result.slides)).toBe(true)
-    expect(typeof result.themeFonts).toBe('object')
-  })
+  // PPTX no longer goes through the worker — it moved to the main thread in
+  // the post-0.2.23 pivot so the parser could use native DOMParser. Only
+  // 'xlsx' remains as a ParseKind; the typed-result test above for xlsx
+  // covers ParseResultData<K> generics.
 })

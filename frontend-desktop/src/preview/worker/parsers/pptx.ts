@@ -9,13 +9,15 @@
  */
 
 import JSZip from 'jszip'
-// We have to keep @xmldom/xmldom even though we run in an Electron Web Worker.
-// Native DOMParser is NOT in DedicatedWorkerGlobalScope per spec — it only
-// lives on Window. (TS will let `DOMParser` type-check because lib.dom is
-// included for the rest of the project, but at runtime in the worker
-// `new DOMParser()` throws "DOMParser is not defined".) An attempt to swap
-// to native in 0.2.22 hit exactly this and had to be reverted in 0.2.23.
-import { DOMParser } from '@xmldom/xmldom'
+// This parser now runs on the MAIN THREAD (not a Web Worker), so we use the
+// browser-native DOMParser. Reason for the move: xmldom is pure-JS DOM with
+// no internal indices, making getElementsByTagName O(subtree) per call —
+// catastrophic on heavy slide layouts (the user's test deck has one 100KB
+// layout with 49 shapes that took 13s to extract under xmldom). Native
+// DOMParser builds a real DOM with cached HTMLCollection indices and is
+// >10x faster. It's not in DedicatedWorkerGlobalScope (Window only, per
+// spec), which is why we run on the main thread now — see file-rendering-
+// upgrade memory entry for the full pivot rationale.
 
 // ── OOXML Namespaces ─────────────────────────────────────────────────────────
 
@@ -191,12 +193,6 @@ async function _encodeImageOnce(imgFile: { async(t: 'base64'): Promise<string> }
 
 export async function parsePptx(
   data: ArrayBuffer | Uint8Array,
-  onSlide?: (slide: SlideData, idx: number, total: number) => void,
-  /** Diagnostic channel — receives one string per slow slide. Routed to the
-   * main thread by the worker dispatch so it shows up in the renderer's
-   * DevTools console (the worker's own console output is hidden by default
-   * filters in Electron, so this is the only reliable path). */
-  onDiag?: (msg: string) => void,
 ): Promise<{ slides: SlideData[]; themeFonts: Map<string, string> }> {
   _imageBase64Cache = new Map();
   try {
@@ -318,14 +314,8 @@ export async function parsePptx(
   let lastThemeFonts = defaultThemeFonts;
 
   for (let i = 0; i < slideFiles.length; i++) {
-    // Per-slide sub-step timing. Only log to worker console when a slide is
-    // unusually slow (>1s) so we can see WHAT in that slide is expensive
-    // (xml decompress / layout chain / shape extract / background extract)
-    // without spamming the console for normal slides.
-    const _tStart = performance.now();
     const slideFile = slideFiles[i];
     const xml = await zip.file(slideFile)?.async('string');
-    const _tXml = performance.now();
     if (!xml) { continue; }
 
     // Load relationship file for images + resolve slide layout path
@@ -371,7 +361,6 @@ export async function parsePptx(
     }
 
     const master = await _loadMaster(masterPath);
-    const _tMaster = performance.now();
     const themeColors = master.themeColors;
     const themeFonts = master.themeFonts;
     lastThemeFonts = themeFonts;
@@ -420,31 +409,17 @@ export async function parsePptx(
         layoutBg = layoutEntry.bg;
       }
     }
-    const _tLayout = performance.now();
 
     const doc = parser.parseFromString(xml, 'text/xml');
-    const _tDoc = performance.now();
     const shapes = await _extractShapes(doc, relsMap, zip, parser, phMap, false, themeColors, themeFonts);
-    const _tExtract = performance.now();
 
     // Background inheritance: slide → layout → master
     let bg = await _extractBg(doc, relsMap, zip, themeColors);
     if (!bg.bgColor && !bg.bgImage) { bg = layoutBg; }
     if (!bg.bgColor && !bg.bgImage) { bg = masterBg; }
-    const _tBg = performance.now();
 
     const slide: SlideData = { index: i, width: widthPx, height: heightPx, shapes, masterShapes, layoutShapes, suppressMasterShapes, bgColor: bg.bgColor, bgImage: bg.bgImage };
     slides.push(slide);
-    // Always emit pipe-sanity for slide #1 so we know the diag channel works
-    // (0.2.21 user report had no diag lines at all — could be either gate
-    // misfire or pipe break; this disambiguates definitively). For other
-    // slides, only emit when >200ms so we see anything noteworthy without
-    // 45 lines of spam.
-    if (i === 0 || _tBg - _tStart > 200) {
-      const diag = `[pptx-slide-perf] #${i + 1}: xml=${(_tXml - _tStart).toFixed(0)} layoutChain=${(_tLayout - _tXml).toFixed(0)} (master=${(_tMaster - _tXml).toFixed(0)} layout=${(_tLayout - _tMaster).toFixed(0)}) docParse=${(_tDoc - _tLayout).toFixed(0)} extractShapes=${(_tExtract - _tDoc).toFixed(0)} extractBg=${(_tBg - _tExtract).toFixed(0)} TOTAL=${(_tBg - _tStart).toFixed(0)}ms shapes=${shapes.length}`;
-      onDiag?.(diag);
-    }
-    onSlide?.(slide, i, slideFiles.length);
   }
 
   return { slides, themeFonts: lastThemeFonts };
@@ -459,7 +434,7 @@ async function _extractShapes(
   doc: Document,
   relsMap: Map<string, string>,
   zip: InstanceType<typeof import('jszip')>,
-  _parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
+  _parser: DOMParser,
   phMap: Map<string, PlaceholderTransform>,
   nonPhOnly = false,
   themeColors: Map<string, string> = new Map(),
@@ -1824,7 +1799,7 @@ function _getGroupTransformInfo(
 /** Parse a rels XML string into a rId → target map */
 function _parseRelsXml(
   relsXml: string | undefined | null,
-  parser: InstanceType<typeof import('@xmldom/xmldom').DOMParser>,
+  parser: DOMParser,
 ): Map<string, string> {
   const map = new Map<string, string>();
   if (!relsXml) { return map; }

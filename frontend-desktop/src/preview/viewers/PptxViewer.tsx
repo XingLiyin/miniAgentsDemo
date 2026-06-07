@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchOrThrow, rawUrl, ErrorMsg } from './common'
 import { Spinner } from '@/components/ui/spinner'
-import { parseInWorker } from '../worker/parseClient'
+import { parsePptx } from '../worker/parsers/pptx'
 import { usePreviewToolbar } from '../toolbar/PreviewToolbarContext'
 import type { TocItem } from '../toolbar/capabilities'
 import { useI18n } from '@/i18n'
 import { slideToHtml } from './pptx/slideToHtml'
 import { extractTitle } from './pptx/extractTitle'
 import './pptx/pptx.css'
-
-type LoadStage = 'fetching' | 'parsing' | 'rendering' | 'done'
 
 const ZOOM_STEP = 0.2
 const ZOOM_MIN = 0.5
@@ -33,7 +31,7 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   const [scale, setScale] = useState(1)
   const [current, setCurrent] = useState(1)
   const [toc, setToc] = useState<TocItem[]>([])
-  const [stage, setStage] = useState<LoadStage>('fetching')
+  const [loading, setLoading] = useState(true)
   // Visible viewport size of the scroll container, used to compute fit-page
   // dimensions so each slide fits within both width AND height (not just width).
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
@@ -44,95 +42,69 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   const slideCountRef = useRef(0)
   useEffect(() => { slideCountRef.current = rendered.length }, [rendered.length])
 
-  // Load + parse the PPTX. Streams each slide back via worker progress so the
-  // first page becomes visible long before the full deck finishes parsing.
+  // Load + parse the PPTX. parsePptx runs ON THE MAIN THREAD using the native
+  // DOMParser — see the parser file header for why. We took two approaches
+  // before this one (worker streaming, then worker-with-native-DOMParser);
+  // neither worked. The current shape: synchronous-from-user-POV, one batch
+  // setState after parse completes. Total wall time ~1-1.5s for a 45-slide
+  // corporate deck. During that window React's render queue stays empty
+  // (no per-slide setState storm), so the modal close button stays
+  // responsive even mid-parse.
   useEffect(() => {
-    const ac = new AbortController()
+    let cancelled = false
     setError(null); setRendered([]); setCombinedCss(''); setCurrent(1); setToc([])
-    setStage('fetching')
+    setLoading(true)
     slideRefs.current = []
-    // Timing diagnostics — surfaces step-1 (fetch) / step-2+pre-stream (master
-    // + layout + theme parse) / step-3 (per-slide loop) durations to the F12
-    // console so we can identify which phase is the actual bottleneck without
-    // shipping a UI for it.
+    // Lightweight timing diagnostic kept post-pivot — confirms the new path
+    // hits its budget. Logged to F12 console; harmless if no one looks.
     const tStart = performance.now()
-    let tFetchDone = 0
-    let tFirstSlide = 0
-    let tLastSlide = 0
-    let tPrev = 0
-    const perSlideMs: number[] = []
     console.log('[pptx-timing] load start')
     fetchOrThrow(rawUrl(path))
       .then((r) => r.arrayBuffer())
-      .then((buf) => {
-        if (ac.signal.aborted) throw new DOMException('Aborted', 'AbortError')
-        tFetchDone = performance.now()
+      .then(async (buf) => {
+        if (cancelled) return
+        const tFetchDone = performance.now()
         console.log(`[pptx-timing] fetch+arrayBuffer done: ${(tFetchDone - tStart).toFixed(0)} ms`)
-        setStage('parsing')
-        return parseInWorker('pptx', buf, {
-          signal: ac.signal,
-          onProgress: (p) => {
-            // Worker emits one progress message per slide it finishes parsing.
-            if (ac.signal.aborted) return
-            // Diagnostic message routed from the parser (e.g. per-slide
-            // sub-step timing). Forward to the main-thread console so the
-            // user sees it in DevTools.
-            if (p.diag) { console.log(p.diag); return }
-            if (!p.slide || typeof p.slideIdx !== 'number') return
-            const now = performance.now()
-            if (p.slideIdx === 0) {
-              tFirstSlide = now
-              tPrev = now
-              console.log(`[pptx-timing] worker step1+step2 (before first slide): ${(tFirstSlide - tFetchDone).toFixed(0)} ms`)
-            } else {
-              perSlideMs.push(now - tPrev)
-              tPrev = now
-            }
-            tLastSlide = now
-            const slide = p.slide
-            const idx = p.slideIdx
-            const out = slideToHtml(slide, idx)
-            const title = extractTitle(slide)
-            const label = title || t('preview.slideN', { n: idx + 1 })
-            const prefix = title ? `${idx + 1}. ` : ''
-            setCombinedCss((prev) => prev + out.css)
-            setRendered((prev) => [...prev, { idx, html: out.html, aspect: slide.width / slide.height }])
-            setToc((prev) => [...prev, { id: `slide-${idx}`, label: `${prefix}${label}` }])
-            // The first slide on screen → we can transition out of the
-            // spinner so the user sees real content, even while later slides
-            // are still arriving from the worker.
-            if (idx === 0) setStage('done')
-          },
-        })
-      })
-      .then((res) => {
-        if (ac.signal.aborted) return
-        // Edge case: empty deck → onProgress never fired, so leave the
-        // spinner state in place and render "no slides" gracefully.
-        if (res && res.slides.length === 0) setStage('done')
-        if (res && tFirstSlide > 0) {
-          console.log(`[pptx-timing] streaming step3 (${res.slides.length} slides): ${(tLastSlide - tFirstSlide).toFixed(0)} ms`)
-          console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
-          if (perSlideMs.length > 0) {
-            const avg = perSlideMs.reduce((a, b) => a + b, 0) / perSlideMs.length
-            const slowest = perSlideMs
-              .map((ms, i) => ({ slide: i + 2, ms }))  // i=0 corresponds to slide #2 (slide #1 is the first one, no delta)
-              .sort((a, b) => b.ms - a.ms)
-              .slice(0, 5)
-            console.log(`[pptx-timing] per-slide avg: ${avg.toFixed(0)} ms — slowest 5:`, slowest.map(s => `#${s.slide}=${s.ms.toFixed(0)}ms`).join(', '))
-          }
+        const result = await parsePptx(buf)
+        if (cancelled) return
+        const tParseDone = performance.now()
+        console.log(`[pptx-timing] parse done (${result.slides.length} slides): ${(tParseDone - tFetchDone).toFixed(0)} ms`)
+        // Single-batch render assembly. Doing this in one go (vs streaming
+        // per-slide) is what restores main-thread responsiveness during the
+        // brief loading window.
+        const allRendered: RenderedSlide[] = []
+        const allToc: TocItem[] = []
+        let combined = ''
+        for (let i = 0; i < result.slides.length; i++) {
+          const slide = result.slides[i]
+          const out = slideToHtml(slide, i)
+          combined += out.css
+          allRendered.push({ idx: i, html: out.html, aspect: slide.width / slide.height })
+          const title = extractTitle(slide)
+          const label = title || t('preview.slideN', { n: i + 1 })
+          const prefix = title ? `${i + 1}. ` : ''
+          allToc.push({ id: `slide-${i}`, label: `${prefix}${label}` })
         }
+        const tRenderReady = performance.now()
+        console.log(`[pptx-timing] slideToHtml + extractTitle (${result.slides.length} slides): ${(tRenderReady - tParseDone).toFixed(0)} ms`)
+        setCombinedCss(combined)
+        setRendered(allRendered)
+        setToc(allToc)
+        setLoading(false)
+        console.log(`[pptx-timing] total: ${(performance.now() - tStart).toFixed(0)} ms`)
       })
       .catch((e: unknown) => {
+        if (cancelled) return
         if ((e as { name?: string }).name !== 'AbortError') {
           setError(String(e))
+          setLoading(false)
         }
       })
-    return () => ac.abort()
+    return () => { cancelled = true }
   }, [path, t])
 
   // ResizeObserver attached via callback ref. We CANNOT do this in a useEffect
-  // with deps=[] because the container <div> is only rendered when stage==='done';
+  // with deps=[] because the container <div> is only rendered when !loading;
   // useEffect runs at mount time, when the container ref is still null (the
   // viewer is showing the loading spinner). With useEffect the observer would
   // never attach and containerSize would stay at {0,0}, making the CSS calc
@@ -249,14 +221,10 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
   }, [rendered.length, current, scale, toc, path, filename])
 
   if (error) return <ErrorMsg msg={error} />
-  if (stage !== 'done') {
-    const label =
-      stage === 'fetching' ? t('preview.pptxFetching') :
-      stage === 'parsing'  ? t('preview.pptxParsing')  :
-                             t('preview.pptxRendering')
+  if (loading) {
     return (
       <div className="flex h-full items-center justify-center gap-3 text-sm" style={{ color: 'var(--t3)' }}>
-        <Spinner className="h-4 w-4" /> <span>{label}</span>
+        <Spinner className="h-4 w-4" /> <span>{t('preview.parsing')}</span>
       </div>
     )
   }
