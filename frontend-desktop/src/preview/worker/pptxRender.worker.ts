@@ -22,7 +22,8 @@ import { slideToHtml } from '../viewers/pptx/slideToHtml'
 import type { SlideData } from './parsers/pptx'
 
 interface RenderRequest {
-  slides: SlideData[]
+  slide: SlideData
+  idx: number
 }
 
 interface RenderedSlideMsg {
@@ -36,10 +37,14 @@ const ctx = self as unknown as {
   postMessage: (m: RenderedSlideMsg) => void
 }
 
+// One slide per message. The previous "send all 45 slides in one postMessage"
+// approach blocked the main thread for ~8s in structured-clone (each shape's
+// nested paragraphs/runs/images all need to be cloned char-by-char on the
+// sender side — 45 slides × heavy master shapes amounted to multi-MB
+// payloads). Per-slide messages each clone in 10-50ms, distributing the
+// cost so the main thread can paint between sends.
 ctx.onmessage = (ev) => {
-  const { slides } = ev.data
-  for (let i = 0; i < slides.length; i++) {
-    const out = slideToHtml(slides[i], i)
-    ctx.postMessage({ idx: i, css: out.css, html: out.html })
-  }
+  const { slide, idx } = ev.data
+  const out = slideToHtml(slide, idx)
+  ctx.postMessage({ idx, css: out.css, html: out.html })
 }

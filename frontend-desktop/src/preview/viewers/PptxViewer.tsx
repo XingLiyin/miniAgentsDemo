@@ -145,10 +145,24 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
         setToc(allToc)
         setLoading(false)
         console.log(`[pptx-timing] skeleton ready (parse + titles): ${(performance.now() - tStart).toFixed(0)} ms`)
-        // Spawn the render worker and hand it the slides. The worker emits
-        // one rendered slide at a time and we accumulate them into renderedMap.
+        // Spawn the render worker. We send slides ONE AT A TIME instead of
+        // all in one batch — structured-clone of the full deck blocked the
+        // main thread for ~8s on the test deck (45 slides × heavy nested
+        // shapes / image strings). Per-slide messages clone in 10-50ms each.
+        //
+        // The next slide is dispatched from the worker's onmessage handler so
+        // we don't queue all 45 sends synchronously; each send happens only
+        // after the previous result lands. This gives the browser room to
+        // paint each rendered slide before kicking off the next render.
         let firstSlideLogged = false
         let lastSlideLogged = false
+        let nextToSend = 0
+        const totalSlides = result.slides.length
+        const sendNext = () => {
+          if (cancelled || !worker || nextToSend >= totalSlides) return
+          const idx = nextToSend++
+          worker.postMessage({ slide: result.slides[idx], idx })
+        }
         worker = new Worker(new URL('../worker/pptxRender.worker.ts', import.meta.url), { type: 'module' })
         worker.onmessage = (ev: MessageEvent<{ idx: number; css: string; html: string }>) => {
           if (cancelled) return
@@ -157,13 +171,20 @@ export function PptxViewer({ path, filename }: { path: string; filename: string 
             firstSlideLogged = true
             console.log(`[pptx-timing] first slide rendered: ${(performance.now() - tStart).toFixed(0)} ms`)
           }
-          if (idx === result.slides.length - 1 && !lastSlideLogged) {
+          if (idx === totalSlides - 1 && !lastSlideLogged) {
             lastSlideLogged = true
             console.log(`[pptx-timing] all slides rendered: ${(performance.now() - tStart).toFixed(0)} ms`)
           }
           setRenderedMap((prev) => ({ ...prev, [idx]: { css, html } }))
+          // Queue the next render. setTimeout(0) yields a macrotask so React
+          // commits + paints this slide before the next render starts in the
+          // worker (otherwise rapid back-to-back postMessages can starve the
+          // paint pipeline despite the worker being on a separate thread).
+          setTimeout(sendNext, 0)
         }
-        worker.postMessage({ slides: result.slides })
+        // Kick off the chain. First send happens immediately so the worker
+        // starts rendering as soon as it's ready.
+        sendNext()
       })
       .catch((e: unknown) => {
         if (cancelled) return
