@@ -63,11 +63,27 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
 
       const altNodes = Array.from(xmlDoc.getElementsByTagNameNS(MC_NS, 'AlternateContent'))
 
+      // Compute column width (EMU) so we can detect whether a text box is
+      // horizontally centred from its positionH offset + extent cx.
+      const TWIP_TO_EMU = 635  // 914 400 EMU/in ÷ 1 440 twips/in
+      let columnWidthEMU = 0
+      const pgSzEl  = xmlDoc.getElementsByTagNameNS(W_NS, 'pgSz')[0]
+      const pgMarEl = xmlDoc.getElementsByTagNameNS(W_NS, 'pgMar')[0]
+      if (pgSzEl && pgMarEl) {
+        const wAttr = (el: Element, n: string) =>
+          parseInt(el.getAttribute(`w:${n}`) ?? el.getAttributeNS(W_NS, n) ?? '0', 10)
+        const pgW  = wAttr(pgSzEl, 'w')      || 11906  // A4 default
+        const marL = wAttr(pgMarEl, 'left')  || 1440
+        const marR = wAttr(pgMarEl, 'right') || 1440
+        columnWidthEMU = (pgW - marL - marR) * TWIP_TO_EMU
+      }
+
       type TBEntry = {
         hostRun: Element | null
         ac: Element
         extracted: Node[]
-        sortKey: number  // estimated visual Y in EMU
+        sortKey: number     // estimated visual Y in EMU
+        hAlign: string | null  // inferred h-alignment ('center' | 'left' | …)
       }
       const entries: TBEntry[] = []
 
@@ -107,7 +123,35 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
           }
         }
 
-        entries.push({ hostRun, ac, extracted, sortKey })
+        // Infer the horizontal alignment of the text box so we can propagate it
+        // to extracted paragraphs that carry no explicit w:jc.
+        //
+        // Structure: mc:AlternateContent → mc:Choice → w:drawing → wp:anchor
+        // wp:anchor is INSIDE wpsChoice, so we search DOWN, not up.
+        //
+        // Priority 1: wp:positionH/wp:align (e.g. "center", "left", "right").
+        // Priority 2: geometric estimate — if box centre ≈ column centre (±15 pt).
+        let hAlign: string | null = null
+        {
+          const posHEl = wpsChoice.getElementsByTagNameNS(WP_NS, 'positionH')[0]
+          if (posHEl) {
+            const explicitAlign = posHEl.getElementsByTagNameNS(WP_NS, 'align')[0]
+            if (explicitAlign?.textContent) {
+              hAlign = explicitAlign.textContent.trim()
+            } else if (columnWidthEMU > 0) {
+              // wp:extent sits alongside wp:positionH inside the same wp:anchor
+              const extentEl = wpsChoice.getElementsByTagNameNS(WP_NS, 'extent')[0]
+              const cxVal = parseInt(extentEl?.getAttribute('cx') ?? '0', 10) || 0
+              const hOffEl = posHEl.getElementsByTagNameNS(WP_NS, 'posOffset')[0]
+              const posOH  = parseInt(hOffEl?.textContent ?? '0', 10) || 0
+              const boxCtr = posOH + cxVal / 2
+              const colCtr = columnWidthEMU / 2
+              if (Math.abs(boxCtr - colCtr) < 200_000) hAlign = 'center'  // ±~15 pt
+            }
+          }
+        }
+
+        entries.push({ hostRun, ac, extracted, sortKey, hAlign })
       }
 
       if (entries.length === 0) return
@@ -166,9 +210,61 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
         }
       }
 
+      // EMU → pt conversion factor
+      const EMU_PER_PT = 12700
+      // Estimated Y (in pt) of the "past-section" insertion point
+      const sectionBaseY_pt = sectBreakIdx * (PARA_H / EMU_PER_PT)
+
       // Insert in sorted order (top → bottom of page).
       for (const entry of entries) {
-        const insertPt = insertPtOf.get(targetIdxOf.get(entry)!) ?? null
+        const idx    = targetIdxOf.get(entry)!
+        const insertPt = insertPtOf.get(idx) ?? null
+
+        // For entries that overshoot the section boundary, the estimated visual
+        // Y is larger than the section base Y. Bridge the gap with w:spacing
+        // w:before on the first extracted paragraph so docx-preview pushes it
+        // toward the correct vertical position on the cover page.
+        if (idx === PAST_SECT && entry.extracted.length > 0) {
+          const targetY_pt = entry.sortKey / EMU_PER_PT
+          const spacerPt   = targetY_pt - sectionBaseY_pt
+          if (spacerPt > 10) {
+            const firstPara = entry.extracted[0] as Element
+            let pPr = firstPara.getElementsByTagNameNS(W_NS, 'pPr')[0] as Element | undefined
+            if (!pPr) {
+              pPr = xmlDoc.createElementNS(W_NS, 'w:pPr')
+              firstPara.insertBefore(pPr, firstPara.firstChild)
+            }
+            let spacing = pPr.getElementsByTagNameNS(W_NS, 'spacing')[0] as Element | undefined
+            if (!spacing) {
+              spacing = xmlDoc.createElementNS(W_NS, 'w:spacing')
+              pPr.appendChild(spacing)
+            }
+            // w:before is in twentieths of a point (twips); cap at one A4 body
+            const twips = Math.min(Math.round(spacerPt * 20), 13920) // ≤ 696pt
+            spacing.setAttribute('w:before', String(twips))
+          }
+        }
+
+        // Propagate inferred h-alignment to paragraphs that lack explicit w:jc.
+        // Paragraphs with an existing w:jc (from the original txbxContent) are
+        // left untouched so their intentional alignment is preserved.
+        if (entry.hAlign) {
+          for (const p of entry.extracted) {
+            const paraEl = p as Element
+            const existingPPr = paraEl.getElementsByTagNameNS(W_NS, 'pPr')[0] as Element | undefined
+            if (!existingPPr?.getElementsByTagNameNS(W_NS, 'jc')[0]) {
+              let pPr = existingPPr
+              if (!pPr) {
+                pPr = xmlDoc.createElementNS(W_NS, 'w:pPr')
+                paraEl.insertBefore(pPr, paraEl.firstChild)
+              }
+              const jcEl = xmlDoc.createElementNS(W_NS, 'w:jc')
+              jcEl.setAttribute('w:val', entry.hAlign)
+              pPr.appendChild(jcEl)
+            }
+          }
+        }
+
         for (const p of entry.extracted) {
           if (insertPt) body.insertBefore(p, insertPt)
           else body.appendChild(p)

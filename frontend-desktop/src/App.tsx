@@ -119,8 +119,9 @@ function Desktop() {
     }
   }
 
-  // 是否具备显示工作区的条件（选中已有会话且有工作目录）
-  const canShowWorkspace = centerView === 'chat' && !!selectedId && !!workingDir
+  // 是否具备显示工作区的条件（chat 视图下，有选中会话或活跃草稿即可；
+  // 不要求 workingDir 已设置——用户可能刚进入会话尚未设定目录）
+  const canShowWorkspace = centerView === 'chat' && (!!selectedId || draftActive)
   // 实际是否显示 = 条件满足 且 用户没关掉
   const showWorkspace = canShowWorkspace && workspaceOpen
 
