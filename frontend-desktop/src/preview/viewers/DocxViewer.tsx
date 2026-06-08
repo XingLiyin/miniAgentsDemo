@@ -116,10 +116,10 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
       entries.sort((a, b) => a.sortKey - b.sortKey)
 
       // ── Map each text box to a body paragraph that acts as its spacer ──
-      // The body paragraphs are (mostly) empty; their cumulative heights
-      // approximate the vertical positions on the page. We insert each text
-      // box's paragraphs after whichever body paragraph corresponds to its
-      // estimated Y position, so the empty paragraphs provide natural spacing.
+      // bodyParas includes the ENTIRE document, so we must clamp targetIdx to
+      // the current section (before the first sectPr paragraph). Text boxes
+      // whose estimated Y exceeds the section boundary are piled just before
+      // the section break rather than spilling into subsequent sections/pages.
       const body = xmlDoc.getElementsByTagNameNS(W_NS, 'body')[0]
       if (!body) return
 
@@ -132,19 +132,37 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
       )
       if (bodyParas.length === 0) return
 
+      // Find the first paragraph that carries a sectPr (= section break).
+      let sectBreakPara: Element | null = null
+      let sectBreakIdx = bodyParas.length  // fallback: no section break found
+      for (let i = 0; i < bodyParas.length; i++) {
+        if (bodyParas[i].getElementsByTagNameNS(W_NS, 'sectPr').length > 0) {
+          sectBreakPara = bodyParas[i]
+          sectBreakIdx  = i
+          break
+        }
+      }
+      // Special bucket key for entries that overshoot the section boundary.
+      const PAST_SECT = sectBreakIdx
+
       // Estimated height of one empty body paragraph in EMU (≈18 pt).
       const PARA_H = 228_600
 
-      // Pre-compute insertion points ONCE (snapshot nextSibling before
-      // any insertions, so that multiple boxes at the same target paragraph
-      // are stacked in sorted order rather than interleaved incorrectly).
+      // Pre-compute insertion points ONCE before any mutations.
       const targetIdxOf = new Map<TBEntry, number>()
       const insertPtOf  = new Map<number, Node | null>()
       for (const entry of entries) {
-        const idx = Math.min(Math.floor(entry.sortKey / PARA_H), bodyParas.length - 1)
+        const rawIdx = Math.floor(entry.sortKey / PARA_H)
+        // Entries beyond the section break are all inserted just before it.
+        const idx = rawIdx >= sectBreakIdx ? PAST_SECT : Math.min(rawIdx, sectBreakIdx - 1)
         targetIdxOf.set(entry, idx)
         if (!insertPtOf.has(idx)) {
-          insertPtOf.set(idx, bodyParas[idx].nextSibling)
+          insertPtOf.set(
+            idx,
+            idx === PAST_SECT
+              ? sectBreakPara          // insert BEFORE the section-break para
+              : bodyParas[idx].nextSibling,
+          )
         }
       }
 
