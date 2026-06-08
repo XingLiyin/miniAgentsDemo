@@ -9,10 +9,10 @@ const MC_NS = 'http://schemas.openxmlformats.org/markup-compatibility/2006'
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 // Word Processing Shape namespace (wps:wsp, wps:txbx)
 const WPS_NS = 'http://schemas.microsoft.com/office/word/2010/wordprocessingShape'
+// WordprocessingDrawing namespace (wp:anchor, wp:positionV, wp:posOffset)
+const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
 
 // mc:Choice Requires values that docx-preview cannot render.
-// We extract the text content from these text boxes and inject it into the
-// document flow so it is visible, rather than silently dropping it.
 const UNSUPPORTED_REQUIRES = new Set(['wps', 'wpg', 'wpc'])
 
 /** Walk up the DOM tree looking for the nearest ancestor with the given local name + NS. */
@@ -33,15 +33,16 @@ function findAncestor(node: Node, localName: string, ns: string): Element | null
  * mc:Choice requires wps/wpg/wpc (Word Processing Shapes — floating text
  * boxes, grouped shapes, etc.) are handled gracefully.
  *
- * docx-preview cannot render wps:txbx text boxes AND also cannot render
- * the VML <v:textbox> in the mc:Fallback. So instead of using the fallback,
- * we extract the <w:p> paragraphs from inside wps:txbxContent and inject
- * them as regular document-flow paragraphs right after the host paragraph
- * that anchored the text box. The positioning won't be pixel-perfect, but
- * the text becomes visible rather than disappearing entirely.
+ * docx-preview cannot render wps:txbx text boxes OR the VML <v:textbox> in
+ * mc:Fallback. So we extract the <w:p> paragraphs from wps:txbxContent and
+ * inject them into the document flow so they are visible.
  *
- * The containing mc:AlternateContent (and its parent <w:r> run) is then
- * removed from the host paragraph.
+ * Sorting: floating text boxes are positioned relative to their anchor
+ * paragraph via wp:positionV/wp:posOffset. We estimate each box's visual
+ * Y by (anchorParaIndex × EMU_per_para + posOffset) and insert all boxes in
+ * that order just before the first section break — so the content appears in
+ * approximately the correct visual sequence even though positioning is
+ * approximate (document-flow, not absolute).
  */
 async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
   const JSZip = (await import('jszip')).default
@@ -58,26 +59,45 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
 
       const parser = new DOMParser()
       const xmlDoc = parser.parseFromString(src, 'application/xml')
-      if (xmlDoc.querySelector('parsererror')) return // leave untouched on parse error
+      if (xmlDoc.querySelector('parsererror')) return
 
-      // Snapshot before mutation — we process outer ACs; inner ones (inside
-      // txbxContent) will also appear here but their host paragraph will be
-      // inside the MC tree (already detached after we remove the outer AC),
-      // so the `!ac.parentNode` guard below skips them safely.
       const altNodes = Array.from(xmlDoc.getElementsByTagNameNS(MC_NS, 'AlternateContent'))
-      let mutated = false
+
+      type TBEntry = {
+        hostRun: Element | null
+        ac: Element
+        extracted: Node[]
+        sortKey: number  // estimated visual Y in EMU
+      }
+      const entries: TBEntry[] = []
 
       for (const ac of altNodes) {
         if (!ac.parentNode) continue // already detached
 
-        // Does any Choice require an unsupported feature?
         const wpsChoice = Array.from(ac.getElementsByTagNameNS(MC_NS, 'Choice')).find((ch) => {
           const req = (ch.getAttribute('Requires') ?? '').trim()
           return req.split(/\s+/).some((r) => UNSUPPORTED_REQUIRES.has(r))
         })
         if (!wpsChoice) continue
 
-        // ── Extract <w:p> paragraphs from all wps:txbx elements ──────────
+        // Anchor paragraph + its position among siblings
+        const hostPara = findAncestor(ac, 'p', W_NS)
+        const hostRun  = findAncestor(ac, 'r', W_NS)
+        const paraIndex = hostPara?.parentNode
+          ? Array.from(hostPara.parentNode.childNodes).indexOf(hostPara)
+          : 0
+
+        // Vertical posOffset in EMU (wp:positionV → wp:posOffset)
+        let posOffsetV = 0
+        const posVList = wpsChoice.getElementsByTagNameNS(WP_NS, 'positionV')
+        if (posVList.length > 0) {
+          const offEl = posVList[0].getElementsByTagNameNS(WP_NS, 'posOffset')[0]
+          posOffsetV = parseInt(offEl?.textContent ?? '0', 10) || 0
+        }
+        // 228 600 EMU ≈ 18 pt — estimated height of one empty body paragraph
+        const sortKey = paraIndex * 228_600 + posOffsetV
+
+        // Extract <w:p> elements from wps:txbxContent
         const extracted: Node[] = []
         for (const txbx of Array.from(wpsChoice.getElementsByTagNameNS(WPS_NS, 'txbx'))) {
           const content = txbx.getElementsByTagNameNS(W_NS, 'txbxContent')[0]
@@ -87,32 +107,53 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
           }
         }
 
-        // ── Find the host <w:p> paragraph that anchors this text box ──────
-        // The AC lives inside a <w:r> run inside a <w:p> body paragraph.
-        const hostPara = findAncestor(ac, 'p', W_NS)
-
-        if (hostPara && hostPara.parentNode && extracted.length > 0) {
-          // Insert extracted paragraphs immediately after the host paragraph.
-          // (insertBefore with nextSibling = insert after)
-          const insertBefore = hostPara.nextSibling
-          for (const p of extracted) {
-            hostPara.parentNode.insertBefore(p, insertBefore)
-          }
-        }
-
-        // ── Remove the <w:r> run that contained the mc:AlternateContent ──
-        // (The run held only <w:rPr> + the AC, so removing it entirely is safe.)
-        const hostRun = findAncestor(ac, 'r', W_NS)
-        if (hostRun && hostRun.parentNode) {
-          hostRun.parentNode.removeChild(hostRun)
-        } else {
-          ac.parentNode?.removeChild(ac)
-        }
-
-        mutated = true
+        entries.push({ hostRun, ac, extracted, sortKey })
       }
 
-      if (!mutated) return
+      if (entries.length === 0) return
+
+      // Sort by estimated visual Y so the injected paragraphs appear in the
+      // correct reading order even though we're inserting at one point.
+      entries.sort((a, b) => a.sortKey - b.sortKey)
+
+      // Find insertion point: just before the first paragraph that carries a
+      // sectPr (= section break between cover page and body). If none exists
+      // (single-section doc), append at the end of <w:body>.
+      const body = xmlDoc.getElementsByTagNameNS(W_NS, 'body')[0]
+      let insertBefore: Node | null = null
+      if (body) {
+        for (const child of Array.from(body.childNodes)) {
+          if (child.nodeType !== 1) continue
+          const el = child as Element
+          if (el.localName === 'p' && el.namespaceURI === W_NS) {
+            if (el.getElementsByTagNameNS(W_NS, 'sectPr').length > 0) {
+              insertBefore = el
+              break
+            }
+          }
+        }
+      }
+
+      // Insert all extracted paragraphs (sorted) at the chosen point
+      for (const { extracted } of entries) {
+        for (const p of extracted) {
+          if (body && insertBefore) {
+            body.insertBefore(p, insertBefore)
+          } else if (body) {
+            body.appendChild(p)
+          }
+        }
+      }
+
+      // Remove anchor runs (and by extension the mc:AlternateContent)
+      for (const { hostRun, ac } of entries) {
+        if (hostRun?.parentNode) {
+          hostRun.parentNode.removeChild(hostRun)
+        } else if (ac.parentNode) {
+          ac.parentNode.removeChild(ac)
+        }
+      }
+
       zip.file(name, new XMLSerializer().serializeToString(xmlDoc))
     }),
   )
