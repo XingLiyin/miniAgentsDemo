@@ -112,40 +112,52 @@ async function inlineWpsTextBoxes(buf: ArrayBuffer): Promise<ArrayBuffer> {
 
       if (entries.length === 0) return
 
-      // Sort by estimated visual Y so the injected paragraphs appear in the
-      // correct reading order even though we're inserting at one point.
+      // Sort by estimated visual Y (ascending) so we process top-to-bottom.
       entries.sort((a, b) => a.sortKey - b.sortKey)
 
-      // Find insertion point: just before the first paragraph that carries a
-      // sectPr (= section break between cover page and body). If none exists
-      // (single-section doc), append at the end of <w:body>.
+      // ── Map each text box to a body paragraph that acts as its spacer ──
+      // The body paragraphs are (mostly) empty; their cumulative heights
+      // approximate the vertical positions on the page. We insert each text
+      // box's paragraphs after whichever body paragraph corresponds to its
+      // estimated Y position, so the empty paragraphs provide natural spacing.
       const body = xmlDoc.getElementsByTagNameNS(W_NS, 'body')[0]
-      let insertBefore: Node | null = null
-      if (body) {
-        for (const child of Array.from(body.childNodes)) {
-          if (child.nodeType !== 1) continue
-          const el = child as Element
-          if (el.localName === 'p' && el.namespaceURI === W_NS) {
-            if (el.getElementsByTagNameNS(W_NS, 'sectPr').length > 0) {
-              insertBefore = el
-              break
-            }
-          }
+      if (!body) return
+
+      // Snapshot direct-child <w:p> elements BEFORE any mutation.
+      const bodyParas = Array.from(body.childNodes).filter(
+        (n): n is Element =>
+          n.nodeType === 1 &&
+          (n as Element).localName === 'p' &&
+          (n as Element).namespaceURI === W_NS,
+      )
+      if (bodyParas.length === 0) return
+
+      // Estimated height of one empty body paragraph in EMU (≈18 pt).
+      const PARA_H = 228_600
+
+      // Pre-compute insertion points ONCE (snapshot nextSibling before
+      // any insertions, so that multiple boxes at the same target paragraph
+      // are stacked in sorted order rather than interleaved incorrectly).
+      const targetIdxOf = new Map<TBEntry, number>()
+      const insertPtOf  = new Map<number, Node | null>()
+      for (const entry of entries) {
+        const idx = Math.min(Math.floor(entry.sortKey / PARA_H), bodyParas.length - 1)
+        targetIdxOf.set(entry, idx)
+        if (!insertPtOf.has(idx)) {
+          insertPtOf.set(idx, bodyParas[idx].nextSibling)
         }
       }
 
-      // Insert all extracted paragraphs (sorted) at the chosen point
-      for (const { extracted } of entries) {
-        for (const p of extracted) {
-          if (body && insertBefore) {
-            body.insertBefore(p, insertBefore)
-          } else if (body) {
-            body.appendChild(p)
-          }
+      // Insert in sorted order (top → bottom of page).
+      for (const entry of entries) {
+        const insertPt = insertPtOf.get(targetIdxOf.get(entry)!) ?? null
+        for (const p of entry.extracted) {
+          if (insertPt) body.insertBefore(p, insertPt)
+          else body.appendChild(p)
         }
       }
 
-      // Remove anchor runs (and by extension the mc:AlternateContent)
+      // Remove anchor runs (and by extension the mc:AlternateContent).
       for (const { hostRun, ac } of entries) {
         if (hostRun?.parentNode) {
           hostRun.parentNode.removeChild(hostRun)
