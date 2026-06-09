@@ -4,8 +4,8 @@
   - task.type == "plan"   → Actor._act_as_planner（内部调用 Planner）
   - task.type == "atomic" → Actor._act_as_executor（多轮 tool use）
 
-task 完成判定由 Observer 负责，返回 task_outcome（success / failed / needs_user_input）。
-AgentLoop 依据 task_outcome 写入 task 状态；needs_user_input 时触发 HITL。
+task 完成判定由 Observer 负责，返回 task_outcome（success / failed / ask_human）。
+AgentLoop 依据 task_outcome 写入 task 状态；ask_human 时暂停求助用户，回答后 task 保持 active 重新入队。
 调度逻辑（下一个 task、session SUCCEEDED/重试）由 LifecycleManager 负责。
 """
 
@@ -78,6 +78,11 @@ class AgentLoop:
                 )
 
             task = self._task_svc.get(task_id, session_id)
+
+            # 重新开始任务时清空上一轮可能残留的 HITL 回答暂存，避免在本轮 write_execution_memory 误追加。
+            if task.pending_user_answer is not None:
+                task.pending_user_answer = None
+                self._task_svc.save(task)
 
             # 立即持久化 user_prompt（包装格式），确保任务无论以何种方式结束都在 memory 里。
             if task.user_prompt and not task.user_prompt_in_memory and not (task.settings or {}).get("_daemon"):
@@ -212,11 +217,11 @@ class AgentLoop:
                 output_text = task.outputs or ""
             if output_images:
                 mem_content: str | list = list(output_images)
-                text_part = "\n\nProcess Report: ".join(filter(None, [output_text, verdict.summary]))
+                text_part = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
                 if text_part:
                     mem_content.append({"type": "text", "text": text_part})
             else:
-                mem_content = "\n\nProcess Report: ".join(filter(None, [output_text, verdict.summary]))
+                mem_content = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
             self._memory_svc.append_message(
                 agent_id=agent_id,
                 role="assistant",
@@ -224,6 +229,18 @@ class AgentLoop:
                 session_id=session_id,
                 task_id=task_id,
             )
+
+        # HITL 确认回答：先写完上面的 LLM 判断，再补一条 user 消息，保证时序为「判断 → 人类回答」。
+        if task.pending_user_answer:
+            self._memory_svc.append_message(
+                agent_id=agent_id,
+                role="user",
+                content=task.pending_user_answer,
+                session_id=session_id,
+                task_id=task_id,
+            )
+            task.pending_user_answer = None
+            self._task_svc.save(task)
 
     def _publish_blackboard(self, session_id: str, agent_id: str, task: Task, result: ActorResult) -> None:
         """Publish task result and conversation turns to the blackboard."""

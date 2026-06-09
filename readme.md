@@ -135,7 +135,7 @@ curl -X POST http://localhost:8000/api/v1/sessions/{session_id}/messages \
 
 ### Respond to a Human-in-the-Loop pause
 
-When the agent calls `request_human_input`, the session enters `WAITING_INPUT` and an SSE `waiting_input` event is emitted. Respond with:
+When the agent calls `ask_human`, the session enters `WAITING_INPUT` and an SSE `waiting_input` event is emitted. Respond with:
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/sessions/{session_id}/input \
@@ -243,9 +243,9 @@ An agent can invoke a skill by calling `submit_task` with `skill_name: "summariz
 |---|---|
 | `submit_plan(tasks)` | Decompose current task into sub-tasks; parent suspends until all complete |
 | `submit_task(...)` | Spawn a single sub-task (current task suspends) |
-| `submit_task_assessment(...)` | Observer declares the task outcome: `success`, `failed`, `active`, or `needs_user_input` |
+| `submit_task_assessment(...)` | Observer declares the task outcome: `success`, `failed`, `active`, or `ask_human` |
 | `replan(reason)` | Cancel all pending tasks and start fresh with a new plan |
-| `request_human_input(prompt)` | Pause session and wait for user response |
+| `ask_human(prompt)` | Pause session and wait for user response |
 | `update_task_metadata(...)` | Write task title, description, and session goal |
 
 ---

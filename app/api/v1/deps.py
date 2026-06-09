@@ -155,6 +155,37 @@ def _get_llm_client():
 
 
 @lru_cache
+def get_resource_summarizer():
+    """长资源描述总结器；未启用或无默认 provider 时返回 None。
+
+    同时把预热回调注册到 tool / skill registry，使描述在 MCP 连接成功 /
+    skill 加载时即开始后台总结。
+    """
+    settings = get_settings()
+    if not settings.resource_summary_enabled:
+        return None
+    # provider 不再是硬性前置：读路径由 Reasoner 按 session 解析后传入。
+    # 构造时的 default_llm_provider 仅作为无 session 上下文（warm 预热）时的回落，
+    # 为空时 warm 静默跳过，首次读路径仍会用 session 的 provider 完成总结。
+    from app.runtime.resource_summarizer import ResourceSummarizer
+    from app.runtime.resource_summary_cache import DescriptionSummaryCache
+
+    cache = DescriptionSummaryCache(settings.data_dir / "resource_summaries.json")
+    summarizer = ResourceSummarizer(
+        cache=cache,
+        llm_provider=settings.default_llm_provider,
+        llm_model=settings.default_llm_model,
+        threshold_tokens=settings.resource_summary_threshold_tokens,
+        target_tokens=settings.resource_summary_target_tokens,
+        wait_timeout_sec=settings.resource_summary_wait_timeout_sec,
+        cooldown_sec=settings.resource_summary_cooldown_sec,
+    )
+    get_tool_registry().set_warm_hook(summarizer.warm_many)
+    get_skill_registry().set_warm_hook(summarizer.warm_many)
+    return summarizer
+
+
+@lru_cache
 def get_reasoner() -> Reasoner:
     return Reasoner(
         memory_svc=get_memory_service(),
@@ -165,6 +196,7 @@ def get_reasoner() -> Reasoner:
         agent_template_loader=get_agent_template_loader(),
         compaction_agent=get_compaction_agent(),
         agent_store=AgentStore(),
+        resource_summarizer=get_resource_summarizer(),
     )
 
 

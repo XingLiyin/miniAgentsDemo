@@ -2,7 +2,7 @@
 
 工具集来自 ctx.resources（kind="tool"），由 Reasoner 按 task.type 差异化加载：
   - plan task：submit_plan
-  - atomic task：外部工具 + request_human_input
+  - atomic task：外部工具 + ask_human
 
 循环由 ControlSignal.TASK_COMPLETE（plan 路径）和"无工具调用"（act 路径）统一终止。
 身份与协议文本由 soul 模板承载，Actor 不感知 plan/act 模式。

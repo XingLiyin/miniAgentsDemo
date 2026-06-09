@@ -30,6 +30,7 @@ class Task:
     process_report: str | None = None    # observer 观察到的该任务执行过程的文本报告（如工具调用记录、子 Agent 执行记录等）
     outputs: str | list = ""             # actor 最终输出（文本或含图片的 multimodal list）
     error: str | None = None           # 若任务失败，存储错误信息
+    pending_user_answer: str | None = None  # HITL 确认回答，暂存待 write_execution_memory 时作为 user 消息追加（保证排在 LLM 判断之后）
 
     # DAG & spawn 字段（仅 sub-task 填充）
     dag_deps: list[str] = field(default_factory=list)   # 依赖的 task_id 列表
@@ -58,6 +59,7 @@ class Task:
             "process_report": self.process_report,
             "outputs": self.outputs,
             "error": self.error,
+            "pending_user_answer": self.pending_user_answer,
             "dag_deps": self.dag_deps,
             "parent_task_id": self.parent_task_id,
             "retry_count": self.retry_count,
@@ -82,6 +84,7 @@ class Task:
             process_report=d.get("process_report"),
             outputs=d.get("outputs", ""),
             error=d.get("error"),
+            pending_user_answer=d.get("pending_user_answer"),
             dag_deps=d.get("dag_deps", []),
             parent_task_id=d.get("parent_task_id"),
             retry_count=d.get("retry_count", 0),

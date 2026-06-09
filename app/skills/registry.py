@@ -17,6 +17,7 @@ import logging
 import time
 from functools import lru_cache
 from pathlib import Path
+from typing import Callable
 
 from app.skills.definition import RemoteSkillSourceConfig, SkillDefinition, SkillMetadata
 from app.skills.loader import SkillLoader
@@ -34,6 +35,8 @@ class SkillRegistry:
 
     def __init__(self) -> None:
         self._loader = SkillLoader()
+        # 描述预热回调（duck-typed，避免 skills 层依赖 runtime 层）
+        self._warm_hook: "Callable[[list[tuple[str, str]]], None] | None" = None
 
         # ── local ──────────────────────────────────────────────────────────────
         self._local_provider: LocalDirSkillProvider | None = None
@@ -59,10 +62,23 @@ class SkillRegistry:
         metadatas = [meta for meta, _ in self._loader.scan(resolved)]
         if metadatas:
             self._sync_added(metadatas)
+            self._warm_metadatas(metadatas)
         logger.info(
             "SkillRegistry: watching local skill dir '%s' (%d skill(s))",
             resolved, len(metadatas),
         )
+
+    def set_warm_hook(self, hook: "Callable[[list[tuple[str, str]]], None] | None") -> None:
+        """注册描述预热回调；skill 元数据就绪时以 [(name, description)] 调用。"""
+        self._warm_hook = hook
+
+    def _warm_metadatas(self, metadatas: list[SkillMetadata]) -> None:
+        if not self._warm_hook or not metadatas:
+            return
+        try:
+            self._warm_hook([(m.name, m.description or "") for m in metadatas])
+        except Exception:
+            logger.debug("SkillRegistry: warm hook failed", exc_info=True)
 
     # ── 全局 remote skill source ──────────────────────────────────────────────
 

@@ -126,7 +126,7 @@ FAILED       → QUEUED   （用户重试）
 CANCELED     → （终态）
 ```
 
-- `WAITING_INPUT`：agent 调用 `request_human_input` 或 Observer 裁决 needs_user_input 时进入，等待用户应答
+- `WAITING_INPUT`：agent 调用 `ask_human` 或 Observer 裁决 needs_user_input 时进入，等待用户应答
 - token_budget 耗尽 → 立即 FAILED，发布 TOKEN_BUDGET_EXCEEDED 事件
 
 ### 3.2 Task
@@ -155,7 +155,7 @@ CANCELED     → （终态）
 
 **运行时临时字段（不持久化，control_tools 直接写入，AgentLoop 直接读取）：**
 - `actor_done`: bool — control_tools 设置，通知 loop 本轮 Actor 已完成
-- `actor_outcome`: str — Actor 裁决结果（success/failed/active/needs_user_input）
+- `actor_outcome`: str — Actor 裁决结果（success/failed/active/ask_human）
 - `actor_result`: str — Actor 输出的结果文本
 - `actor_summary`: str — 用于写入 memory 的摘要
 - `proceed_to_review`: bool — 是否进入 Observer 评估阶段
@@ -231,7 +231,7 @@ AgentTemplate 是 Agent 实例的配置原型，由 AgentLoader 从文件系统�
 
 当前 HITL 通过 **阻塞等待 + Session 状态挂起** 实现，而非独立的 HitlApproval 实体：
 
-1. Agent 调用 `request_human_input` 或 Observer 裁决 `needs_user_input`
+1. Agent 调用 `ask_human` 或 Observer 裁决 `ask_human`
 2. Session 状态切换为 `WAITING_INPUT`
 3. SSE 推送 `waiting_input` 事件给前端（含提示文本）
 4. `hitl_store.wait()` 阻塞当前 agent 线程，等待 `POST /sessions/{id}/input` 应答
@@ -312,7 +312,7 @@ AgentLoop 驱动单次 task 的完整执行，分为三个阶段：
 
 - 构建评估上下文（role_md + 本轮 Actor transcript）
 - 调用 `submit_task_assessment` 写入 task 最终状态
-- 裁决：success → FINISHED；failed → FAILED；active → PENDING（重新入队）；needs_user_input → HITL
+- 裁决：success → FINISHED；failed → FAILED；active → PENDING（重新入队）；ask_human → HITL 求助用户后保持 active 重新入队
 
 ### 5.2 Guard 机制
 
@@ -466,7 +466,7 @@ TM.on_task_finished
 | success | FINISHED | 结果写 Blackboard，发 TASK_EXECUTION_FINISHED |
 | failed | FAILED | 发 TASK_EXECUTION_FAILED |
 | active | PENDING | 任务重新入队，下一轮 Actor 继续 |
-| needs_user_input | PENDING | HITL 暂停 |
+| ask_human | PENDING | HITL 暂停求助用户，应答后重新入队（output+report 与用户应答写入 memory） |
 
 Observer 降级规则（LLM 不可用时走规则兜底）：token 用量 > 90% → FINISHED；result.success → FINISHED；否则 → FAILED。
 
@@ -594,7 +594,7 @@ ToolRegistry.get(name).handler(args, ctx)  ← 实际执行
 |------|------|----------|----------|
 | **Builtin** | 若干 | 进程内 Python 函数 | bash_exec, http_request, read/write/glob, exec_skill_script |
 | **MCP** | 动态 | 远程 MCP 协议（stdio/HTTP） | @mcp/server-filesystem 等外部 MCP server |
-| **Control** | 6 个 | 内部状态变更 | request_human_input, submit_plan, submit_task, submit_task_assessment, replan, update_task_metadata |
+| **Control** | 6 个 | 内部状态变更 | ask_human, submit_plan, submit_task, submit_task_assessment, replan, update_task_metadata |
 
 Control Tools 是特殊内部工具，直接操作 task/session 状态，不走普通鉴权流程。
 
@@ -605,7 +605,7 @@ Agent 运行时分为 **Actor**（执行）和 **Observer**（评估）两个阶
 | 阶段 | 权限字段 | 典型用途 |
 |------|----------|----------|
 | Actor | act_tool_list + mcp_act_servers | 有副作用操作：bash、写文件、HTTP 请求 |
-| Observer | observe_tool_list + mcp_observe_servers | 只读评估：submit_task_assessment、request_human_input |
+| Observer | observe_tool_list + mcp_observe_servers | 只读评估：submit_task_assessment、ask_human |
 
 LLM 只能调用当前阶段被注入到 prompt 中的 tools，无法访问未授权的工具。
 
@@ -627,9 +627,9 @@ LLM 只能调用当前阶段被注入到 prompt 中的 tools，无法访问未�
 |------|------|
 | `submit_plan(tasks)` | 批量创建子 task（建立 dag_deps 链）→ 父任务 SUSPENDED → 子任务依次执行 → 全完成后父任务恢复 |
 | `submit_task(...)` | 创建单个子 task → 父任务 SUSPENDED → 子任务完成后父任务恢复 |
-| `submit_task_assessment(task_outcome, task_result, task_reviews, next_step_hint)` | Observer 评估当前 task 结果（success/failed/active/needs_user_input）；可同时 review 兄弟 task |
+| `submit_task_assessment(task_outcome, task_result, task_reviews, next_step_hint)` | Observer 评估当前 task 结果（success/failed/active/ask_human）；可同时 review 兄弟 task |
 | `replan(reason, summary)` | 取消所有 PENDING tasks → 当前 task FINISHED → 创建新 plan task（use_subagent=True） |
-| `request_human_input(prompt, context)` | Session → WAITING_INPUT；阻塞等待用户应答；应答后 Session → RUNNING |
+| `ask_human(prompt, context)` | Session → WAITING_INPUT；阻塞等待用户应答；应答后 Session → RUNNING |
 | `update_task_metadata(title, description, session_goal)` | 更新 task title/description 和 session goal；task 立即标记为 actor_done |
 
 **submit_task_assessment 的 task_reviews 参数**（Observer 专用）：对同一 agent 下其他 FINISHED/PENDING 兄弟任务进行复核：
@@ -678,7 +678,7 @@ user: {Sub-task results: blackboard_snippets}
 
 ### 10.2 Observer 上下文组织
 
-**System prompt：** role_md + 可用 control tools（submit_task_assessment、request_human_input）
+**System prompt：** role_md + 可用 control tools（submit_task_assessment、ask_human）
 
 **Messages（单条 user 消息）：**
 ```
@@ -849,14 +849,14 @@ miniAgents 的 Agent 关系形成一棵**动态多层树**。「root」和「sub
 
 ### 13.1 触发场景
 
-- **用户输入请求**：Agent 调用 `request_human_input(prompt, context)` 主动暂停
-- **任务完成确认**：Observer 裁决 `needs_user_input`，系统无法自动判定任务完成状态
+- **用户输入请求**：Agent 调用 `ask_human(prompt, context)` 主动暂停
+- **观察者求助用户**：Observer 裁决 `ask_human`，任务在没有用户回答的情况下无法继续
 - **失败阈值暂停**：session.failure_counter >= failure_threshold（Phase 2 实现）
 
 ### 13.2 HITL 流程（当前实现）
 
 ```
-1. Agent 调用 request_human_input 或 Observer 裁决 needs_user_input
+1. Agent 调用 ask_human 或 Observer 裁决 ask_human
 2. Session.transition → WAITING_INPUT
 3. SSE 推送 waiting_input 事件（含 prompt）给前端
 4. hitl_store.wait() 阻塞当前 agent 线程（无超时，持续等待）
@@ -865,10 +865,10 @@ miniAgents 的 Agent 关系形成一棵**动态多层树**。「root」和「sub
 7. Session.transition → RUNNING，agent 继续执行
 ```
 
-**needs_user_input 路径（任务完成确认）：**
-- Agent 调用 `submit_task_assessment(needs_user_input, ...)`
-- Session → WAITING_INPUT，SSE 推送完成确认提示
-- 用户应答"已完成" → task.finish()；应答"未完成" → task.fail()
+**ask_human 路径（观察者求助用户）：**
+- Observer 调用 `submit_task_assessment(ask_human, ...)`
+- Session → WAITING_INPUT，SSE 推送提示（input_type=user_input），阻塞等待用户应答
+- 收到应答后 task 保持 **active**（PENDING 重新入队）；本轮 output 与 process report 写入 memory 作为 assistant 消息，用户应答再追加为一条 user 消息，下一轮 Actor 据此继续
 
 ### 13.3 HITL API
 

@@ -175,7 +175,10 @@ class ActorPromptBuilder(BasePromptBuilder):
         agents = [r for r in ctx.actor_resources if r.kind == "agent"]
         parts: list[str] = []
         if skills and not ctx.skill_instructions:  # 已有技能资源但无 skill instructions，才渲染技能列表（否则可能重复）
-            lines = ["## Available Skills (assign to tasks where appropriate)"]
+            lines = [
+                "## Available Skills (assign to tasks where appropriate)",
+                "Delegate via: submit_task(skill_name='<name>')"
+            ]
             for r in skills:
                 lines.append(f"- {r.name}: {r.description}")
             parts.append("\n".join(lines))
