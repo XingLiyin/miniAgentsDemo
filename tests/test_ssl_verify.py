@@ -209,3 +209,44 @@ def test_fetch_corporate_ca_chain_uses_presented_intermediate(tmp_path, monkeypa
 def test_fetch_corporate_ca_chain_probe_fails(monkeypatch):
     monkeypatch.setattr(sv, "_get_leaf_and_chain", lambda url: [])
     assert sv._fetch_corporate_ca_chain("https://x.test") == []
+
+
+def test_with_ssl_retry_success_first_try(monkeypatch):
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    calls = []
+    def do(verify):
+        calls.append(verify)
+        return "ok"
+    assert sv.with_ssl_retry(do, "https://api.corp.test") == "ok"
+    assert calls == [True]
+
+
+def test_with_ssl_retry_fetches_then_retries(monkeypatch, cert_triple):
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    fetched = {"n": 0}
+    monkeypatch.setattr(sv, "_fetch_corporate_ca_chain",
+                        lambda url: (fetched.__setitem__("n", 1) or [cert_triple.root_der]))
+    # make_ssl_verify is lru_cache in real code; here it's a plain lambda, so
+    # patch cache_clear to a no-op attribute
+    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
+
+    attempts = {"n": 0}
+    def do(verify):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ssl.SSLCertVerificationError("verify failed")
+        return "ok-after-retry"
+
+    result = sv.with_ssl_retry(do, "https://api.corp.test")
+    assert result == "ok-after-retry"
+    assert fetched["n"] == 1
+    assert attempts["n"] == 2
+
+
+def test_with_ssl_retry_reraises_non_cert_error(monkeypatch):
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    def do(verify):
+        raise ValueError("unrelated")
+    import pytest
+    with pytest.raises(ValueError):
+        sv.with_ssl_retry(do, "https://api.corp.test")

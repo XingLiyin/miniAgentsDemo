@@ -5,49 +5,18 @@ intranet CAs are trusted automatically.
 
 Usage::
 
-    from app.common.ssl_verify import make_ssl_verify
+    from app.common.ssl_verify import make_ssl_verify, with_ssl_retry
     with httpx.Client(verify=make_ssl_verify(), trust_env=False) as client:
         ...
 
-Priority (evaluated once and cached):
+Priority (evaluated once and cached by make_ssl_verify):
 
-1. ``http_ssl_verify = False``  → disable certificate verification entirely
-2. ``http_ca_bundle`` set        → use an explicit CA bundle file path
-3. Windows                       → winreg registry + Windows chain build → OpenSSL
-4. Non-Windows / fallback        → ssl.create_default_context()
-
-Windows cert-store strategy (0.2.54)
--------------------------------------
-Previous approaches (0.2.48–0.2.53) that failed:
-
-- truststore: calls CertVerifyCertificateChainPolicy → CERT_E_UNTRUSTED_ROOT
-  (Windows Schannel policy gate rejects enterprise proxy CAs)
-- ssl.create_default_context() / ctypes CertOpenSystemStoreW: CURRENT_USER
-  aggregated view missed the enterprise registry paths
-- PowerShell Cert:\\… export: same aggregated view, still missed the CA
-- winreg explicit paths (0.2.53): ROOT(2)+CA(6)+AuthRoot(38)=76 certs loaded,
-  enterprise/GPO paths all empty → corp CA not in any static registry key
-
-Root cause: the corporate CA is delivered via Active Directory / AIA fetching,
-NOT written to the standard registry certificate paths.  Only Windows
-CertGetCertificateChain() reaches it (it searches enterprise stores, network
-CTLs, and fetches intermediates via AIA automatically).
-
-Current approach (Two-Phase):
-
-Phase 1 – winreg: read all nine registry cert paths (ROOT, CA, AuthRoot ×
-  LocalMachine/Policy/Enterprise/CurrentUser) and load into ssl.SSLContext.
-
-Phase 2 – CertGetCertificateChain probe: make a TLS connection WITHOUT
-  verification to the configured LLM API URL (or a well-known fallback), get
-  the leaf cert that the corporate proxy presents, then hand it to Windows
-  CertGetCertificateChain().  Windows builds the full chain using AIA, network
-  CTLs, AD stores, etc. — everything it can reach.  We extract every cert in
-  the chain and load them into the ssl.SSLContext.
-
-Phase 2 must run AFTER Phase 1 because the probe URL itself may already work
-correctly with Phase 1 certs; if not, chain-building still succeeds on the
-Windows side and we get the missing CA cert DER bytes to add.
+Tier 1: ``http_ssl_verify = False``  → False (skip verification entirely)
+Tier 2: ``http_ca_bundle`` set       → base context + bundle entries (file paths
+        and/or download URLs, ';'-separated)
+Tier 3: otherwise                    → base context only (certifi defaults +
+        Windows registry + env-var CA bundles + AppData-cached CAs); reactive
+        AIA chain-fetch fills any remaining gap via with_ssl_retry.
 """
 
 from __future__ import annotations
@@ -63,18 +32,6 @@ from pathlib import Path
 from typing import Union
 
 logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Fallback probe URLs when default_llm_base_url is not configured or is HTTP.
-# The corporate proxy intercepts ALL HTTPS traffic, so any accessible HTTPS
-# URL will present the same corporate CA cert chain.  Use Windows-ecosystem
-# URLs that corporate firewalls always allow (Windows Update depends on them).
-# ---------------------------------------------------------------------------
-_PROBE_FALLBACK_URLS = [
-    "https://www.microsoft.com",      # always reachable from corporate Windows
-    "https://ctldl.windowsupdate.com", # Windows CTL download endpoint
-    "https://www.bing.com",
-]
 
 # ---------------------------------------------------------------------------
 # Registry paths — covers standard + GPO + enterprise + current-user
@@ -560,11 +517,6 @@ def _get_leaf_and_chain(url: str) -> list[bytes]:
         return []
 
 
-def _get_leaf_cert(url):  # TEMP shim — removed in Task 8/9
-    chain = _get_leaf_and_chain(url)
-    return chain[0] if chain else None
-
-
 # ---------------------------------------------------------------------------
 # Reactive chain completion — walk AIA up to a self-signed root
 # ---------------------------------------------------------------------------
@@ -622,65 +574,32 @@ def _fetch_corporate_ca_chain(url: str) -> list[bytes]:
 
 
 # ---------------------------------------------------------------------------
-# Top-level Windows SSL context builder
+# Base trust store — certifi defaults + registry + env vars + AppData cache
 # ---------------------------------------------------------------------------
 
-def _make_ssl_ctx_windows() -> ssl.SSLContext:
-    """Build ssl.SSLContext via registry (Phase 1) + Windows chain build (Phase 2)."""
+def _build_base_context() -> ssl.SSLContext:
+    """Build the base SSL context shared by all callers (before reactive AIA)."""
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = True
     ctx.verify_mode = ssl.CERT_REQUIRED
 
-    # ── Phase 1: registry ───────────────────────────────────────────────────
-    reg_count, reg_counts = _load_registry_certs(ctx)
-    logger.warning(
-        "SSL Phase 1 (registry): loaded %d certs. Per-path: %s",
-        reg_count, reg_counts,
-    )
-
-    # ── Phase 2: Windows CertGetCertificateChain probe ─────────────────────
+    # Public roots (certifi / OS default)
     try:
-        from app.config.settings import get_settings
-        cfg = get_settings()
-        probe_urls: list[str] = []
-        if cfg.default_llm_base_url:
-            probe_urls.append(cfg.default_llm_base_url)
-        probe_urls.extend(_PROBE_FALLBACK_URLS)
-
-        leaf_der: bytes | None = None
-        probe_used = ""
-        for url in probe_urls:
-            leaf_der = _get_leaf_cert(url)
-            if leaf_der:
-                probe_used = url
-                break
-
-        if leaf_der:
-            chain_ders = []  # _build_chain_via_windows_cryptoapi removed (Task 8); replaced in Task 9
-            chain_loaded = 0
-            for der in chain_ders:
-                try:
-                    ctx.load_verify_locations(cadata=der)
-                    chain_loaded += 1
-                except Exception:
-                    pass
-            logger.warning(
-                "SSL Phase 2 (CertGetCertificateChain via %s): "
-                "chain has %d certs, loaded %d new",
-                probe_used, len(chain_ders), chain_loaded,
-            )
-        else:
-            logger.warning(
-                "SSL Phase 2: all probe URLs unreachable — "
-                "using registry certs only"
-            )
+        ctx.load_default_certs(ssl.Purpose.SERVER_AUTH)
     except Exception as exc:
-        logger.warning("SSL Phase 2 failed: %s", exc)
+        logger.debug("SSL: load_default_certs failed — %s", exc)
 
-    if reg_count == 0:
-        raise RuntimeError(
-            "SSL: no certs loaded from Windows registry — context is empty"
-        )
+    reg_count = 0
+    if sys.platform == "win32":
+        reg_count, reg_counts = _load_registry_certs(ctx)
+        logger.warning("SSL base: registry loaded %d certs. Per-path: %s",
+                       reg_count, reg_counts)
+
+    env_count = _load_env_var_cas(ctx)
+    cache_count = _load_cached_cas(ctx)
+    logger.warning("SSL base: env-var CAs=%d, AppData-cached CAs=%d",
+                   env_count, cache_count)
+
     return ctx
 
 
@@ -689,34 +608,62 @@ def _make_ssl_ctx_windows() -> ssl.SSLContext:
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=1)
-def make_ssl_verify() -> Union[bool, str]:
-    """Return the ``verify=`` argument for httpx.Client / httpx.AsyncClient.
+def make_ssl_verify() -> Union[bool, ssl.SSLContext, str]:
+    """Return the ``verify=`` argument for httpx clients (cached).
 
-    Cached after the first call; the same SSLContext is reused for all
-    connections.
+    Tier 1: http_ssl_verify=False  → False (skip verification)
+    Tier 2: http_ca_bundle set     → base context + bundle entries
+    Tier 3: otherwise              → base context (reactive AIA fills gaps)
     """
     from app.config.settings import get_settings
-
     cfg = get_settings()
 
     if not cfg.http_ssl_verify:
         logger.warning("SSL: verification DISABLED (http_ssl_verify=False)")
         return False
 
+    ctx = _build_base_context()
+
     if cfg.http_ca_bundle:
-        logger.warning("SSL: using explicit CA bundle: %s", cfg.http_ca_bundle)
-        return cfg.http_ca_bundle
+        n = _load_ca_bundle(ctx, cfg.http_ca_bundle)
+        logger.warning("SSL: loaded %d certs from http_ca_bundle", n)
 
-    if sys.platform == "win32":
-        try:
-            return _make_ssl_ctx_windows()  # type: ignore[return-value]
-        except Exception as exc:
-            logger.warning(
-                "SSL: Windows cert loader failed (%s); "
-                "falling back to ssl.create_default_context()",
-                exc,
-            )
+    return ctx
 
-    ctx = ssl.create_default_context()
-    logger.warning("SSL: using ssl.create_default_context() as fallback")
-    return ctx  # type: ignore[return-value]
+
+def _is_cert_verify_error(exc: BaseException) -> bool:
+    """True if *exc* (or a cause in its chain) is an SSL cert verification error."""
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 10:
+        if isinstance(cur, ssl.SSLCertVerificationError):
+            return True
+        # httpx wraps ssl errors; match by message as a fallback
+        msg = str(cur).upper()
+        if "CERTIFICATE_VERIFY_FAILED" in msg or "CERTIFICATE VERIFY FAILED" in msg:
+            return True
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
+
+
+def with_ssl_retry(do_request, url: str):
+    """Run do_request(verify); on cert-verify failure, fetch the corporate CA
+    for *url*, refresh the cached context, and retry once.
+
+    do_request(verify) must perform the request with the given verify value and
+    return its result (raising on failure).
+    """
+    try:
+        return do_request(make_ssl_verify())
+    except Exception as exc:  # noqa: BLE001 — we re-raise unless it's a cert error
+        if not _is_cert_verify_error(exc):
+            raise
+        logger.warning("SSL: cert verify failed for %s — fetching corporate CA", url)
+        cas = _fetch_corporate_ca_chain(url)
+        if not cas:
+            logger.warning("SSL: corporate CA fetch yielded nothing — re-raising")
+            raise
+        make_ssl_verify.cache_clear()
+        logger.warning("SSL: fetched %d CA cert(s); retrying request once", len(cas))
+        return do_request(make_ssl_verify())
