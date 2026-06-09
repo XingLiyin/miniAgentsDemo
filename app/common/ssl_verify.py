@@ -565,169 +565,60 @@ def _get_leaf_cert(url):  # TEMP shim — removed in Task 8/9
     return chain[0] if chain else None
 
 
-def _build_chain_via_windows_cryptoapi(leaf_der: bytes) -> list[bytes]:
-    """Use Windows CertGetCertificateChain to build the complete cert chain.
+# ---------------------------------------------------------------------------
+# Reactive chain completion — walk AIA up to a self-signed root
+# ---------------------------------------------------------------------------
 
-    Windows will use ALL available sources (registry stores, AIA fetching,
-    enterprise / AD stores, CTLs) to build the chain.  We extract every
-    DER-encoded cert from the returned chain, including CA certs that are
-    NOT in any local registry path.
+_AIA_MAX_HOPS = 10  # safety bound against AIA loops
 
-    Returns a list of DER bytes for all certs in the first chain (leaf first,
-    root last).  Returns [] on failure.
+
+def _fetch_corporate_ca_chain(url: str) -> list[bytes]:
+    """Obtain the corporate CA cert(s) needed to trust *url*.
+
+    1. Unverified probe to *url* → the chain the proxy presents (leaf + any
+       intermediates).
+    2. For each non-root cert, if its issuer is missing, follow the AIA
+       CA-Issuers URL to download the next cert up, until a self-signed root
+       or no further AIA.
+    3. Cache every CA cert collected to AppData.
+
+    Returns the list of CA DER blobs collected (intermediates + root); [] on
+    total failure.
     """
-    import ctypes
-    import ctypes.wintypes
-
-    crypt32 = ctypes.windll.crypt32
-
-    # ── Struct definitions ──────────────────────────────────────────────────
-
-    class _CERT_CONTEXT(ctypes.Structure):
-        _fields_ = [
-            ("dwCertEncodingType", ctypes.wintypes.DWORD),
-            ("pbCertEncoded", ctypes.POINTER(ctypes.c_ubyte)),
-            ("cbCertEncoded", ctypes.wintypes.DWORD),
-            ("pCertInfo", ctypes.c_void_p),
-            ("hCertStore", ctypes.c_void_p),
-        ]
-
-    class _CERT_TRUST_STATUS(ctypes.Structure):
-        _fields_ = [
-            ("dwErrorStatus", ctypes.wintypes.DWORD),
-            ("dwInfoStatus", ctypes.wintypes.DWORD),
-        ]
-
-    class _CERT_CHAIN_ELEMENT(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", ctypes.wintypes.DWORD),
-            ("pCertContext", ctypes.POINTER(_CERT_CONTEXT)),
-            ("TrustStatus", _CERT_TRUST_STATUS),
-            ("pRevocationInfo", ctypes.c_void_p),
-            ("pIssuanceUsage", ctypes.c_void_p),
-            ("pApplicationUsage", ctypes.c_void_p),
-            ("pwszExtendedErrorInfo", ctypes.c_wchar_p),
-        ]
-
-    class _CERT_SIMPLE_CHAIN(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", ctypes.wintypes.DWORD),
-            ("TrustStatus", _CERT_TRUST_STATUS),
-            ("cElement", ctypes.wintypes.DWORD),
-            ("rgpElement",
-             ctypes.POINTER(ctypes.POINTER(_CERT_CHAIN_ELEMENT))),
-            ("pTrustListInfo", ctypes.c_void_p),
-            ("fHasRevocationFreshnessTime", ctypes.wintypes.BOOL),
-            ("dwRevocationFreshnessTime", ctypes.wintypes.DWORD),
-        ]
-
-    class _CERT_CHAIN_CONTEXT(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", ctypes.wintypes.DWORD),
-            ("TrustStatus", _CERT_TRUST_STATUS),
-            ("cChain", ctypes.wintypes.DWORD),
-            ("rgpChain",
-             ctypes.POINTER(ctypes.POINTER(_CERT_SIMPLE_CHAIN))),
-            ("cLowerQualityChainContext", ctypes.wintypes.DWORD),
-            ("rgpLowerQualityChainContext", ctypes.c_void_p),
-            ("fHasRevocationFreshnessTime", ctypes.wintypes.BOOL),
-            ("dwRevocationFreshnessTime", ctypes.wintypes.DWORD),
-        ]
-
-    class _CTL_USAGE(ctypes.Structure):
-        _fields_ = [
-            ("cUsageIdentifier", ctypes.wintypes.DWORD),
-            ("rgpszUsageIdentifier", ctypes.c_void_p),
-        ]
-
-    class _CERT_USAGE_MATCH(ctypes.Structure):
-        _fields_ = [
-            ("dwType", ctypes.wintypes.DWORD),
-            ("Usage", _CTL_USAGE),
-        ]
-
-    class _CERT_CHAIN_PARA(ctypes.Structure):
-        _fields_ = [
-            ("cbSize", ctypes.wintypes.DWORD),
-            ("RequestedUsage", _CERT_USAGE_MATCH),
-        ]
-
-    # ── Function signatures ─────────────────────────────────────────────────
-    X509_ASN_ENCODING = 0x00000001
-
-    crypt32.CertCreateCertificateContext.restype = ctypes.POINTER(_CERT_CONTEXT)
-    crypt32.CertCreateCertificateContext.argtypes = [
-        ctypes.wintypes.DWORD, ctypes.c_char_p, ctypes.wintypes.DWORD
-    ]
-    crypt32.CertGetCertificateChain.restype = ctypes.wintypes.BOOL
-    crypt32.CertGetCertificateChain.argtypes = [
-        ctypes.c_void_p, ctypes.POINTER(_CERT_CONTEXT),
-        ctypes.c_void_p, ctypes.c_void_p,
-        ctypes.POINTER(_CERT_CHAIN_PARA),
-        ctypes.wintypes.DWORD, ctypes.c_void_p,
-        ctypes.POINTER(ctypes.POINTER(_CERT_CHAIN_CONTEXT)),
-    ]
-    crypt32.CertFreeCertificateChain.argtypes = [
-        ctypes.POINTER(_CERT_CHAIN_CONTEXT)
-    ]
-    crypt32.CertFreeCertificateContext.argtypes = [
-        ctypes.POINTER(_CERT_CONTEXT)
-    ]
-
-    # ── Build the chain ─────────────────────────────────────────────────────
-    cert_ctx = crypt32.CertCreateCertificateContext(
-        X509_ASN_ENCODING, leaf_der, len(leaf_der)
-    )
-    if not cert_ctx:
-        logger.warning("SSL: CertCreateCertificateContext failed")
+    presented = _get_leaf_and_chain(url)
+    if not presented:
         return []
 
-    chain_ders: list[bytes] = []
-    try:
-        para = _CERT_CHAIN_PARA()
-        para.cbSize = ctypes.sizeof(_CERT_CHAIN_PARA)
-        chain_ctx_pp = ctypes.POINTER(_CERT_CHAIN_CONTEXT)()
+    collected: list[bytes] = []
+    seen: set[str] = set()
+    queue: list[bytes] = list(presented)
+    hops = 0
 
-        ok = crypt32.CertGetCertificateChain(
-            None, cert_ctx, None, None,
-            ctypes.byref(para),
-            0x00000001,  # CERT_CHAIN_CACHE_END_CERT
-            None,
-            ctypes.byref(chain_ctx_pp),
-        )
+    while queue and hops < _AIA_MAX_HOPS:
+        der = queue.pop(0)
+        fp = hashlib.sha256(der).hexdigest()
+        if fp in seen:
+            continue
+        seen.add(fp)
 
-        if ok and chain_ctx_pp:
-            try:
-                cc = chain_ctx_pp.contents
-                for i in range(cc.cChain):
-                    if not cc.rgpChain:
-                        break
-                    sc = cc.rgpChain[i].contents
-                    for j in range(sc.cElement):
-                        if not sc.rgpElement:
-                            break
-                        el = sc.rgpElement[j].contents
-                        if el.pCertContext:
-                            c = el.pCertContext.contents
-                            try:
-                                der = bytes(
-                                    c.pbCertEncoded[:c.cbCertEncoded]
-                                )
-                                if der not in chain_ders:
-                                    chain_ders.append(der)
-                            except Exception:
-                                pass
-            finally:
-                crypt32.CertFreeCertificateChain(chain_ctx_pp)
-        else:
-            logger.warning(
-                "SSL: CertGetCertificateChain returned False "
-                "(error 0x%08x)", ctypes.GetLastError()
-            )
-    finally:
-        crypt32.CertFreeCertificateContext(cert_ctx)
+        if _is_ca_cert(der):
+            collected.append(der)
+            _save_ca_to_cache(der)
 
-    return chain_ders
+        if _is_self_signed(der):
+            continue
+
+        # Walk up via AIA to fetch the issuer (only if not already present)
+        for issuer_url in _extract_ca_issuer_urls(der):
+            data = _http_get(issuer_url)
+            if not data:
+                continue
+            for issuer_der in _decode_certs(data):
+                if hashlib.sha256(issuer_der).hexdigest() not in seen:
+                    queue.append(issuer_der)
+            hops += 1
+
+    return collected
 
 
 # ---------------------------------------------------------------------------
@@ -765,7 +656,7 @@ def _make_ssl_ctx_windows() -> ssl.SSLContext:
                 break
 
         if leaf_der:
-            chain_ders = _build_chain_via_windows_cryptoapi(leaf_der)
+            chain_ders = []  # _build_chain_via_windows_cryptoapi removed (Task 8); replaced in Task 9
             chain_loaded = 0
             for der in chain_ders:
                 try:
