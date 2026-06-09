@@ -158,6 +158,55 @@ def _load_cached_cas(ctx: ssl.SSLContext) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Cert decoding — accept DER, PEM, or PKCS7 (.p7c) and normalise to DER
+# ---------------------------------------------------------------------------
+
+def _decode_certs(data: bytes) -> list[bytes]:
+    """Decode *data* into a list of DER certs. Accepts DER, PEM, or PKCS7.
+
+    Returns [] if nothing parseable is found.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.serialization import pkcs7
+
+    der_enc = serialization.Encoding.DER
+
+    # Single DER cert
+    try:
+        cert = x509.load_der_x509_certificate(data)
+        return [cert.public_bytes(der_enc)]
+    except Exception:
+        pass
+
+    # PEM (possibly multiple)
+    try:
+        certs = x509.load_pem_x509_certificates(data)
+        if certs:
+            return [c.public_bytes(der_enc) for c in certs]
+    except Exception:
+        pass
+
+    # PKCS7 DER (.p7c / .p7b) — common for AIA CA-Issuers responses
+    try:
+        certs = pkcs7.load_der_pkcs7_certificates(data)
+        if certs:
+            return [c.public_bytes(der_enc) for c in certs]
+    except Exception:
+        pass
+
+    # PKCS7 PEM
+    try:
+        certs = pkcs7.load_pem_pkcs7_certificates(data)
+        if certs:
+            return [c.public_bytes(der_enc) for c in certs]
+    except Exception:
+        pass
+
+    return []
+
+
+# ---------------------------------------------------------------------------
 # Blob parsing
 # ---------------------------------------------------------------------------
 
