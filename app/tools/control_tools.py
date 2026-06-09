@@ -135,37 +135,40 @@ def control_tool(fn):
 
 # ── 模块级辅助函数 ─────────────────────────────────────────────────────────────
 
-def _confirm_with_user(task: Task, process_report: str, *, task_svc: "TaskService", session_svc: "SessionService") -> tuple[str, str]:
+def _ask_human(task: Task, prompt: str, *, session_svc: "SessionService") -> str:
+    """Pause the session and ask the human for input, blocking until they reply.
+
+    Used by the `ask_human` assessment outcome: the turn produced output but needs
+    the user to answer something before work can continue. Returns the raw answer;
+    the caller re-queues the task as active and stashes the answer into memory.
+
+    The `prompt` here is the internal process report; the actual user-facing
+    question is the task's plain-text output, already streamed to the user. So
+    nothing extra is shown — the frontend only receives an empty `waiting_input`
+    to re-enable the input box (no context message, no prompt text).
+    """
     from app.storage.file.hitl_store import get_hitl_store
     from app.common.sse_bus import get_sse_bus
-    from app.common.utils import now_iso
 
     session_id = task.session_id
     agent_id   = task.assigned_agent_id
-    prompt = (
-        f"任务「{task.title}」已执行，但系统无法自动判定完成状态。\n\n"
-        f"执行过程：\n{process_report or '（无输出）'}\n\n"
-        "请确认任务是否完成，或补充说明以便 Agent 重新规划。"
-    )
 
     session_svc.transition(session_id, "WAITING_INPUT")
     try:
         sess = session_svc.get(session_id)
-        sess.metadata["_hitl_prompt"] = prompt
-        sess.metadata["_hitl_input_type"] = "task_completion_confirm"
+        sess.metadata["_hitl_prompt"] = ""
+        sess.metadata["_hitl_input_type"] = "user_input"
         session_svc.save(sess)
     except Exception:
         pass
     try:
-        get_sse_bus().push(session_id, {"type": "message", "role": "assistant",
-                                        "content": prompt, "created_at": now_iso()})
-        get_sse_bus().push(session_id, {"type": "waiting_input", "prompt": prompt,
-                                        "input_type": "task_completion_confirm",
-                                        "task_title": "请确认任务完成状态"})
+        get_sse_bus().push(session_id, {"type": "waiting_input", "prompt": "",
+                                        "input_type": "user_input",
+                                        "task_title": "等待用户输入"})
     except Exception:
         pass
 
-    answer = get_hitl_store().wait(session_id, agent_id, prompt, "task_completion_confirm")
+    answer = get_hitl_store().wait(session_id, agent_id, "", "user_input")
     session_svc.transition(session_id, "RUNNING")
     try:
         sess = session_svc.get(session_id)
@@ -174,15 +177,7 @@ def _confirm_with_user(task: Task, process_report: str, *, task_svc: "TaskServic
         session_svc.save(sess)
     except Exception:
         pass
-
-    if answer.startswith("用户已确认任务完成"):
-        task_svc.finish(task.id, process_report=process_report, session_id=task.session_id)
-        return "success", process_report
-    else:
-        prefix = "用户表示任务未完成，请重试。用户补充说明："
-        feedback = answer[len(prefix):] if answer.startswith(prefix) else answer
-        task_svc.fail(task.id, process_report=process_report, error=feedback or "用户确认任务未完成", session_id=task.session_id)
-        return "failed", feedback or "用户确认任务未完成"
+    return answer
 
 
 def _apply_reviews(reviews: list, ctx: CallContext, *, task_svc: "TaskService") -> str:
@@ -234,7 +229,7 @@ def _apply_reviews(reviews: list, ctx: CallContext, *, task_svc: "TaskService") 
 # ── 工具 schema + 实现 ────────────────────────────────────────────────────────
 
 @control_tool
-def request_human_input(
+def ask_human(
     prompt: Annotated[str, "The question or instruction to show the user"],
     context: Annotated[str, "Optional background context for the user"] = "",
     *,
@@ -334,7 +329,7 @@ def submit_task_assessment(
         "'success' if completed successfully; "
         "'failed' if it could not be completed (system decides whether to retry); "
         "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn); "
-        "'needs_user_input' if completion cannot be determined without user confirmation.",
+        "'ask_human' if the task cannot proceed without an answer from the user; the user is asked, the task stays active, and their reply is fed back in as a new user message.",
     ],
     task_process_report: Annotated[str, "Execution process summary: describe what was accomplished, what was modified or produced, and what progress was made this turn. Include which tools were called and whether any failed. If the task is incomplete, explain what remains and why. Written to memory and read by the next actor turn — be thorough."],
     task_failure_reason: Annotated[
@@ -362,7 +357,7 @@ def submit_task_assessment(
 ) -> ToolResult:
     """Submit your assessment of the current task's execution result, and optionally review sibling tasks in one call."""
     task = ctx.task if ctx else None
-    if task_status not in ("success", "failed", "active", "needs_user_input"):
+    if task_status not in ("success", "failed", "active", "ask_human"):
         task_status = "failed"
     task_process_report = f"{task_process_report}\n\nNext Step Hint: {next_step_hint}" if next_step_hint else task_process_report
 
@@ -390,19 +385,20 @@ def submit_task_assessment(
             task_svc.transition(task.id, "PENDING", process_report=task_process_report, session_id=task.session_id)
             task.status = "PENDING"
             task.process_report = task_process_report
-        else:  # needs_user_input
-            original_report = task_process_report
-            task_status, task_process_report = _confirm_with_user(
-                task, task_process_report, task_svc=task_svc, session_svc=session_svc,
-            )
-            # _confirm_with_user persists process_report=original_report; on rejection it
-            # also stores the user's feedback in error and returns it as task_process_report.
-            task.process_report = original_report
-            if task_status == "success":
-                task.status = "FINISHED"
-            else:
-                task.status = "FAILED"
-                task.error = task_process_report
+        else:  # ask_human — turn produced output but needs the user to answer before continuing
+            answer = _ask_human(task, task_process_report, session_svc=session_svc)
+            # Keep the task active (re-queued) so the next actor turn continues with the answer.
+            task_svc.transition(task.id, "PENDING", process_report=task_process_report, session_id=task.session_id)
+            task.status = "PENDING"
+            task.process_report = task_process_report
+            # Stash the raw answer so _write_execution_memory appends it as a user message
+            # after the assistant summary (output + process report); then the task re-runs.
+            try:
+                t = task_svc.get(task.id, task.session_id)
+                t.pending_user_answer = answer
+                task_svc.save(t)
+            except Exception:
+                pass
 
     review_msg = ""
     if task_reviews and ctx:

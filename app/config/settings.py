@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     default_short_window_size: int = 20
     compaction_keep_last: int = 6
 
+    # 资源描述总结（长 tool/skill/agent 描述压缩，缓解上下文膨胀）
+    resource_summary_enabled: bool = True
+    resource_summary_threshold_tokens: int = 200   # 超过此 token 数才总结
+    resource_summary_target_tokens: int = 60        # 总结目标长度
+    resource_summary_wait_timeout_sec: float = 30.0  # 读路径阻塞等待上限
+    resource_summary_cooldown_sec: float = 60.0      # 总结失败后的冷却时间
+
     # Lifecycle Manager 并发限制
     max_concurrent_agents: int = 5
     max_concurrent_tasks: int = 10
