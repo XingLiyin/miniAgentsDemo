@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from app.common.errors import AppError
 from app.llm.types import LLMTool
@@ -40,6 +40,20 @@ class ToolRegistry:
         self._last_connect_attempt: dict[str, float] = {}       # server_name → monotonic timestamp
         self._connect_locks: dict[str, threading.Lock] = {}     # 防止并发 start()
         self._connect_failures: dict[str, int] = {}             # server_name → 连续失败次数
+        # 工具描述预热回调（duck-typed，避免 tools 层依赖 runtime 层）
+        self._warm_hook: "Callable[[list[tuple[str, str]]], None] | None" = None
+
+    def set_warm_hook(self, hook: "Callable[[list[tuple[str, str]]], None] | None") -> None:
+        """注册描述预热回调；MCP 工具列表就绪时以 [(name, description)] 调用。"""
+        self._warm_hook = hook
+
+    def _warm_definitions(self, defs: list[ToolDefinition]) -> None:
+        if not self._warm_hook or not defs:
+            return
+        try:
+            self._warm_hook([(td.name, td.description or "") for td in defs])
+        except Exception:
+            logger.debug("ToolRegistry: warm hook failed", exc_info=True)
 
     # ── Builtin 工具注册 ──────────────────────────────────────────────────────
 
@@ -111,11 +125,24 @@ class ToolRegistry:
         provider = self._mcp_providers.get(name)
         if provider is None:
             raise AppError("MCP_NOT_FOUND", f"MCP server '{name}' not found in registry")
-        if not provider._initialized:
-            self._try_connect(name, provider)
-        else:
-            provider.reload_tools()
-        logger.info("ToolRegistry.refresh_mcp: '%s' reloaded", name)
+        if provider._initialized:
+            try:
+                provider.reload_tools()
+                self._warm_definitions(provider.list_definitions())
+                logger.info("ToolRegistry.refresh_mcp: '%s' reloaded", name)
+                return
+            except Exception as e:
+                # reload_tools() flips _initialized to False when the session was
+                # terminated (stale transport); fall through to reconnect. Any other
+                # error means the session is still live → surface it.
+                if provider._initialized:
+                    raise
+                logger.warning(
+                    "ToolRegistry.refresh_mcp: '%s' session was stale (%s), reconnecting",
+                    name, e,
+                )
+        self._try_connect(name, provider)
+        logger.info("ToolRegistry.refresh_mcp: '%s' reconnecting", name)
 
     def shutdown(self) -> None:
         """停止所有 MCP Provider（应用退出时调用）。"""
@@ -253,6 +280,10 @@ class ToolRegistry:
                     self._last_connect_attempt.pop(name, None)
                     self._connect_failures[name] = 0
                 logger.info("ToolRegistry: connected MCP server '%s'", name)
+                try:
+                    self._warm_definitions(provider.list_definitions())
+                except Exception:
+                    logger.debug("ToolRegistry: warm after connect failed for '%s'", name, exc_info=True)
             except Exception as e:
                 with lock:
                     count = self._connect_failures.get(name, 0) + 1

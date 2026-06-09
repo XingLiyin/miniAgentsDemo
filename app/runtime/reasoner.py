@@ -18,7 +18,9 @@ from app.tools.types import CallContext
 
 if TYPE_CHECKING:
     from app.agent_template.loader import AgentLoader
+    from app.llm.types import LLMTool
     from app.runtime.memory_compaction import MemoryCompactionAgent
+    from app.runtime.resource_summarizer import ResourceSummarizer
     from app.skills.registry import SkillRegistry
     from app.skills.skill import Skill
     from app.storage.file.agent_store import AgentStore
@@ -49,6 +51,7 @@ class Reasoner:
         agent_template_loader: "AgentLoader | None" = None,
         compaction_agent: "MemoryCompactionAgent | None" = None,
         agent_store: "AgentStore | None" = None,
+        resource_summarizer: "ResourceSummarizer | None" = None,
     ) -> None:
         self._memory_svc = memory_svc
         self._bb_svc = blackboard_svc
@@ -58,6 +61,7 @@ class Reasoner:
         self._agent_template_loader = agent_template_loader
         self._compaction_agent = compaction_agent
         self._agent_store = agent_store
+        self._resource_summarizer = resource_summarizer
         # (session_id, agent_id, working_dir) → (fetched_at, skills)
         self._skill_cache: dict[tuple[str, str, str], tuple[float, list["Skill"]]] = {}
 
@@ -69,6 +73,9 @@ class Reasoner:
         if self._maybe_compact(session, agent, token_estimate):
             messages, bb_snippets, token_estimate = self._fetch_base(session, agent, task)
         soul, role, skill_instructions = self._extract_agent_identity(agent, task, session.id)
+        from app.config.settings import get_settings
+        llm_provider = session.llm_provider or get_settings().default_llm_provider
+        llm_model = session.llm_model or ""
         return ReasoningContext(
             goal=session.goal,
             recent_messages=messages,
@@ -76,8 +83,8 @@ class Reasoner:
             soul=soul,
             role=role,
             skill_instructions=skill_instructions,
-            actor_resources=self._build_actor_resources(session.goal, agent, task, session.id),
-            observer_resources=self._build_observer_resources(agent, task),
+            actor_resources=self._build_actor_resources(session.goal, agent, task, session.id, llm_provider, llm_model),
+            observer_resources=self._build_observer_resources(agent, task, llm_provider, llm_model),
             current_task=task,
             token_estimate=token_estimate,
             project_background=self._load_background(agent, task),
@@ -260,11 +267,15 @@ class Reasoner:
                 tools.update(self._tool_registry.get_server_tool_names(server_name))
         return tools
 
-    def _build_actor_resources(self, goal: str, agent: Agent, task: Task, session_id: str = "") -> list[ContextResource]:
-        """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。"""
-        from app.config.settings import get_settings
+    def _build_actor_resources(self, goal: str, agent: Agent, task: Task, session_id: str = "",
+                               provider: str = "", model: str = "") -> list[ContextResource]:
+        """按 task.type 构建资源列表：plan 加载 skills + planner tools，act 加载 tools。
+
+        两阶段：先收集本轮全部 (name, raw) 描述，一次批量压缩（一次 LLM 调用压一批，
+        命中缓存的免调用），再按结果组装；避免逐条串行阻塞总结。
+        """
+        from app.config.settings import get_settings, resolve_working_dir
         from app.tools.types import CallContext
-        from app.config.settings import resolve_working_dir
         _wd = resolve_working_dir(
             (task.settings.get("working_dir") if task.settings else None)
             or agent.settings.get("working_dir")
@@ -273,20 +284,45 @@ class Reasoner:
         )
         ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd)
         allowed = self._resolve_act_tool_names(agent)
-        skill_resources = []
+        skills = self._retrieve_skills(goal, agent, ctx)               # list[(name, desc)]
+        tools = self._tool_registry.to_llm_tools(list(allowed))        # list[LLMTool]
+        agent_metas = self._collect_agent_metas(agent)                 # list[(name, desc)]
+
+        items = list(skills)
+        items += [(t.name, t.description or "") for t in tools]
+        items += list(agent_metas)
+        compressed = self._compress(items, provider, model)
+
         skill_resources = [
-            ContextResource(name=name, description=desc, kind="skill")
-            for name, desc in self._retrieve_skills(goal, agent, ctx)
+            ContextResource(name=n, description=compressed.get((n, d), d), kind="skill")
+            for n, d in skills
         ]
-        tool_resources = [
-            ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-            for t in self._tool_registry.to_llm_tools(list(allowed))
+        tool_resources = self._tool_resources(tools, compressed)
+        agent_resources = [
+            ContextResource(name=n, description=compressed.get((n, d), d), kind="agent")
+            for n, d in agent_metas
         ]
-        agent_resources = self._build_agent_resources(agent)
         return skill_resources + tool_resources + agent_resources
 
-    def _build_agent_resources(self, agent: Agent) -> list[ContextResource]:
-        """构建可见 sub-agent 列表；仅 has_spawn_permission=True 时生效。
+    def _compress(self, items: list[tuple[str, str]], provider: str, model: str) -> dict[tuple[str, str], str]:
+        """批量压缩入口；未配置 summarizer 时返回空 map（调用方回落原始描述）。"""
+        if not self._resource_summarizer or not items:
+            return {}
+        return self._resource_summarizer.compress_many(items, provider=provider, model=model)
+
+    def _tool_resources(self, tools: "list[LLMTool]", compressed: dict[tuple[str, str], str]) -> list[ContextResource]:
+        """按压缩结果组装 tool 资源；描述被压缩时同步替换 llm_tool（prompt 与 function schema 都用它）。"""
+        from dataclasses import replace
+        out: list[ContextResource] = []
+        for t in tools:
+            raw = t.description or ""
+            new_desc = compressed.get((t.name, raw), raw)
+            llm_tool = t if new_desc == raw else replace(t, description=new_desc)
+            out.append(ContextResource(name=t.name, description=new_desc, kind="tool", llm_tool=llm_tool))
+        return out
+
+    def _collect_agent_metas(self, agent: Agent) -> list[tuple[str, str]]:
+        """收集可见 sub-agent 的 (name, description)；仅 has_spawn_permission=True 时生效。
 
         可见范围由当前 agent template 的 SOUL.md subagents 字段控制：
         空列表 = 全部可见，非空 = 仅列出的 template name 可见。
@@ -297,12 +333,13 @@ class Reasoner:
         own_meta = self._agent_template_loader.get_details_by_id(agent.template_id) if agent.template_id else None
         allowlist: set[str] | None = set(own_meta.actor_capability.subagents) if own_meta and own_meta.actor_capability.subagents else None
         return [
-            ContextResource(name=m.name, description=m.description, kind="agent")
+            (m.name, m.description)
             for m in self._agent_template_loader.list_details(workspace_dir)
             if (allowlist is None or m.name in allowlist)
         ]
 
-    def _build_observer_resources(self, agent: Agent, task: Task) -> list[ContextResource]:
+    def _build_observer_resources(self, agent: Agent, task: Task,
+                                  provider: str = "", model: str = "") -> list[ContextResource]:
         """组装 Observer 阶段可用工具，由 observe_tool_list 统一配置。
 
         submit_task_reviews 由 Observer 在第二轮内部注入，不经此处。
@@ -312,11 +349,9 @@ class Reasoner:
         allowed = self._resolve_observe_tool_names(agent)
         if not allowed:
             return []
-        tool_resources = [
-            ContextResource(name=t.name, description=t.description, kind="tool", llm_tool=t)
-            for t in self._tool_registry.to_llm_tools(list(allowed))
-        ]
-        return tool_resources
+        tools = self._tool_registry.to_llm_tools(list(allowed))
+        compressed = self._compress([(t.name, t.description or "") for t in tools], provider, model)
+        return self._tool_resources(tools, compressed)
 
     def _retrieve_skills(self, goal: str, agent: Agent, ctx: "CallContext | None" = None) -> list[tuple[str, str]]:
         """返回 (name, description) 元组列表。结果缓存在 Reasoner 内，按 TTL + working_dir 失效。"""

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-TaskOutcome = Literal["success", "failed", "needs_user_input"]
+TaskOutcome = Literal["success", "failed", "ask_human"]
 
 if TYPE_CHECKING:
     from app.domain.models.task import Task
