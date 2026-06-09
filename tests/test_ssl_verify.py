@@ -110,3 +110,30 @@ def test_load_env_var_cas_none_set(monkeypatch):
         monkeypatch.delenv(var, raising=False)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     assert sv._load_env_var_cas(ctx) == 0
+
+
+def test_parse_ca_bundle_entries():
+    raw = " C:\\certs\\a.crt ; http://pki.corp.test/root.crt ;; /etc/b.pem "
+    files, urls = sv._parse_ca_bundle_entries(raw)
+    assert files == ["C:\\certs\\a.crt", "/etc/b.pem"]
+    assert urls == ["http://pki.corp.test/root.crt"]
+
+
+def test_load_ca_bundle_into_ctx(tmp_path, monkeypatch, cert_triple):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    pem = x509.load_der_x509_certificate(cert_triple.root_der).public_bytes(
+        serialization.Encoding.PEM
+    )
+    f = tmp_path / "a.pem"
+    f.write_bytes(pem)
+
+    # URL entry: mock the HTTP download to return intermediate DER
+    monkeypatch.setattr(sv, "_http_get", lambda url, timeout=10: cert_triple.intermediate_der)
+    monkeypatch.setattr(sv, "_ssl_cache_dir", lambda: tmp_path / "cache")
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    raw = f"{f};http://pki.corp.test/intermediate.crt"
+    loaded = sv._load_ca_bundle(ctx, raw)
+    assert loaded >= 2

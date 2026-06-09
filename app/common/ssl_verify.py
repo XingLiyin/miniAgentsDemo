@@ -289,6 +289,77 @@ def _load_env_var_cas(ctx: ssl.SSLContext) -> int:
 
 
 # ---------------------------------------------------------------------------
+# HTTP GET helper (honours system proxy via httpx trust_env)
+# ---------------------------------------------------------------------------
+
+def _http_get(url: str, timeout: int = 10) -> bytes | None:
+    """GET *url* and return the raw body bytes, or None on failure.
+
+    Uses httpx with trust_env=True so the system proxy is honoured. CA-Issuers
+    URLs are almost always plain http, so verification is not a concern here.
+    """
+    import httpx
+    try:
+        with httpx.Client(timeout=timeout, trust_env=True, verify=False) as client:
+            resp = client.get(url)
+            resp.raise_for_status()
+            return resp.content
+    except Exception as exc:
+        logger.debug("SSL: _http_get(%s) failed — %s", url, exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# http_ca_bundle — multi-entry (file path OR http(s) URL), ';'-separated
+# ---------------------------------------------------------------------------
+
+def _parse_ca_bundle_entries(raw: str) -> tuple[list[str], list[str]]:
+    """Split a ';'-separated http_ca_bundle into (file_paths, urls)."""
+    files: list[str] = []
+    urls: list[str] = []
+    for part in raw.split(";"):
+        entry = part.strip()
+        if not entry:
+            continue
+        if entry.lower().startswith(("http://", "https://")):
+            urls.append(entry)
+        else:
+            files.append(entry)
+    return files, urls
+
+
+def _load_ca_bundle(ctx: ssl.SSLContext, raw: str) -> int:
+    """Load every entry of a multi-entry http_ca_bundle into *ctx*.
+
+    File entries are read directly; URL entries are downloaded (and cached to
+    AppData). Returns the number of certs loaded.
+    """
+    files, urls = _parse_ca_bundle_entries(raw)
+    loaded = 0
+
+    for path in files:
+        try:
+            ctx.load_verify_locations(cafile=path)
+            loaded += 1
+        except Exception as exc:
+            logger.warning("SSL: failed to load CA bundle file %s — %s", path, exc)
+
+    for url in urls:
+        data = _http_get(url)
+        if not data:
+            continue
+        for der in _decode_certs(data):
+            try:
+                ctx.load_verify_locations(cadata=der)
+                _save_ca_to_cache(der)
+                loaded += 1
+            except Exception:
+                pass
+
+    return loaded
+
+
+# ---------------------------------------------------------------------------
 # Blob parsing
 # ---------------------------------------------------------------------------
 
