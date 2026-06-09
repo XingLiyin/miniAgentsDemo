@@ -207,6 +207,58 @@ def _decode_certs(data: bytes) -> list[bytes]:
 
 
 # ---------------------------------------------------------------------------
+# Cert inspection — AIA CA-Issuers URLs, self-signed test, CA test
+# ---------------------------------------------------------------------------
+
+def _extract_ca_issuer_urls(der: bytes) -> list[str]:
+    """Return the CA-Issuers URLs from a cert's AIA extension (empty if none)."""
+    from cryptography import x509
+    from cryptography.x509.oid import ExtensionOID, AuthorityInformationAccessOID
+
+    try:
+        cert = x509.load_der_x509_certificate(der)
+        aia = cert.extensions.get_extension_for_oid(
+            ExtensionOID.AUTHORITY_INFORMATION_ACCESS
+        ).value
+    except Exception:
+        return []
+
+    urls: list[str] = []
+    for desc in aia:
+        if desc.access_method == AuthorityInformationAccessOID.CA_ISSUERS:
+            loc = desc.access_location
+            if isinstance(loc, x509.UniformResourceIdentifier):
+                u = loc.value
+                if u.lower().startswith(("http://", "https://")):
+                    urls.append(u)
+    return urls
+
+
+def _is_self_signed(der: bytes) -> bool:
+    """True if subject == issuer (i.e. a root)."""
+    from cryptography import x509
+    try:
+        cert = x509.load_der_x509_certificate(der)
+        return cert.subject == cert.issuer
+    except Exception:
+        return False
+
+
+def _is_ca_cert(der: bytes) -> bool:
+    """True if BasicConstraints marks this as a CA."""
+    from cryptography import x509
+    from cryptography.x509.oid import ExtensionOID
+    try:
+        cert = x509.load_der_x509_certificate(der)
+        bc = cert.extensions.get_extension_for_oid(
+            ExtensionOID.BASIC_CONSTRAINTS
+        ).value
+        return bool(bc.ca)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
 # Blob parsing
 # ---------------------------------------------------------------------------
 

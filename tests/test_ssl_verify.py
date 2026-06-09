@@ -57,3 +57,26 @@ def test_decode_certs_pkcs7(cert_triple):
 
 def test_decode_certs_garbage():
     assert sv._decode_certs(b"not a cert") == []
+
+
+def test_extract_ca_issuer_urls(cert_triple):
+    urls = sv._extract_ca_issuer_urls(cert_triple.leaf_der)
+    assert urls == [cert_triple.intermediate_aia_url]
+
+    urls2 = sv._extract_ca_issuer_urls(cert_triple.intermediate_der)
+    assert urls2 == [cert_triple.root_aia_url]
+
+    # root has no AIA
+    assert sv._extract_ca_issuer_urls(cert_triple.root_der) == []
+
+
+def test_is_self_signed(cert_triple):
+    assert sv._is_self_signed(cert_triple.root_der) is True
+    assert sv._is_self_signed(cert_triple.intermediate_der) is False
+    assert sv._is_self_signed(cert_triple.leaf_der) is False
+
+
+def test_is_ca_cert(cert_triple):
+    assert sv._is_ca_cert(cert_triple.root_der) is True
+    assert sv._is_ca_cert(cert_triple.intermediate_der) is True
+    assert sv._is_ca_cert(cert_triple.leaf_der) is False
