@@ -185,10 +185,6 @@ def test_fetch_corporate_ca_chain_walks_aia(tmp_path, monkeypatch, cert_triple):
     assert cert_triple.intermediate_der in cas
     assert cert_triple.root_der in cas
     assert cert_triple.leaf_der not in cas
-    # And both were cached
-    cached = sv._collect_cached_ca_ders()
-    assert cert_triple.intermediate_der in cached
-    assert cert_triple.root_der in cached
 
 
 def test_fetch_corporate_ca_chain_uses_presented_intermediate(tmp_path, monkeypatch, cert_triple):
@@ -221,14 +217,15 @@ def test_with_ssl_retry_success_first_try(monkeypatch):
     assert calls == [True]
 
 
-def test_with_ssl_retry_fetches_then_retries(monkeypatch, cert_triple):
+def test_with_ssl_retry_fetches_then_retries(tmp_path, monkeypatch, cert_triple):
     monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    monkeypatch.setattr(sv, "_ssl_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(sv, "_PENDING_CA_DERS", [])
+    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
+
     fetched = {"n": 0}
     monkeypatch.setattr(sv, "_fetch_corporate_ca_chain",
                         lambda url: (fetched.__setitem__("n", 1) or [cert_triple.root_der]))
-    # make_ssl_verify is lru_cache in real code; here it's a plain lambda, so
-    # patch cache_clear to a no-op attribute
-    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
 
     attempts = {"n": 0}
     def do(verify):
@@ -241,6 +238,10 @@ def test_with_ssl_retry_fetches_then_retries(monkeypatch, cert_triple):
     assert result == "ok-after-retry"
     assert fetched["n"] == 1
     assert attempts["n"] == 2
+    # cache-on-success: the proven CA was persisted to disk
+    assert cert_triple.root_der in sv._collect_cached_ca_ders()
+    # overlay rolled back to its prior (empty) state after persisting
+    assert sv._PENDING_CA_DERS == []
 
 
 def test_with_ssl_retry_reraises_non_cert_error(monkeypatch):
@@ -274,3 +275,23 @@ def test_is_cert_verify_error_via_cause_chain():
 
 def test_is_cert_verify_error_unrelated():
     assert sv._is_cert_verify_error(ValueError("totally unrelated")) is False
+
+
+def test_with_ssl_retry_failed_retry_does_not_persist(tmp_path, monkeypatch, cert_triple):
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    monkeypatch.setattr(sv, "_ssl_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(sv, "_PENDING_CA_DERS", [])
+    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
+    monkeypatch.setattr(sv, "_fetch_corporate_ca_chain", lambda url: [cert_triple.root_der])
+
+    # Both the initial attempt AND the retry fail with a cert error.
+    def do(verify):
+        raise ssl.SSLCertVerificationError("verify failed")
+
+    import pytest
+    with pytest.raises(ssl.SSLCertVerificationError):
+        sv.with_ssl_retry(do, "https://api.corp.test")
+
+    # Nothing persisted; overlay rolled back.
+    assert sv._collect_cached_ca_ders() == []
+    assert sv._PENDING_CA_DERS == []

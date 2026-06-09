@@ -33,6 +33,14 @@ from typing import Union
 
 logger = logging.getLogger(__name__)
 
+# In-memory overlay of CAs fetched reactively this process but NOT yet proven by
+# a successful retry (and thus not yet persisted to disk). _build_base_context
+# loads these in addition to the on-disk cache, so a retry can trust them. They
+# are promoted to the on-disk AppData cache only on retry success (cache-on-
+# success); on retry failure the overlay is rolled back so a spoofed AIA response
+# can never become a persistent trust anchor.
+_PENDING_CA_DERS: list[bytes] = []
+
 # ---------------------------------------------------------------------------
 # Registry paths — covers standard + GPO + enterprise + current-user
 # ---------------------------------------------------------------------------
@@ -532,10 +540,10 @@ def _fetch_corporate_ca_chain(url: str) -> list[bytes]:
     2. For each non-root cert, if its issuer is missing, follow the AIA
        CA-Issuers URL to download the next cert up, until a self-signed root
        or no further AIA.
-    3. Cache every CA cert collected to AppData.
+    3. Collect and return CA DER blobs (intermediates + root); does NOT persist
+       to disk — persistence happens in with_ssl_retry on retry success.
 
-    Returns the list of CA DER blobs collected (intermediates + root); [] on
-    total failure.
+    Returns the list of CA DER blobs collected; [] on total failure.
     """
     presented = _get_leaf_and_chain(url)
     if not presented:
@@ -555,7 +563,6 @@ def _fetch_corporate_ca_chain(url: str) -> list[bytes]:
 
         if _is_ca_cert(der):
             collected.append(der)
-            _save_ca_to_cache(der)
 
         if _is_self_signed(der):
             continue
@@ -596,8 +603,18 @@ def _build_base_context() -> ssl.SSLContext:
 
     env_count = _load_env_var_cas(ctx)
     cache_count = _load_cached_cas(ctx)
-    logger.warning("SSL base: env-var CAs=%d, AppData-cached CAs=%d",
-                   env_count, cache_count)
+
+    pending_count = 0
+    for der in _PENDING_CA_DERS:
+        try:
+            ctx.load_verify_locations(cadata=der)
+            pending_count += 1
+        except Exception:
+            pass
+    logger.warning(
+        "SSL base: env-var CAs=%d, AppData-cached CAs=%d, pending CAs=%d",
+        env_count, cache_count, pending_count,
+    )
 
     return ctx
 
@@ -648,14 +665,17 @@ def _is_cert_verify_error(exc: BaseException) -> bool:
 
 def with_ssl_retry(do_request, url: str):
     """Run do_request(verify); on cert-verify failure, fetch the corporate CA
-    for *url*, refresh the cached context, and retry once.
+    for *url*, retry once, and persist the CA ONLY if the retry verifies.
 
     do_request(verify) must perform the request with the given verify value and
-    return its result (raising on failure).
+    return its result (raising on failure). The fetched CAs are added to an
+    in-memory overlay (so the rebuilt context trusts them for the retry) and are
+    promoted to the on-disk AppData cache only when the retry succeeds; on retry
+    failure the overlay is rolled back and nothing is persisted.
     """
     try:
         return do_request(make_ssl_verify())
-    except Exception as exc:  # noqa: BLE001 — we re-raise unless it's a cert error
+    except Exception as exc:  # noqa: BLE001 — re-raised unless it's a cert error
         if not _is_cert_verify_error(exc):
             raise
         logger.warning("SSL: cert verify failed for %s — fetching corporate CA", url)
@@ -663,6 +683,25 @@ def with_ssl_retry(do_request, url: str):
         if not cas:
             logger.warning("SSL: corporate CA fetch yielded nothing — re-raising")
             raise
+
+        # Trust the fetched CAs in-memory for the retry, but do NOT persist yet.
+        saved = list(_PENDING_CA_DERS)
+        _PENDING_CA_DERS.extend(cas)
         make_ssl_verify.cache_clear()
         logger.warning("SSL: fetched %d CA cert(s); retrying request once", len(cas))
-        return do_request(make_ssl_verify())
+        try:
+            result = do_request(make_ssl_verify())
+        except Exception:
+            # Retry still failed — the CAs didn't help (or were bogus). Roll back
+            # the overlay so they never become a trust anchor; persist nothing.
+            _PENDING_CA_DERS[:] = saved
+            make_ssl_verify.cache_clear()
+            raise
+
+        # Retry verified successfully → the CAs are proven good. Persist to disk
+        # and drop them from the overlay (the on-disk cache now covers them).
+        for der in cas:
+            _save_ca_to_cache(der)
+        _PENDING_CA_DERS[:] = saved
+        make_ssl_verify.cache_clear()
+        return result
