@@ -80,3 +80,33 @@ def test_is_ca_cert(cert_triple):
     assert sv._is_ca_cert(cert_triple.root_der) is True
     assert sv._is_ca_cert(cert_triple.intermediate_der) is True
     assert sv._is_ca_cert(cert_triple.leaf_der) is False
+
+
+import ssl
+
+
+def test_load_env_var_cas(tmp_path, monkeypatch, cert_triple):
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+
+    pem = x509.load_der_x509_certificate(cert_triple.root_der).public_bytes(
+        serialization.Encoding.PEM
+    )
+    ca_file = tmp_path / "corp.pem"
+    ca_file.write_bytes(pem)
+
+    monkeypatch.setenv("SSL_CERT_FILE", str(ca_file))
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("NODE_EXTRA_CA_CERTS", raising=False)
+    monkeypatch.delenv("SSL_CERT_DIR", raising=False)
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    n = sv._load_env_var_cas(ctx)
+    assert n >= 1
+
+
+def test_load_env_var_cas_none_set(monkeypatch):
+    for var in ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS"):
+        monkeypatch.delenv(var, raising=False)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    assert sv._load_env_var_cas(ctx) == 0

@@ -259,6 +259,36 @@ def _is_ca_cert(der: bytes) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Environment-variable CA bundles (IT often pushes these machine-wide)
+# ---------------------------------------------------------------------------
+
+_ENV_CA_FILE_VARS = ("SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "NODE_EXTRA_CA_CERTS")
+_ENV_CA_DIR_VARS = ("SSL_CERT_DIR",)
+
+
+def _load_env_var_cas(ctx: ssl.SSLContext) -> int:
+    """Load CA bundles pointed to by common OpenSSL/requests/node env vars."""
+    n = 0
+    for var in _ENV_CA_FILE_VARS:
+        p = os.environ.get(var)
+        if p and os.path.isfile(p):
+            try:
+                ctx.load_verify_locations(cafile=p)
+                n += 1
+            except Exception:
+                pass
+    for var in _ENV_CA_DIR_VARS:
+        d = os.environ.get(var)
+        if d and os.path.isdir(d):
+            try:
+                ctx.load_verify_locations(capath=d)
+                n += 1
+            except Exception:
+                pass
+    return n
+
+
+# ---------------------------------------------------------------------------
 # Blob parsing
 # ---------------------------------------------------------------------------
 
