@@ -250,3 +250,27 @@ def test_with_ssl_retry_reraises_non_cert_error(monkeypatch):
     import pytest
     with pytest.raises(ValueError):
         sv.with_ssl_retry(do, "https://api.corp.test")
+
+
+def test_is_cert_verify_error_isinstance():
+    assert sv._is_cert_verify_error(ssl.SSLCertVerificationError("verify failed")) is True
+
+
+def test_is_cert_verify_error_wrapped_string_no_chain():
+    # The ping/stream path produces a plain RuntimeError with the SSL text in the
+    # message and NO __cause__/__context__ chain — exercises the string fallback.
+    exc = RuntimeError("HTTP 流式请求失败: [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate")
+    assert exc.__cause__ is None
+    assert exc.__context__ is None
+    assert sv._is_cert_verify_error(exc) is True
+
+
+def test_is_cert_verify_error_via_cause_chain():
+    inner = ssl.SSLCertVerificationError("verify failed")
+    outer = RuntimeError("connect error")
+    outer.__cause__ = inner
+    assert sv._is_cert_verify_error(outer) is True
+
+
+def test_is_cert_verify_error_unrelated():
+    assert sv._is_cert_verify_error(ValueError("totally unrelated")) is False

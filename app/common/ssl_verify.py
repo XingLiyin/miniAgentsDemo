@@ -589,7 +589,6 @@ def _build_base_context() -> ssl.SSLContext:
     except Exception as exc:
         logger.debug("SSL: load_default_certs failed — %s", exc)
 
-    reg_count = 0
     if sys.platform == "win32":
         reg_count, reg_counts = _load_registry_certs(ctx)
         logger.warning("SSL base: registry loaded %d certs. Per-path: %s",
