@@ -137,3 +137,29 @@ def test_load_ca_bundle_into_ctx(tmp_path, monkeypatch, cert_triple):
     raw = f"{f};http://pki.corp.test/intermediate.crt"
     loaded = sv._load_ca_bundle(ctx, raw)
     assert loaded >= 2
+
+
+def test_chain_from_ssock_prefers_unverified_chain(cert_triple):
+    class FakeSSock:
+        def get_unverified_chain(self):
+            from cryptography import x509
+            return [
+                x509.load_der_x509_certificate(cert_triple.leaf_der),
+                x509.load_der_x509_certificate(cert_triple.intermediate_der),
+            ]
+        def getpeercert(self, binary_form=False):
+            return cert_triple.leaf_der
+
+    ders = sv._chain_from_ssock(FakeSSock())
+    assert cert_triple.leaf_der in ders
+    assert cert_triple.intermediate_der in ders
+
+
+def test_chain_from_ssock_fallback_leaf_only(cert_triple):
+    class FakeSSock:
+        def getpeercert(self, binary_form=False):
+            assert binary_form is True
+            return cert_triple.leaf_der
+
+    ders = sv._chain_from_ssock(FakeSSock())
+    assert ders == [cert_triple.leaf_der]
