@@ -7,6 +7,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersion: () => ipcRenderer.invoke('app-version'),
   checkForUpdates: () => ipcRenderer.invoke('update-check'),
   installUpdate: () => ipcRenderer.invoke('update-install'),
+  // Convert EMF/WMF metafiles to PNG via the OS (GDI+). items = [{key,b64}].
+  convertEmf: (items) => ipcRenderer.invoke('convert-emf', items),
   onUpdateStatus: (cb) => {
     const handler = (_e, payload) => cb(payload);
     ipcRenderer.on('update-status', handler);

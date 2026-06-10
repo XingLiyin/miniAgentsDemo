@@ -17,6 +17,7 @@ declare global {
       checkForUpdates?: () => Promise<void>
       installUpdate?: () => Promise<void>
       onUpdateStatus?: (cb: (p: { status: string; version?: string; percent?: number; message?: string }) => void) => (() => void)
+      convertEmf?: (items: { key: string; b64: string }[]) => Promise<{ key: string; png: string | null }[]>
     }
   }
 }

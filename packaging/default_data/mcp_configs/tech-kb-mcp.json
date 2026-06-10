@@ -1,7 +1,7 @@
 {
   "name": "tech-kb-mcp",
   "type": "http",
-  "url": "http://10.25.228.203:8000/mcp/",
+  "url": "http://10.25.228.203:8050/mcp/",
   "timeout": 30,
   "connect_timeout": 5
 }
