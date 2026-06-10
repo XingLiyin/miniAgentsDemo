@@ -226,8 +226,13 @@ class ObserverPromptBuilder(BasePromptBuilder):
         task: "Task",
         task_list: list["Task"],
     ) -> list[LLMMessage]:
-        """组装 observer 初始 user message，包含评估和复核所需的全部上下文。"""
-        transcript = self._build_transcript(result)
+        """组装 observer 的多轮消息：当前 task 的前序执行轮次 + 本轮执行（真实对话轮次）+ 评估请求。
+
+        消息结构（保持对话顺序，避免 user/eval 相邻被 sanitize 合并）：
+          [memory: 当前 task 的前序轮次（user_prompt / assistant 回复 / 用户答复）]
+          [本轮执行：result.conversation_turns 还原为 assistant(+tool) 轮次]
+          user: 评估请求（任务/要求/任务列表；transcript 已作为真实轮次呈现，故不再内嵌）
+        """
         siblings = [t for t in task_list if t.id != task.id]
         has_pending = any(t.status == "PENDING" for t in siblings)
         reviewable = (
@@ -235,24 +240,9 @@ class ObserverPromptBuilder(BasePromptBuilder):
             if has_pending else []
         )
 
-        content_parts = [
-            (
-                f"Current task: {task.title}\n"
-                f"Task description: {task.description or task.title}"
-            ),
-            f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
-            f"User requirements: {task.user_prompt if task.user_prompt else session.user_prompt}",
-            f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}",
-        ]
-        if reviewable:
-            content_parts.append(
-                f"Session task list:\n{self._build_task_list_section(reviewable)}"
-            )
-
-        # 只前置「当前 task」的历史执行轮次（不含其它 task 的 memory 历史），让 observer 看到前序轮次。
-        # 前序轮次由 memory 里该轮的 assistant 摘要（含 process_report）表示；当前 task 的包装
-        # user_prompt 作为首条保留，确保消息以 user 角色开头（provider 要求）。
         messages: list[LLMMessage] = []
+        # 1) 仅「当前 task」的前序执行轮次（不含其它 task 的 memory 历史）。
+        #    本轮的 assistant 摘要此时尚未写入 memory，所以这里只含真正的前序轮次。
         for m in ctx.recent_messages:
             if m.get("task_id") != task.id:
                 continue
@@ -263,28 +253,47 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 tool_call_id=m.get("tool_call_id", ""),
                 reasoning_content=m.get("reasoning_content"),
             ))
-        # 当前轮次评估内容作为最后一条 user 消息（渲染保持不变）。
+        # 2) 本轮执行过程，还原为真实对话轮次，紧跟前序轮次之后（自然把前序 user 答复与评估请求隔开）。
+        messages.extend(self._result_to_messages(result))
+
+        # 3) 评估请求作为最后一条 user 消息。
+        content_parts = [
+            (
+                f"Current task: {task.title}\n"
+                f"Task description: {task.description or task.title}"
+            ),
+            f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
+            f"User requirements: {task.user_prompt if task.user_prompt else session.user_prompt}",
+            "Please assess the latest execution shown in the conversation above.",
+        ]
+        if reviewable:
+            content_parts.append(
+                f"Session task list:\n{self._build_task_list_section(reviewable)}"
+            )
         messages.append(LLMMessage(role="user", content="\n\n".join(content_parts)))
         return messages
 
-    def _build_transcript(self, result: "ActorResult") -> str:
-        """将 conversation_turns 展开为可读文本，供 LLM 评估。"""
-        if not result.conversation_turns:
-            if result.output:
-                return f"[No tool calls] Agent response: {result.output}"
-            return "[No conversation recorded]"
-
-        lines: list[str] = []
+    def _result_to_messages(self, result: "ActorResult") -> list[LLMMessage]:
+        """把本轮 conversation_turns 还原为真实对话轮次：assistant(text+tool_calls) + tool(result)。"""
+        msgs: list[LLMMessage] = []
         for turn in result.conversation_turns:
-            lines.append(f"--- Round {turn.round + 1} ---")
-            if turn.tool_calls:
-                for tc in turn.tool_calls:
-                    status = "ERROR" if tc.is_error else "OK"
-                    lines.append(f"  Tool call: {tc.tool_name}({tc.arguments})")
-                    lines.append(f"  Result [{status}]: {tc.result[:500]}")
-            if turn.llm_text:
-                lines.append(f"  Agent reply: {turn.llm_text}")
-        return "\n".join(lines)
+            tool_calls = [
+                {"id": tc.tool_call_id, "name": tc.tool_name, "input": tc.arguments}
+                for tc in turn.tool_calls
+            ]
+            if turn.llm_text or tool_calls:
+                msgs.append(LLMMessage(
+                    role="assistant",
+                    content=turn.llm_text or "",
+                    tool_calls=tool_calls or None,
+                ))
+            for tc in turn.tool_calls:
+                content = f"[ERROR] {tc.result}" if tc.is_error else tc.result
+                msgs.append(LLMMessage(role="tool", content=content, tool_call_id=tc.tool_call_id))
+        # 没有结构化轮次时退化为一条 assistant 文本。
+        if not msgs and result.output:
+            msgs.append(LLMMessage(role="assistant", content=result.output))
+        return msgs
 
     def _build_task_list_section(self, tasks: list["Task"]) -> str:
         """渲染任务列表为可读文本。"""
