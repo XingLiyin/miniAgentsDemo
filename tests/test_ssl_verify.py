@@ -139,30 +139,23 @@ def test_load_ca_bundle_into_ctx(tmp_path, monkeypatch, cert_triple):
     assert loaded >= 2
 
 
-def test_chain_from_ssock_prefers_unverified_chain(cert_triple):
-    class FakeSSock:
-        def get_unverified_chain(self):
-            from cryptography import x509
-            return [
-                x509.load_der_x509_certificate(cert_triple.leaf_der),
-                x509.load_der_x509_certificate(cert_triple.intermediate_der),
-            ]
-        def getpeercert(self, binary_form=False):
-            return cert_triple.leaf_der
-
-    ders = sv._chain_from_ssock(FakeSSock())
-    assert cert_triple.leaf_der in ders
-    assert cert_triple.intermediate_der in ders
+def test_get_leaf_and_chain_rejects_non_https():
+    # http / non-https URLs are not probed
+    assert sv._get_leaf_and_chain("http://example.test") == []
+    assert sv._get_leaf_and_chain("ftp://example.test") == []
+    assert sv._get_leaf_and_chain("not a url") == []
 
 
-def test_chain_from_ssock_fallback_leaf_only(cert_triple):
-    class FakeSSock:
-        def getpeercert(self, binary_form=False):
-            assert binary_form is True
-            return cert_triple.leaf_der
+def test_get_leaf_and_chain_handles_unreachable(monkeypatch):
+    # Direct connect fails AND no proxy → returns [] gracefully
+    import socket as _socket
 
-    ders = sv._chain_from_ssock(FakeSSock())
-    assert ders == [cert_triple.leaf_der]
+    def _boom(*a, **k):
+        raise OSError("unreachable")
+
+    monkeypatch.setattr(_socket, "create_connection", _boom)
+    monkeypatch.setattr(sv, "_proxy_connect_socket", lambda h, p: None)
+    assert sv._get_leaf_and_chain("https://nonexistent.invalid:443") == []
 
 
 def test_fetch_corporate_ca_chain_walks_aia(tmp_path, monkeypatch, cert_triple):

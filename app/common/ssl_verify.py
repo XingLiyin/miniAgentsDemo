@@ -419,49 +419,107 @@ def _load_registry_certs(ctx: ssl.SSLContext) -> tuple[int, dict[str, int]]:
 # Phase 2 (reactive) — unverified probe to the caller's actual URL
 # ---------------------------------------------------------------------------
 
-def _chain_from_ssock(ssock) -> list[bytes]:
-    """Extract the DER chain a TLS peer presented during an unverified handshake.
+def _proxy_connect_socket(target_host: str, target_port: int):
+    """Open a socket to *target* through the system HTTPS proxy (CONNECT tunnel).
 
-    Prefers SSLSocket.get_unverified_chain() (Python 3.10+) which returns the
-    full chain (leaf + intermediates the proxy sent). Falls back to the leaf
-    cert only.
+    Returns a connected socket or None if no proxy is configured / the tunnel
+    fails. Best-effort.
     """
-    from cryptography import x509
-    from cryptography.hazmat.primitives import serialization
+    import socket
+    import urllib.request
+    from urllib.parse import urlparse
 
-    der_enc = serialization.Encoding.DER
-    ders: list[bytes] = []
+    try:
+        proxies = urllib.request.getproxies()
+        proxy_url = proxies.get("https") or proxies.get("http") or ""
+        if not proxy_url:
+            return None
+        if not proxy_url.startswith("http"):
+            proxy_url = "http://" + proxy_url
+        pp = urlparse(proxy_url)
+        if not pp.hostname:
+            return None
+        sock = socket.create_connection((pp.hostname, pp.port or 8080), timeout=8)
+        connect_hdr = (
+            f"CONNECT {target_host}:{target_port} HTTP/1.1\r\n"
+            f"Host: {target_host}:{target_port}\r\n\r\n"
+        )
+        sock.sendall(connect_hdr.encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            resp += chunk
+        if b" 200 " in resp[:50]:
+            logger.warning("SSL probe: CONNECT tunnel via %s → %s:%s",
+                           pp.hostname, target_host, target_port)
+            return sock
+        sock.close()
+        logger.warning("SSL probe: proxy CONNECT non-200: %s", resp[:80])
+    except Exception as exc:
+        logger.warning("SSL probe: proxy tunnel failed — %s", exc)
+    return None
 
-    get_chain = getattr(ssock, "get_unverified_chain", None)
-    if callable(get_chain):
+
+def _tls_chain_via_pyopenssl(raw_sock, server_host: str) -> list[bytes]:
+    """Run an UNVERIFIED TLS handshake over *raw_sock* and return the full DER
+    chain the peer presented (leaf + intermediates + root, as sent).
+
+    Uses pyOpenSSL because stdlib ``ssl`` on Python < 3.13 cannot expose the
+    full peer chain (``get_unverified_chain`` is 3.13+); ``getpeercert`` only
+    returns the leaf, which a MITM proxy typically issues without an AIA
+    extension — leaving nothing to walk up. pyOpenSSL works on all versions.
+    """
+    import select
+    import time
+
+    from OpenSSL import SSL, crypto
+
+    ctx = SSL.Context(SSL.TLS_CLIENT_METHOD)
+    ctx.set_verify(SSL.VERIFY_NONE, lambda *_a: True)
+
+    raw_sock.setblocking(False)
+    conn = SSL.Connection(ctx, raw_sock)
+    try:
+        conn.set_tlsext_host_name(server_host.encode())
+    except Exception:
+        pass
+    conn.set_connect_state()
+
+    deadline = time.monotonic() + 10.0
+    while True:
         try:
-            for entry in get_chain() or []:
-                if isinstance(entry, (bytes, bytearray)):
-                    ders.append(bytes(entry))
-                elif hasattr(entry, "public_bytes"):
-                    ders.append(entry.public_bytes(der_enc))
-        except Exception as exc:
-            logger.debug("SSL: get_unverified_chain failed — %s", exc)
+            conn.do_handshake()
+            break
+        except SSL.WantReadError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("TLS handshake timed out")
+            select.select([raw_sock], [], [], remaining)
+        except SSL.WantWriteError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("TLS handshake timed out")
+            select.select([], [raw_sock], [], remaining)
 
-    if not ders:
-        try:
-            leaf = ssock.getpeercert(binary_form=True)
-            if leaf:
-                ders.append(leaf)
-        except Exception as exc:
-            logger.debug("SSL: getpeercert fallback failed — %s", exc)
-
+    chain = conn.get_peer_cert_chain() or []
+    ders = [crypto.dump_certificate(crypto.FILETYPE_ASN1, c) for c in chain]
+    try:
+        conn.shutdown()
+    except Exception:
+        pass
     return ders
 
 
 def _get_leaf_and_chain(url: str) -> list[bytes]:
     """Open an UNVERIFIED TLS connection to *url* and return the presented chain.
 
-    Routes through the system HTTPS proxy (CONNECT tunnel) when configured,
-    falling back to a direct connection. Returns [] on failure.
+    Tries a DIRECT connection first (matching the real LLM requests, which use
+    ``trust_env=False``), then falls back to the system proxy CONNECT tunnel.
+    Returns the full DER chain the peer presents, or [] on failure.
     """
     import socket
-    import urllib.request
     from urllib.parse import urlparse
 
     parsed = urlparse(url)
@@ -472,57 +530,32 @@ def _get_leaf_and_chain(url: str) -> list[bytes]:
         return []
     target_port = parsed.port or 443
 
-    probe_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    probe_ctx.check_hostname = False
-    probe_ctx.verify_mode = ssl.CERT_NONE
-
     raw_sock: socket.socket | None = None
 
-    # Try via system proxy (CONNECT tunnel)
+    # Direct first — same path the real (trust_env=False) request takes.
     try:
-        proxies = urllib.request.getproxies()
-        proxy_url = proxies.get("https") or proxies.get("http") or ""
-        if proxy_url:
-            if not proxy_url.startswith("http"):
-                proxy_url = "http://" + proxy_url
-            pp = urlparse(proxy_url)
-            if pp.hostname:
-                sock = socket.create_connection((pp.hostname, pp.port or 8080), timeout=8)
-                connect_hdr = (
-                    f"CONNECT {target_host}:{target_port} HTTP/1.1\r\n"
-                    f"Host: {target_host}:{target_port}\r\n\r\n"
-                )
-                sock.sendall(connect_hdr.encode())
-                resp = b""
-                while b"\r\n\r\n" not in resp:
-                    chunk = sock.recv(4096)
-                    if not chunk:
-                        break
-                    resp += chunk
-                if b" 200 " in resp[:50]:
-                    raw_sock = sock
-                    logger.debug("SSL probe: CONNECT tunnel via %s → %s:%s",
-                                 pp.hostname, target_host, target_port)
-                else:
-                    sock.close()
-                    logger.debug("SSL probe: proxy CONNECT non-200: %s", resp[:100])
+        raw_sock = socket.create_connection((target_host, target_port), timeout=8)
+        logger.warning("SSL probe: direct connect → %s:%s", target_host, target_port)
     except Exception as exc:
-        logger.debug("SSL probe: proxy tunnel failed — %s", exc)
+        logger.warning("SSL probe: direct connect failed (%s); trying proxy", exc)
+        raw_sock = _proxy_connect_socket(target_host, target_port)
 
-    # Fall back to direct connection
     if raw_sock is None:
-        try:
-            raw_sock = socket.create_connection((target_host, target_port), timeout=5)
-        except Exception as exc:
-            logger.debug("SSL probe: direct connect failed — %s", exc)
-            return []
+        logger.warning("SSL probe: no connection to %s:%s", target_host, target_port)
+        return []
 
     try:
-        with probe_ctx.wrap_socket(raw_sock, server_hostname=target_host) as ssock:
-            return _chain_from_ssock(ssock)
+        ders = _tls_chain_via_pyopenssl(raw_sock, target_host)
+        logger.warning("SSL probe: captured %d cert(s) from peer chain", len(ders))
+        return ders
     except Exception as exc:
-        logger.debug("SSL probe: TLS handshake failed — %s", exc)
+        logger.warning("SSL probe: TLS handshake failed — %s", exc)
         return []
+    finally:
+        try:
+            raw_sock.close()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
