@@ -62,23 +62,48 @@ class TestObserverSingleMessage:
         assert len(msgs) == 1
         assert msgs[0].role == "user"
 
-    def test_prior_progress_section_holds_reports_and_user_replies(self):
+    def test_prior_progress_grouped_by_round_with_clear_labels(self):
         recent = [
             {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},   # wrapped prompt, dropped
-            {"role": "assistant", "content": "round A process report", "task_id": "t1"},
+            {"role": "assistant",
+             "content": "asking the question\n\n# Process Report\n\nloaded refs, awaiting answer",
+             "task_id": "t1"},
             {"role": "user", "content": "都没有", "task_id": "t1"},
         ]
         result = _result(turns=[ConversationTurn(round=0, messages_sent=[], llm_text="round B reply")])
         content = str(_build(recent, result)[0].content)
 
         assert "Prior progress" in content
-        assert "Progress: round A process report" in content
-        assert "User reply: 都没有" in content
+        # round boundary + role/section labels are distinct
+        assert "=== Round 1 ===" in content
+        assert "[Agent reply]\nasking the question" in content
+        assert "[Process report]\nloaded refs, awaiting answer" in content
+        assert "[User reply]\n都没有" in content
+        # the '# Process Report' marker is consumed by the split (not left inline)
+        prior = content.split("Prior progress")[1].split("Current turns")[0]
+        assert "# Process Report" not in prior
         # wrapped prompt is not duplicated into prior progress
-        assert "## Current Goal" not in content.split("Prior progress")[1]
+        assert "## Current Goal" not in prior
         # current round shows under Current turns
         assert "Current turns" in content
         assert "round B reply" in content
+
+    def test_each_assistant_starts_a_new_round(self):
+        recent = [
+            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},
+            {"role": "assistant", "content": "r1 reply\n\n# Process Report\n\nr1 report", "task_id": "t1"},
+            {"role": "user", "content": "都没有", "task_id": "t1"},
+            {"role": "assistant", "content": "r2 reply\n\n# Process Report\n\nr2 report", "task_id": "t1"},
+            {"role": "user", "content": "不知道", "task_id": "t1"},
+        ]
+        content = str(_build(recent, _result(output="cur"))[0].content)
+        assert "=== Round 1 ===" in content and "=== Round 2 ===" in content
+        # ordering preserved: round 1 before its user reply before round 2
+        i_r1 = content.index("=== Round 1 ===")
+        i_u1 = content.index("都没有")
+        i_r2 = content.index("=== Round 2 ===")
+        i_u2 = content.index("不知道")
+        assert i_r1 < i_u1 < i_r2 < i_u2
 
     def test_excludes_other_tasks(self):
         recent = [

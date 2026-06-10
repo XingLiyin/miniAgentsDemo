@@ -263,23 +263,47 @@ class ObserverPromptBuilder(BasePromptBuilder):
         return [LLMMessage(role="user", content="\n\n".join(content_parts))]
 
     def _build_prior_progress(self, ctx: "ReasoningContext", task: "Task") -> str:
-        """渲染当前 task 前序轮次：memory 中 task_id == 当前 task 的消息（process_report 摘要 + 用户答复）。
+        """渲染当前 task 前序轮次，按轮次分组、明确区分 agent 回复 / process report / user 回复。
 
-        丢弃首条包装 user_prompt（与上方 Current task / User requirements 重复）。
+        memory 中 task_id == 当前 task 的消息：assistant = 该轮 agent 回复 + process_report，
+        user = 该轮之后的用户答复。每个 assistant 开启新一轮；丢弃首条包装 user_prompt。
         本轮的 assistant 摘要此时尚未写入 memory，所以这里只含真正的前序轮次。
         """
         msgs = [m for m in ctx.recent_messages if m.get("task_id") == task.id]
         if msgs and msgs[0].get("role") == "user":
             msgs = msgs[1:]
-        lines: list[str] = []
+        blocks: list[str] = []
+        round_no = 0
         for m in msgs:
             content = m.get("content", "")
-            text = content_to_text(content) if isinstance(content, list) else (content or "")
-            if not text.strip():
+            text = (content_to_text(content) if isinstance(content, list) else (content or "")).strip()
+            if not text:
                 continue
-            label = "User reply" if m.get("role") == "user" else "Progress"
-            lines.append(f"- {label}: {text}")
-        return "\n".join(lines)
+            if m.get("role") == "assistant":
+                round_no += 1
+                reply, report = self._split_agent_summary(text)
+                section = [f"=== Round {round_no} ==="]
+                if reply:
+                    section.append(f"[Agent reply]\n{reply}")
+                if report:
+                    section.append(f"[Process report]\n{report}")
+                blocks.append("\n".join(section))
+            else:  # 用户答复
+                blocks.append(f"[User reply]\n{text}")
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def _split_agent_summary(text: str) -> tuple[str, str]:
+        """把 memory 里的 assistant 摘要拆成 (agent 回复, process_report)。
+
+        _write_execution_memory 写入格式为 `{output}\\n\\n# Process Report\\n\\n{summary}`，
+        以 `# Process Report` 为界拆分；无该标记时整体视为 agent 回复。
+        """
+        marker = "# Process Report"
+        idx = text.find(marker)
+        if idx == -1:
+            return text.strip(), ""
+        return text[:idx].strip(), text[idx + len(marker):].strip()
 
     def _build_transcript(self, result: "ActorResult") -> str:
         """将本轮 conversation_turns 展开为可读文本，供 LLM 评估。"""
