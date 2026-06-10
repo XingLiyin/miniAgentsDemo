@@ -36,10 +36,29 @@ async def _lifespan(app: FastAPI):
     get_tool_registry().shutdown()
 
 
+def _setup_tls(use_system_truststore: bool) -> None:
+    """内网中间人代理场景：让 httpx/ssl 走操作系统证书库（含公司根 CA），
+    替代 certifi 自带的根证书，避免 CERTIFICATE_VERIFY_FAILED。
+
+    必须在任何 SSL 连接建立之前调用（httpx 客户端均为请求时惰性创建，
+    因此在 create_app 阶段注入即可）。失败不应阻断启动。
+    """
+    if not use_system_truststore:
+        return
+    import logging
+    try:
+        import truststore
+        truststore.inject_into_ssl()
+        logging.getLogger(__name__).info("TLS: 已注入系统证书库 (truststore)")
+    except Exception as exc:  # noqa: BLE001 — 注入失败回退到 certifi，不阻断启动
+        logging.getLogger(__name__).warning("TLS: truststore 注入失败，回退 certifi: %s", exc)
+
+
 def create_app() -> FastAPI:
     """创建并配置 FastAPI 应用实例。"""
     settings = get_settings()
     init_logging(settings.log_level, settings.log_dir)
+    _setup_tls(settings.use_system_truststore)
 
     app = FastAPI(
         title=settings.app_name,
