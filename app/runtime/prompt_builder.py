@@ -226,14 +226,25 @@ class ObserverPromptBuilder(BasePromptBuilder):
         task: "Task",
         task_list: list["Task"],
     ) -> list[LLMMessage]:
-        """组装 observer 初始 user message，包含评估和复核所需的全部上下文。"""
-        transcript = self._build_transcript(result)
+        """组装 observer 的单条 user message（保持「一条 system + 一条 user」）。
+
+        在 user message 内分段渲染：
+          Current task / Task description
+          Sub-task results
+          User requirements
+          Prior progress：当前 task 前序轮次（process_report 摘要 + 用户答复），来自 memory
+          Current turns：本轮执行 transcript
+          [Session task list]（仅当存在可复核 sibling 时）
+        """
         siblings = [t for t in task_list if t.id != task.id]
         has_pending = any(t.status == "PENDING" for t in siblings)
         reviewable = (
             [t for t in siblings if t.status in ("FINISHED", "PENDING")]
             if has_pending else []
         )
+
+        prior_progress = self._build_prior_progress(ctx, task)
+        transcript = self._build_transcript(result)
 
         content_parts = [
             (
@@ -242,17 +253,60 @@ class ObserverPromptBuilder(BasePromptBuilder):
             ),
             f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
             f"User requirements: {task.user_prompt if task.user_prompt else session.user_prompt}",
-            f"Execution transcript ({len(result.conversation_turns)} round(s)):\n{transcript}",
+            f"Prior progress (current task's earlier rounds):\n{prior_progress}" if prior_progress else "Prior progress: none (first round).",
+            f"Current turns ({len(result.conversation_turns)} round(s)):\n{transcript}",
         ]
         if reviewable:
             content_parts.append(
                 f"Session task list:\n{self._build_task_list_section(reviewable)}"
             )
-
         return [LLMMessage(role="user", content="\n\n".join(content_parts))]
 
+    def _build_prior_progress(self, ctx: "ReasoningContext", task: "Task") -> str:
+        """渲染当前 task 前序轮次，按轮次分组、明确区分 agent 回复 / process report / user 回复。
+
+        memory 中 task_id == 当前 task 的消息：assistant = 该轮 agent 回复 + process_report，
+        user = 该轮之后的用户答复。每个 assistant 开启新一轮；丢弃首条包装 user_prompt。
+        本轮的 assistant 摘要此时尚未写入 memory，所以这里只含真正的前序轮次。
+        """
+        msgs = [m for m in ctx.recent_messages if m.get("task_id") == task.id]
+        if msgs and msgs[0].get("role") == "user":
+            msgs = msgs[1:]
+        blocks: list[str] = []
+        round_no = 0
+        for m in msgs:
+            content = m.get("content", "")
+            text = (content_to_text(content) if isinstance(content, list) else (content or "")).strip()
+            if not text:
+                continue
+            if m.get("role") == "assistant":
+                round_no += 1
+                reply, report = self._split_agent_summary(text)
+                section = [f"=== Round {round_no} ==="]
+                if reply:
+                    section.append(f"[Agent reply]\n{reply}")
+                if report:
+                    section.append(f"[Process report]\n{report}")
+                blocks.append("\n".join(section))
+            else:  # 用户答复
+                blocks.append(f"[User reply]\n{text}")
+        return "\n\n".join(blocks)
+
+    @staticmethod
+    def _split_agent_summary(text: str) -> tuple[str, str]:
+        """把 memory 里的 assistant 摘要拆成 (agent 回复, process_report)。
+
+        _write_execution_memory 写入格式为 `{output}\\n\\n# Process Report\\n\\n{summary}`，
+        以 `# Process Report` 为界拆分；无该标记时整体视为 agent 回复。
+        """
+        marker = "# Process Report"
+        idx = text.find(marker)
+        if idx == -1:
+            return text.strip(), ""
+        return text[:idx].strip(), text[idx + len(marker):].strip()
+
     def _build_transcript(self, result: "ActorResult") -> str:
-        """将 conversation_turns 展开为可读文本，供 LLM 评估。"""
+        """将本轮 conversation_turns 展开为可读文本，供 LLM 评估。"""
         if not result.conversation_turns:
             if result.output:
                 return f"[No tool calls] Agent response: {result.output}"
@@ -269,6 +323,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
             if turn.llm_text:
                 lines.append(f"  Agent reply: {turn.llm_text}")
         return "\n".join(lines)
+        return msgs
 
     def _build_task_list_section(self, tasks: list["Task"]) -> str:
         """渲染任务列表为可读文本。"""
