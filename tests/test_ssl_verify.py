@@ -3,7 +3,17 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
+
 import app.common.ssl_verify as sv
+
+
+@pytest.fixture(autouse=True)
+def _reset_relax_hostname():
+    """Keep the process-global hostname-relax flag from leaking across tests."""
+    sv._RELAX_HOSTNAME[0] = False
+    yield
+    sv._RELAX_HOSTNAME[0] = False
 
 
 def test_save_and_load_cached_cas(tmp_path, monkeypatch, cert_triple):
@@ -288,6 +298,66 @@ def test_with_ssl_retry_failed_retry_does_not_persist(tmp_path, monkeypatch, cer
     # Nothing persisted; overlay rolled back.
     assert sv._collect_cached_ca_ders() == []
     assert sv._PENDING_CA_DERS == []
+
+
+def test_is_hostname_mismatch_error():
+    assert sv._is_hostname_mismatch_error(
+        ssl.SSLCertVerificationError(
+            "certificate verify failed: IP address mismatch, "
+            "certificate is not valid for '10.1.2.3'")) is True
+    assert sv._is_hostname_mismatch_error(
+        ssl.SSLCertVerificationError("hostname 'x' doesn't match 'y'")) is True
+    # A pure CA-trust error is NOT a hostname mismatch
+    assert sv._is_hostname_mismatch_error(
+        ssl.SSLCertVerificationError(
+            "self-signed certificate in certificate chain")) is False
+
+
+def test_with_ssl_retry_relaxes_hostname_after_ca_trusted(tmp_path, monkeypatch, cert_triple):
+    # Sequence: attempt0 = CA error → fetch CA; attempt1 = IP mismatch → relax
+    # hostname; attempt2 = success.
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    monkeypatch.setattr(sv, "_ssl_cache_dir", lambda: tmp_path)
+    monkeypatch.setattr(sv, "_PENDING_CA_DERS", [])
+    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
+    monkeypatch.setattr(sv, "_fetch_corporate_ca_chain", lambda url: [cert_triple.root_der])
+
+    attempts = {"n": 0}
+    def do(verify):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ssl.SSLCertVerificationError("self-signed certificate in certificate chain")
+        if attempts["n"] == 2:
+            raise ssl.SSLCertVerificationError(
+                "IP address mismatch, certificate is not valid for '10.1.2.3'")
+        return "ok"
+
+    result = sv.with_ssl_retry(do, "https://10.1.2.3:8443")
+    assert result == "ok"
+    assert attempts["n"] == 3
+    assert sv._RELAX_HOSTNAME[0] is True
+    # CA persisted on success
+    assert cert_triple.root_der in sv._collect_cached_ca_ders()
+
+
+def test_with_ssl_retry_relaxes_hostname_only(monkeypatch, cert_triple):
+    # CA already trusted: first error is straight IP mismatch → relax → success.
+    monkeypatch.setattr(sv, "make_ssl_verify", lambda: True)
+    monkeypatch.setattr(sv, "_PENDING_CA_DERS", [])
+    monkeypatch.setattr(sv.make_ssl_verify, "cache_clear", lambda: None, raising=False)
+    monkeypatch.setattr(sv, "_fetch_corporate_ca_chain", lambda url: [])
+
+    attempts = {"n": 0}
+    def do(verify):
+        attempts["n"] += 1
+        if attempts["n"] == 1:
+            raise ssl.SSLCertVerificationError(
+                "IP address mismatch, certificate is not valid for '10.1.2.3'")
+        return "ok"
+
+    result = sv.with_ssl_retry(do, "https://10.1.2.3:8443")
+    assert result == "ok"
+    assert sv._RELAX_HOSTNAME[0] is True
 
 
 def test_build_base_context_check_hostname_default():

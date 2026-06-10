@@ -41,6 +41,11 @@ logger = logging.getLogger(__name__)
 # can never become a persistent trust anchor.
 _PENDING_CA_DERS: list[bytes] = []
 
+# Process-global: once a hostname/IP mismatch is observed against an already-
+# trusted CA chain, hostname verification is relaxed for the rest of the run.
+# Mutable single-element list so helpers can flip it without `global`.
+_RELAX_HOSTNAME: list[bool] = [False]
+
 # ---------------------------------------------------------------------------
 # Registry paths — covers standard + GPO + enterprise + current-user
 # ---------------------------------------------------------------------------
@@ -680,7 +685,10 @@ def make_ssl_verify() -> Union[bool, ssl.SSLContext, str]:
         logger.warning("SSL: verification DISABLED (http_ssl_verify=False)")
         return False
 
-    ctx = _build_base_context(check_hostname=cfg.http_check_hostname)
+    # Hostname check is on unless the user disabled it OR we've auto-relaxed it
+    # after observing a hostname/IP mismatch on an already-trusted CA chain.
+    check_hostname = cfg.http_check_hostname and not _RELAX_HOSTNAME[0]
+    ctx = _build_base_context(check_hostname=check_hostname)
 
     if cfg.http_ca_bundle:
         n = _load_ca_bundle(ctx, cfg.http_ca_bundle)
@@ -705,45 +713,99 @@ def _is_cert_verify_error(exc: BaseException) -> bool:
     return False
 
 
-def with_ssl_retry(do_request, url: str):
-    """Run do_request(verify); on cert-verify failure, fetch the corporate CA
-    for *url*, retry once, and persist the CA ONLY if the retry verifies.
+def _is_hostname_mismatch_error(exc: BaseException) -> bool:
+    """True if *exc* (or a cause) is a hostname/IP-mismatch verify failure.
 
-    do_request(verify) must perform the request with the given verify value and
-    return its result (raising on failure). The fetched CAs are added to an
-    in-memory overlay (so the rebuilt context trusts them for the retry) and are
-    promoted to the on-disk AppData cache only when the retry succeeds; on retry
-    failure the overlay is rolled back and nothing is persisted.
+    This is distinct from a CA-trust failure: it means the chain verified but
+    the certificate's SAN does not cover the host/IP we connected to.
     """
-    try:
-        return do_request(make_ssl_verify())
-    except Exception as exc:  # noqa: BLE001 — re-raised unless it's a cert error
-        if not _is_cert_verify_error(exc):
-            raise
-        logger.warning("SSL: cert verify failed for %s — fetching corporate CA", url)
-        cas = _fetch_corporate_ca_chain(url)
-        if not cas:
-            logger.warning("SSL: corporate CA fetch yielded nothing — re-raising")
-            raise
+    seen = 0
+    cur: BaseException | None = exc
+    while cur is not None and seen < 10:
+        msg = str(cur).lower()
+        if ("ip address mismatch" in msg
+                or "hostname mismatch" in msg
+                or "certificate is not valid for" in msg
+                or "doesn't match" in msg
+                or "does not match" in msg):
+            return True
+        cur = cur.__cause__ or cur.__context__
+        seen += 1
+    return False
 
-        # Trust the fetched CAs in-memory for the retry, but do NOT persist yet.
-        saved = list(_PENDING_CA_DERS)
-        _PENDING_CA_DERS.extend(cas)
-        make_ssl_verify.cache_clear()
-        logger.warning("SSL: fetched %d CA cert(s); retrying request once", len(cas))
+
+def with_ssl_retry(do_request, url: str):
+    """Run do_request(verify); on cert-verify failure, remediate and retry.
+
+    Two independent remediations are applied as the errors surface, in order:
+
+    1. **CA trust** — fetch the corporate CA chain for *url* (the MITM proxy's
+       self-signed root) and trust it via an in-memory overlay. Persisted to the
+       on-disk AppData cache only once a retry fully verifies.
+    2. **Hostname/IP mismatch** — if the chain verifies but the cert SAN omits
+       the host/IP (common for intranet gateways reached by IP), relax hostname
+       checking process-wide (CA chain is still verified).
+
+    A trust error can mask a subsequent hostname error, so up to two
+    remediations + retries are attempted. If nothing makes progress, the overlay
+    is rolled back and the error is re-raised.
+    """
+    saved = list(_PENDING_CA_DERS)
+    ca_fetched = False
+    newly_cached: list[bytes] = []
+    last_exc: BaseException | None = None
+
+    for _ in range(3):  # initial try + up to 2 remediations
         try:
             result = do_request(make_ssl_verify())
-        except Exception:
-            # Retry still failed — the CAs didn't help (or were bogus). Roll back
-            # the overlay so they never become a trust anchor; persist nothing.
+        except Exception as exc:  # noqa: BLE001 — re-raised unless remediable
+            if not _is_cert_verify_error(exc):
+                raise  # non-cert error: propagate untouched
+            last_exc = exc
+
+            progressed = False
+
+            # Remediation 1: fetch + trust the corporate CA (once).
+            if not ca_fetched:
+                ca_fetched = True
+                logger.warning(
+                    "SSL: cert verify failed for %s — fetching corporate CA", url)
+                cas = _fetch_corporate_ca_chain(url)
+                if cas:
+                    _PENDING_CA_DERS.extend(cas)
+                    newly_cached.extend(cas)
+                    make_ssl_verify.cache_clear()
+                    logger.warning("SSL: fetched %d CA cert(s); retrying", len(cas))
+                    progressed = True
+
+            # Remediation 2: relax hostname/IP match (chain still verified).
+            if _is_hostname_mismatch_error(exc) and not _RELAX_HOSTNAME[0]:
+                _RELAX_HOSTNAME[0] = True
+                make_ssl_verify.cache_clear()
+                logger.warning(
+                    "SSL: hostname/IP mismatch on a trusted chain — relaxing "
+                    "hostname verification (CA chain still verified); retrying")
+                progressed = True
+
+            if not progressed:
+                break
+            continue
+
+        # Success — promote any freshly-fetched CAs to the on-disk cache, then
+        # drop them from the in-memory overlay (the on-disk cache now covers them).
+        for der in newly_cached:
+            try:
+                _save_ca_to_cache(der)
+            except Exception:
+                pass
+        if newly_cached:
             _PENDING_CA_DERS[:] = saved
             make_ssl_verify.cache_clear()
-            raise
+        return result
 
-        # Retry verified successfully → the CAs are proven good. Persist to disk
-        # and drop them from the overlay (the on-disk cache now covers them).
-        for der in cas:
-            _save_ca_to_cache(der)
+    # Exhausted without success — roll back the overlay so unproven certs never
+    # become a persistent trust anchor, then re-raise the last cert error.
+    if newly_cached:
         _PENDING_CA_DERS[:] = saved
         make_ssl_verify.cache_clear()
-        return result
+    raise last_exc
