@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from app.common.ssl_verify import make_ssl_verify
 from app.config.settings import get_settings
 
 logger = logging.getLogger(__name__)
@@ -46,7 +47,7 @@ class SkillStoreClient:
         if not self.enabled or not skills:
             return
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, verify=make_ssl_verify()) as client:
                 resp = client.post(
                     f"{self._base_url}/skills/upsert",
                     json={"skills": skills},
@@ -61,7 +62,7 @@ class SkillStoreClient:
         if not self.enabled or not names:
             return
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, verify=make_ssl_verify()) as client:
                 resp = client.post(
                     f"{self._base_url}/skills/delete",
                     json={"names": names},
@@ -78,7 +79,7 @@ class SkillStoreClient:
         if not self.enabled:
             return []
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=self._timeout, verify=make_ssl_verify()) as client:
                 resp = client.post(
                     f"{self._base_url}/skills/search",
                     json={"query": query, "top_k": top_k},

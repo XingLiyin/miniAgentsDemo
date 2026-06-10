@@ -288,3 +288,16 @@ def test_with_ssl_retry_failed_retry_does_not_persist(tmp_path, monkeypatch, cer
     # Nothing persisted; overlay rolled back.
     assert sv._collect_cached_ca_ders() == []
     assert sv._PENDING_CA_DERS == []
+
+
+def test_build_base_context_check_hostname_default():
+    ctx = sv._build_base_context()
+    assert ctx.check_hostname is True
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+
+
+def test_build_base_context_check_hostname_disabled():
+    # Disabling hostname check keeps CA chain verification on.
+    ctx = sv._build_base_context(check_hostname=False)
+    assert ctx.check_hostname is False
+    assert ctx.verify_mode == ssl.CERT_REQUIRED

@@ -617,11 +617,20 @@ def _fetch_corporate_ca_chain(url: str) -> list[bytes]:
 # Base trust store — certifi defaults + registry + env vars + AppData cache
 # ---------------------------------------------------------------------------
 
-def _build_base_context() -> ssl.SSLContext:
-    """Build the base SSL context shared by all callers (before reactive AIA)."""
+def _build_base_context(check_hostname: bool = True) -> ssl.SSLContext:
+    """Build the base SSL context shared by all callers (before reactive AIA).
+
+    When *check_hostname* is False, the CA chain is still fully verified
+    (verify_mode stays CERT_REQUIRED) but the hostname/IP match is skipped —
+    needed when reaching an intranet gateway by IP whose cert SAN omits it.
+    """
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    ctx.check_hostname = True
+    # check_hostname must be set before verify_mode when disabling it.
+    ctx.check_hostname = check_hostname
     ctx.verify_mode = ssl.CERT_REQUIRED
+    if not check_hostname:
+        logger.warning("SSL: hostname/IP verification DISABLED "
+                       "(http_check_hostname=False); CA chain still verified")
 
     # Public roots (certifi / OS default)
     try:
@@ -671,7 +680,7 @@ def make_ssl_verify() -> Union[bool, ssl.SSLContext, str]:
         logger.warning("SSL: verification DISABLED (http_ssl_verify=False)")
         return False
 
-    ctx = _build_base_context()
+    ctx = _build_base_context(check_hostname=cfg.http_check_hostname)
 
     if cfg.http_ca_bundle:
         n = _load_ca_bundle(ctx, cfg.http_ca_bundle)

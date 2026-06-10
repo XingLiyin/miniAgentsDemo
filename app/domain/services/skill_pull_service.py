@@ -7,6 +7,7 @@ from pathlib import Path
 import httpx
 
 from app.common.errors import AppError
+from app.common.ssl_verify import make_ssl_verify
 from app.skills.zip_utils import extract_zip, sanitize_folder
 from app.storage.file.skill_pull_store import SkillPullStore
 
@@ -28,7 +29,7 @@ class SkillPullService:
     def list_remote(self) -> list[dict]:
         url = self._require_url()
         try:
-            with httpx.Client(trust_env=False, timeout=_TIMEOUT) as client:
+            with httpx.Client(trust_env=False, timeout=_TIMEOUT, verify=make_ssl_verify()) as client:
                 resp = client.get(f"{url}/skills", headers=_HEADERS)
             resp.raise_for_status()
         except httpx.HTTPStatusError as e:
@@ -57,7 +58,7 @@ class SkillPullService:
     def pull_skill(self, remote_id: str, skill_name: str) -> dict:
         url = self._require_url()
         try:
-            with httpx.Client(trust_env=False, timeout=_TIMEOUT) as client:
+            with httpx.Client(trust_env=False, timeout=_TIMEOUT, verify=make_ssl_verify()) as client:
                 resp = client.get(
                     f"{url}/skills/{remote_id}/export",
                     headers={**_HEADERS, "Accept": "application/zip,application/octet-stream,*/*"},
@@ -87,7 +88,7 @@ class SkillPullService:
         """上传 zip 到远端服务器的 POST /skills/import，返回 {skill_id, name}。"""
         url = self._require_url()
         try:
-            with httpx.Client(trust_env=False, timeout=_TIMEOUT) as client:
+            with httpx.Client(trust_env=False, timeout=_TIMEOUT, verify=make_ssl_verify()) as client:
                 resp = client.post(
                     f"{url}/skills/import",
                     files={"file": (filename, data, "application/zip")},

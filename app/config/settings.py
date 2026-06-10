@@ -79,6 +79,16 @@ class Settings(BaseSettings):
     http_response_limit_bytes: int = 524_288
     enable_builtin_tools: bool = True  # 是否注册内置工具（skill_executor 和 control tools 始终注册）
 
+    # SSL / TLS — httpx 客户端证书验证
+    # http_ssl_verify=false 跳过证书验证（仅供开发调试，生产不推荐）
+    # http_ca_bundle 指定自定义 CA 证书包路径（优先于 OS 证书库）
+    # 两者均为默认值时，自动通过 truststore 使用 OS 系统证书库（含企业内网 CA）
+    # http_check_hostname=false 仍验证 CA 证书链，但跳过主机名/IP 匹配
+    #   （用于通过 IP 访问内网网关、证书 SAN 不含该 IP 的场景）
+    http_ssl_verify: bool = True
+    http_ca_bundle: str = ""
+    http_check_hostname: bool = True
+
     # 远端 Skill 拉取服务器
     skill_pull_server_url: str = "http://10.25.228.203:8080/api"  # 远端 skill 服务器 base URL，如 https://example.com/api
 
