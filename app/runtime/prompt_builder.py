@@ -249,7 +249,24 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 f"Session task list:\n{self._build_task_list_section(reviewable)}"
             )
 
-        return [LLMMessage(role="user", content="\n\n".join(content_parts))]
+        # 像 actor 一样前置 memory 历史（多轮对话形式），让 observer 看到前序轮次。
+        # 去掉末尾"当前轮 user_prompt"（task_id == 当前 task 的 user 消息），
+        # 因为下面的评估消息已 richer 地重述了当前任务与要求，避免重复。
+        messages: list[LLMMessage] = []
+        history = ctx.recent_messages
+        if history and history[-1].get("role") == "user" and history[-1].get("task_id") == task.id:
+            history = history[:-1]
+        for m in history:
+            messages.append(LLMMessage(
+                role=m.get("role", "user"),
+                content=m.get("content", ""),
+                tool_calls=m.get("tool_calls"),
+                tool_call_id=m.get("tool_call_id", ""),
+                reasoning_content=m.get("reasoning_content"),
+            ))
+        # 当前轮次评估内容作为最后一条 user 消息（渲染保持不变）。
+        messages.append(LLMMessage(role="user", content="\n\n".join(content_parts)))
+        return messages
 
     def _build_transcript(self, result: "ActorResult") -> str:
         """将 conversation_turns 展开为可读文本，供 LLM 评估。"""
