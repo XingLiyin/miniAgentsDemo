@@ -43,9 +43,9 @@ def _task_result_content(prefix: str, outputs: "str | list", process_report: "st
         output_text = outputs or ""
     text_parts = [prefix]
     if output_text:
-        text_parts.append(f"Output: {output_text}")
+        text_parts.append(f"# Output\n\n{output_text}")
     if process_report:
-        text_parts.append(f"Process Report: {process_report}")
+        text_parts.append(f"# Process Report\n\n{process_report}")
     if error:
         text_parts.append(f"Error: {error}")
     text = "\n".join(text_parts)
@@ -444,13 +444,17 @@ class TaskManager:
                 agent_data = self._agent_store.get(session_id, agent_id)
                 if agent_data is None or agent_data.get("status") == "RUNNING":
                     continue
-                self._memory_svc.append_message(
-                    agent_id=agent_id,
-                    role="assistant",
-                    content=content,
-                    session_id=session_id,
-                    task_id=task.id,
-                )
+                # The executor already recorded this result via
+                # _write_execution_memory; writing it again here would duplicate it.
+                # Still clean up the tracking bookkeeping below.
+                if agent_id != task.assigned_agent_id:
+                    self._memory_svc.append_message(
+                        agent_id=agent_id,
+                        role="assistant",
+                        content=content,
+                        session_id=session_id,
+                        task_id=task.id,
+                    )
                 tracking: list[str] = agent_data.get("tracking_tasks", [])
                 if task.id in tracking:
                     tracking.remove(task.id)
@@ -506,6 +510,9 @@ class TaskManager:
         """将已终结兄弟 task 的结果直接写入 agent memory。"""
         if not self._memory_svc:
             return
+        # The agent already holds the result if it executed the sibling itself.
+        if sib.assigned_agent_id == agent_id:
+            return
         try:
             outcome = "completed" if sib.status == "FINISHED" else "failed"
             content = _task_result_content(
@@ -542,18 +549,21 @@ class TaskManager:
                 t = self._task_svc.get(task_id, session_id)
                 if t.status not in ("FINISHED", "FAILED", "CANCELED"):
                     continue
-                outcome = "completed" if t.status == "FINISHED" else "failed"
-                content = _task_result_content(
-                    f"Tracked task「{t.title}」{outcome}.",
-                    t.outputs, t.process_report, t.error,
-                )
-                self._memory_svc.append_message(
-                    agent_id=parent.assigned_agent_id,
-                    role="assistant",
-                    content=content,
-                    session_id=session_id,
-                    task_id=parent.id,
-                )
+                # Skip tasks the parent agent executed itself — it already holds the
+                # result via _write_execution_memory; re-flushing would duplicate it.
+                if t.assigned_agent_id != parent.assigned_agent_id:
+                    outcome = "completed" if t.status == "FINISHED" else "failed"
+                    content = _task_result_content(
+                        f"Tracked task「{t.title}」{outcome}.",
+                        t.outputs, t.process_report, t.error,
+                    )
+                    self._memory_svc.append_message(
+                        agent_id=parent.assigned_agent_id,
+                        role="assistant",
+                        content=content,
+                        session_id=session_id,
+                        task_id=parent.id,
+                    )
                 flushed.append(task_id)
             except Exception:
                 logger.exception("TM: failed to flush tracking task %s to parent %s memory", task_id, parent.id)

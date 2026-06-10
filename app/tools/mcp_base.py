@@ -77,7 +77,14 @@ class _MCPProviderBase(ABC):
                     "MCP_NOT_STARTED",
                     f"{type(self).__name__}.start() has not been called",
                 )
-        self._run_sync(self._load_tools())
+        try:
+            self._run_sync(self._load_tools())
+        except Exception as e:
+            if _is_session_terminated(e):
+                with self._drain:
+                    self._initialized = False
+                logger.warning("MCP session terminated while reloading tools, marked as disconnected")
+            raise
         return self.list_definitions()
 
     def call(self, tool_name: str, arguments: dict, ctx: CallContext | None = None) -> ToolResult:

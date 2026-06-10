@@ -77,9 +77,11 @@ def ping_provider(req: PingLLMRequest) -> PingLLMResponse:
         max_tokens=1,
     )
 
+    from app.common.ssl_verify import with_ssl_retry
+
     t0 = time.monotonic()
     try:
-        _ping_via_stream(adapter, ping_req)
+        with_ssl_retry(lambda _verify: _ping_via_stream(adapter, ping_req), base_url)
     except RuntimeError as exc:
         raise HTTPException(422, {"code": "PING_FAILED", "message": str(exc)})
     latency_ms = int((time.monotonic() - t0) * 1000)
@@ -92,6 +94,7 @@ def ping_provider(req: PingLLMRequest) -> PingLLMResponse:
 def _fetch_available_models(style: str, api_key: str, base_url: str) -> list[str]:
     """调用 provider 的 /v1/models 接口，返回模型 ID 列表。"""
     import httpx
+    from app.common.ssl_verify import with_ssl_retry
 
     base = base_url.rstrip("/") or (
         "https://api.anthropic.com" if style == "anthropic" else "https://api.openai.com"
@@ -102,11 +105,15 @@ def _fetch_available_models(style: str, api_key: str, base_url: str) -> list[str
         if style == "anthropic"
         else {"Authorization": f"Bearer {api_key}"}
     )
-    try:
-        with httpx.Client(timeout=15, trust_env=False) as client:
+
+    def _do(verify):
+        with httpx.Client(timeout=15, trust_env=False, verify=verify) as client:
             resp = client.get(url, headers=headers)
             resp.raise_for_status()
-            data = resp.json()
+            return resp.json()
+
+    try:
+        data = with_ssl_retry(_do, url)
     except httpx.HTTPStatusError as exc:
         raise RuntimeError(f"HTTP {exc.response.status_code}: {exc.response.text[:300]}")
     except Exception as exc:
@@ -214,9 +221,11 @@ def ping_registered_provider(name: str, model: str = "") -> PingLLMResponse:
         max_tokens=1,
     )
 
+    from app.common.ssl_verify import with_ssl_retry
+
     t0 = time.monotonic()
     try:
-        _ping_via_stream(adapter, ping_req)
+        with_ssl_retry(lambda _verify: _ping_via_stream(adapter, ping_req), base_url)
     except RuntimeError as exc:
         raise HTTPException(422, {"code": "PING_FAILED", "message": str(exc)})
     latency_ms = int((time.monotonic() - t0) * 1000)

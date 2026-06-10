@@ -198,16 +198,21 @@ async def stream_session_events(session_id: str, request: Request) -> StreamingR
             if session.status == "WAITING_INPUT":
                 from app.storage.file.hitl_store import get_hitl_store
                 pending = get_hitl_store().get_pending(session_id)
-                if pending:
+                # 注意：prompt 可能为空字符串（ask_human 任务状态下不向前端展示 prompt），
+                # 因此用"是否存在等待"而非 prompt 真值来决定是否重放输入框。
+                if pending is not None:
                     replay_prompt = pending.prompt
                     replay_input_type = pending.input_type
-                elif session.metadata.get("_hitl_prompt"):
+                    replay_waiting = True
+                elif "_hitl_prompt" in session.metadata:
                     replay_prompt = session.metadata["_hitl_prompt"]
                     replay_input_type = session.metadata.get("_hitl_input_type", "user_input")
+                    replay_waiting = True
                 else:
-                    replay_prompt = None
-                    replay_input_type = None
-                if replay_prompt:
+                    replay_prompt = ""
+                    replay_input_type = "user_input"
+                    replay_waiting = False
+                if replay_waiting:
                     replay = {
                         "type": "waiting_input",
                         "prompt": replay_prompt,
