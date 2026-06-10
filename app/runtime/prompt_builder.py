@@ -249,14 +249,13 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 f"Session task list:\n{self._build_task_list_section(reviewable)}"
             )
 
-        # 像 actor 一样前置 memory 历史（多轮对话形式），让 observer 看到前序轮次。
-        # 去掉末尾"当前轮 user_prompt"（task_id == 当前 task 的 user 消息），
-        # 因为下面的评估消息已 richer 地重述了当前任务与要求，避免重复。
+        # 只前置「当前 task」的历史执行轮次（不含其它 task 的 memory 历史），让 observer 看到前序轮次。
+        # 前序轮次由 memory 里该轮的 assistant 摘要（含 process_report）表示；当前 task 的包装
+        # user_prompt 作为首条保留，确保消息以 user 角色开头（provider 要求）。
         messages: list[LLMMessage] = []
-        history = ctx.recent_messages
-        if history and history[-1].get("role") == "user" and history[-1].get("task_id") == task.id:
-            history = history[:-1]
-        for m in history:
+        for m in ctx.recent_messages:
+            if m.get("task_id") != task.id:
+                continue
             messages.append(LLMMessage(
                 role=m.get("role", "user"),
                 content=m.get("content", ""),

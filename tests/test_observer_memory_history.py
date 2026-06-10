@@ -1,7 +1,10 @@
-"""Observer prompt now carries memory history as a multi-turn conversation,
-like the actor: ctx.recent_messages is prepended, the trailing current-round
-user_prompt is dropped (the eval message restates it), and the observer's
-evaluation content stays the last message with its rendering unchanged.
+"""Observer prompt carries the CURRENT TASK's prior execution rounds as a
+multi-turn conversation. Only messages whose task_id matches the current task
+are prepended (other tasks' memory is excluded); prior rounds are represented
+by their memory assistant summary (which carries the process_report). The
+evaluation content stays the last message with its rendering unchanged, and
+the current task's wrapped user_prompt is kept as the leading user message so
+the sequence starts with the user role.
 """
 
 from __future__ import annotations
@@ -48,44 +51,51 @@ class TestObserverMemoryHistory:
         builder = PromptBuilderFactory.for_observer()
         return builder.build_messages(_session(), _result(), _ctx(recent), _task(), [])
 
-    def test_prepends_prior_rounds_as_multi_turn(self):
+    def test_includes_current_task_prior_rounds(self):
         recent = [
-            {"role": "user", "content": "round1 prompt", "task_id": "t1"},
-            {"role": "assistant", "content": "round1 result summary", "task_id": "t1"},
-            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},  # current round
+            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},
+            {"role": "assistant", "content": "round1 process report", "task_id": "t1"},
         ]
         msgs = self._build(recent)
 
-        # prior round shows up as its own turns
-        assert msgs[0].role == "user" and "round1 prompt" in str(msgs[0].content)
-        assert msgs[1].role == "assistant" and "round1 result summary" in str(msgs[1].content)
+        # current task wrapped prompt leads (provider-safe: starts with user)
+        assert msgs[0].role == "user" and "## Current Goal" in str(msgs[0].content)
+        # prior round shown via its process_report (assistant summary)
+        assert msgs[1].role == "assistant" and "round1 process report" in str(msgs[1].content)
         # evaluation content is the last message, rendering preserved
         assert msgs[-1].role == "user"
         assert "Current task: Do X" in str(msgs[-1].content)
         assert "Execution transcript" in str(msgs[-1].content)
 
-    def test_strips_trailing_current_round_user_prompt(self):
+    def test_excludes_other_tasks_history(self):
         recent = [
-            {"role": "assistant", "content": "round1 result summary", "task_id": "t1"},
-            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},  # current round, dropped
+            {"role": "user", "content": "other task prompt", "task_id": "t0"},
+            {"role": "assistant", "content": "other task result", "task_id": "t0"},
+            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},
+            {"role": "assistant", "content": "round1 process report", "task_id": "t1"},
         ]
         msgs = self._build(recent)
-        # the wrapped current-round user_prompt must not be carried as its own message
-        assert all("## Current Goal" not in str(m.content) for m in msgs[:-1])
-        # only the prior assistant summary + the eval message remain
-        assert [m.role for m in msgs] == ["assistant", "user"]
+        joined = "\n".join(str(m.content) for m in msgs)
+        # other task's memory is not carried
+        assert "other task prompt" not in joined
+        assert "other task result" not in joined
+        # current task's round IS carried
+        assert "round1 process report" in joined
 
-    def test_does_not_strip_when_trailing_is_other_task(self):
+    def test_keeps_ask_human_user_answer(self):
+        """A human answer (user message of the current task) is preserved."""
         recent = [
-            {"role": "user", "content": "different task prompt", "task_id": "t0"},
+            {"role": "user", "content": "## Current Goal\nDo X", "task_id": "t1"},
+            {"role": "assistant", "content": "round1 process report", "task_id": "t1"},
+            {"role": "user", "content": "here is my answer", "task_id": "t1"},
         ]
         msgs = self._build(recent)
-        # trailing entry belongs to another task → kept
-        assert "different task prompt" in str(msgs[0].content)
-        assert len(msgs) == 2  # history + eval
+        joined = "\n".join(str(m.content) for m in msgs)
+        assert "here is my answer" in joined
 
-    def test_empty_history_yields_single_eval_message(self):
-        msgs = self._build([])
+    def test_no_current_task_history_yields_single_eval_message(self):
+        msgs = self._build([{"role": "assistant", "content": "unrelated", "task_id": "t0"}])
+        # only the eval message remains (other task filtered out)
         assert len(msgs) == 1
         assert msgs[0].role == "user"
         assert "Current task: Do X" in str(msgs[0].content)
