@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     default_llm_base_url: str = ""
     default_llm_context_limit: int = 200_000
     default_llm_max_output_tokens: int = 8192
+    # TLS — 内网中间人代理场景：用操作系统证书库（含公司根 CA）替代 certifi
+    use_system_truststore: bool = True
 
     # Agent 默认配置
     default_agent_template_name: str = "default"
