@@ -212,8 +212,7 @@ class TaskManager:
                         logger.debug(
                             "TM: re-queued active task %s for session %s", finished_task_id, session_id
                         )
-                    elif _ft.status == "FINISHED":
-                        self._notify_trackers(session_id, _ft)
+                    # 已完成 task 的结果由 tracker 在自己下一次 run 时经 user 消息注入交付，无需在此 eager 写。
                 except Exception:
                     logger.exception("TM: failed to check active task %s", finished_task_id)
 
@@ -318,7 +317,6 @@ class TaskManager:
                     self._max_task_retries,
                     session_id,
                 )
-                self._notify_trackers(session_id, failed_task)
                 self._cancel_remaining_and_fail(session_id)
                 _session_done = True
 
@@ -412,56 +410,14 @@ class TaskManager:
                 logger.exception("TM: failed to append active_tasks for task %s", next_task.id)
             self._lm.run_agent(session_id, agent_id, next_task.id)
 
-    def _notify_trackers(self, session_id: str, task: Task) -> None:
-        """向所有不在 RUNNING 状态的 tracker agent 写入 task 结果，并从其 tracking_tasks 中移除该 task。"""
-        if not task.trackers or not self._memory_svc or not self._agent_store:
-            return
-        outcome = "completed" if task.status == "FINISHED" else "failed"
-        content = _task_result_content(
-            f"Tracked task「{task.title}」{outcome}.",
-            task.outputs, task.process_report, task.error,
-        )
-
-        notified: list[str] = []
-        for agent_id in list(task.trackers):
-            try:
-                agent_data = self._agent_store.get(session_id, agent_id)
-                if agent_data is None or agent_data.get("status") == "RUNNING":
-                    continue
-                # The executor already recorded this result via
-                # _write_execution_memory; writing it again here would duplicate it.
-                # Still clean up the tracking bookkeeping below.
-                if agent_id != task.assigned_agent_id:
-                    self._memory_svc.append_message(
-                        agent_id=agent_id,
-                        role="assistant",
-                        content=content,
-                        session_id=session_id,
-                        task_id=task.id,
-                    )
-                tracking: list[str] = agent_data.get("tracking_tasks", [])
-                if task.id in tracking:
-                    tracking.remove(task.id)
-                    agent_data["tracking_tasks"] = tracking
-                    self._agent_store.save(agent_data)
-                notified.append(agent_id)
-            except Exception:
-                logger.warning("TM: failed to notify tracker %s for task %s", agent_id, task.id)
-        if notified:
-            try:
-                for aid in notified:
-                    if aid in task.trackers:
-                        task.trackers.remove(aid)
-                self._task_svc.save(task)
-            except Exception:
-                logger.warning("TM: failed to update trackers for task %s", task.id)
-
     def _sync_sibling_tracking(self, session_id: str, task: Task, agent_id: str) -> None:
-        """将兄弟 task 的 id 写入新分配 agent 的 tracking_tasks，并将 agent_id 同步写入各兄弟 task 的 trackers。
-        已终结的兄弟直接写 memory，不加入 tracking_tasks。"""
+        """将兄弟 task 的 id 写入新分配 agent 的 tracking_tasks，并把 agent_id 同步写入各兄弟 task 的 trackers。
+
+        终结与未终结的兄弟一律加入 tracking（自己执行的除外）；其结果由 agent 在自己 run 时
+        经 user 消息注入（_inject_tracking_updates）统一交付，不在此 eager 写 memory。
+        """
         if not self._agent_store or not task.parent_task_id:
             return
-        _TERMINAL = {"FINISHED", "FAILED", "CANCELED"}
         try:
             data = self._agent_store.get(session_id, agent_id)
             if data is None:
@@ -471,11 +427,10 @@ class TaskManager:
             for sib in self._task_svc.list_children(task.parent_task_id, session_id):
                 if sib.id == task.id or sib.id in tracking:
                     continue
-                if sib.status in _TERMINAL:
-                    self._write_sib_result_to_memory(session_id, sib, agent_id, task.id)
-                else:
-                    tracking.append(sib.id)
-                    newly_tracked.append(sib.id)
+                if sib.assigned_agent_id == agent_id:  # 自己执行的已在自身 memory
+                    continue
+                tracking.append(sib.id)
+                newly_tracked.append(sib.id)
             if newly_tracked:
                 data["tracking_tasks"] = tracking
                 self._agent_store.save(data)
@@ -490,38 +445,16 @@ class TaskManager:
         except Exception:
             logger.warning("TM: failed to sync sibling tracking for agent %s task %s", agent_id, task.id)
 
-    def _write_sib_result_to_memory(self, session_id: str, sib: Task, agent_id: str, task_id: str) -> None:
-        """将已终结兄弟 task 的结果直接写入 agent memory。"""
-        if not self._memory_svc:
-            return
-        # The agent already holds the result if it executed the sibling itself.
-        if sib.assigned_agent_id == agent_id:
-            return
-        try:
-            outcome = "completed" if sib.status == "FINISHED" else "failed"
-            content = _task_result_content(
-                f"Sibling task「{sib.title}」{outcome}.",
-                sib.outputs, sib.process_report, sib.error,
-            )
-            self._memory_svc.append_message(
-                agent_id=agent_id,
-                role="assistant",
-                content=content,
-                session_id=session_id,
-                task_id=task_id,
-            )
-        except Exception:
-            logger.warning("TM: failed to write sib result to memory for agent %s sib %s", agent_id, sib.id)
-
     def _lm_recycle_finished(self, session_id: str, finished_agent_id: str) -> None:
         if self._lm is not None:
             self._lm.release(session_id, finished_agent_id)
 
     def _flush_tracking_tasks_to_memory(self, session_id: str, parent: Task) -> None:
-        """父恢复时把 tracking_tasks 中已终结的子任务结果写入父 memory。
+        """父恢复/失败时，把自己提交的子任务结果作为 submit_* 的 tool_result 写回父 memory。
 
-        自己提交的子任务（有 parent_tool_call_id）→ 聚合为 submit_* 的 tool_result。
-        其余已终结 tracked task → 维持 assistant 文本（兼容旧路径）。
+        自己提交的子任务（有 parent_tool_call_id）→ 聚合为 tool_result（含失败的 Error）。
+        非自己提交的 tracked task → 留在 tracking，由 _inject_tracking_updates 经 user 消息交付。
+        自己执行的 → 直接从 tracking 清除，不写。
         """
         if not self._agent_store or not self._memory_svc or not parent.assigned_agent_id:
             return
@@ -534,7 +467,6 @@ class TaskManager:
 
         flushed: list[str] = []
         by_call: dict[str, list[Task]] = {}
-        leftovers: list[Task] = []
         for task_id in tracking:
             try:
                 t = self._task_svc.get(task_id, session_id)
@@ -545,10 +477,9 @@ class TaskManager:
                 continue
             if t.parent_tool_call_id:
                 by_call.setdefault(t.parent_tool_call_id, []).append(t)
-            elif t.assigned_agent_id != parent.assigned_agent_id:
-                leftovers.append(t)
-            else:
+            elif t.assigned_agent_id == parent.assigned_agent_id:
                 flushed.append(task_id)  # 自己执行的、无需回写
+            # 否则：非自己提交、他人执行 → 留在 tracking，等 user 消息注入
 
         for call_id, children in by_call.items():
             content = self._aggregate_children_result(children)
@@ -561,17 +492,6 @@ class TaskManager:
                 tool_call_id=call_id,
             )
             flushed.extend(c.id for c in children)
-
-        for t in leftovers:
-            outcome = "completed" if t.status == "FINISHED" else "failed"
-            content = _task_result_content(
-                f"Tracked task「{t.title}」{outcome}.", t.outputs, t.process_report, t.error,
-            )
-            self._memory_svc.append_message(
-                agent_id=parent.assigned_agent_id, role="assistant", content=content,
-                session_id=session_id, task_id=parent.id,
-            )
-            flushed.append(t.id)
 
         if not flushed:
             return

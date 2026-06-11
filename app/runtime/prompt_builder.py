@@ -190,7 +190,7 @@ class ActorPromptBuilder(BasePromptBuilder):
             messages.append(LLMMessage(role="user", content=msg_content))
         return messages
 
-    def build_initial_user_content(self, task: "Task", tracking_updates: list[str] | None = None) -> "str | list":
+    def build_initial_user_content(self, task: "Task") -> "str | list":
         """不依赖 ctx，仅用 task 信息构建初始 user message 内容（写入 memory 用）。"""
         parts: list[str] = []
         if task.title and task.description:
@@ -198,8 +198,6 @@ class ActorPromptBuilder(BasePromptBuilder):
         user_prompt = task.user_prompt
         if user_prompt:
             parts.append(f"## Current Message\n{content_to_text(user_prompt)}")
-        if tracking_updates:
-            parts.append("## Tracking task updates\n" + "\n\n".join(tracking_updates))
         text_content = "\n\n".join(parts)
         if isinstance(user_prompt, list):
             image_parts = [p for p in content_from_raw(user_prompt) if isinstance(p, ImagePart)]

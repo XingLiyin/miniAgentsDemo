@@ -5,8 +5,8 @@ The executing agent already records its own task result via
 AgentLoop._write_execution_memory. For inline tasks (use_subagent=False) the
 creator/parent agent is reused as the executor, and that same agent is also
 listed in task.trackers (creator is added as a tracker at submit time). The
-tracker-notification paths in TaskManager must therefore SKIP the agent that
-equals task.assigned_agent_id — otherwise the result lands in its memory twice.
+flush path in TaskManager must therefore SKIP (no-write) the agent that equals
+task.assigned_agent_id — otherwise the result would land in its memory twice.
 """
 
 from __future__ import annotations
@@ -96,43 +96,6 @@ def _tm(task_svc, agent_store, memory_svc) -> TaskManager:
 
 # ── tests ────────────────────────────────────────────────────────────────────
 
-class TestNotifyTrackersSkipsExecutor:
-    def test_executor_not_notified_other_tracker_is(self):
-        task_svc = FakeTaskSvc()
-        agents = FakeAgentStore()
-        mem = FakeMemorySvc()
-
-        # a1 executed the task (assigned) and also tracks it; a2 is a separate tracker.
-        task = _make_task(assigned="a1", trackers=["a1", "a2"])
-        task_svc.add(task)
-        agents.add("a1", tracking_tasks=["t1"])
-        agents.add("a2", tracking_tasks=["t1"])
-
-        _tm(task_svc, agents, mem)._notify_trackers("s1", task)
-
-        notified = [m.agent_id for m in mem.messages]
-        # executor (a1) already has the result via _write_execution_memory → skip it
-        assert "a1" not in notified
-        # the genuine external tracker still gets it exactly once
-        assert notified.count("a2") == 1
-
-    def test_executor_removed_from_trackers_without_write(self):
-        task_svc = FakeTaskSvc()
-        agents = FakeAgentStore()
-        mem = FakeMemorySvc()
-
-        task = _make_task(assigned="a1", trackers=["a1"])
-        task_svc.add(task)
-        agents.add("a1", tracking_tasks=["t1"])
-
-        _tm(task_svc, agents, mem)._notify_trackers("s1", task)
-
-        assert mem.messages == []  # nothing written
-        # bookkeeping still cleaned up so it is never revisited
-        assert "a1" not in task_svc.get("t1").trackers
-        assert "t1" not in agents.get("s1", "a1")["tracking_tasks"]
-
-
 class TestFlushTrackingSkipsExecutor:
     def test_parent_executed_tracked_task_not_rewritten(self):
         task_svc = FakeTaskSvc()
@@ -149,26 +112,3 @@ class TestFlushTrackingSkipsExecutor:
 
         assert mem.messages == []  # parent already has t2's result from execution
         assert "t2" not in agents.get("s1", "a1")["tracking_tasks"]
-
-
-class TestWriteSibResultSkipsExecutor:
-    def test_sibling_executed_by_same_agent_not_rewritten(self):
-        task_svc = FakeTaskSvc()
-        agents = FakeAgentStore()
-        mem = FakeMemorySvc()
-
-        # agent a1 already executed sibling t2 → it must not get t2's result again.
-        sib = _make_task("t2", assigned="a1", status="FINISHED")
-        _tm(task_svc, agents, mem)._write_sib_result_to_memory("s1", sib, "a1", "t1")
-
-        assert mem.messages == []
-
-    def test_sibling_executed_by_other_agent_is_written(self):
-        task_svc = FakeTaskSvc()
-        agents = FakeAgentStore()
-        mem = FakeMemorySvc()
-
-        sib = _make_task("t2", assigned="a2", status="FINISHED")
-        _tm(task_svc, agents, mem)._write_sib_result_to_memory("s1", sib, "a1", "t1")
-
-        assert [m.agent_id for m in mem.messages] == ["a1"]

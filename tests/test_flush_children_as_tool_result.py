@@ -95,8 +95,9 @@ def test_failed_child_includes_error_in_tool_result():
     assert "boom" in str(tool_msgs[0].content)
 
 
-def test_tracked_not_submitted_child_uses_assistant_text():
-    # child has NO parent_tool_call_id, executed by another agent -> legacy assistant path
+def test_tracked_not_submitted_child_left_for_user_message_injection():
+    # child has NO parent_tool_call_id, executed by another agent -> NOT flushed here;
+    # it stays in tracking and is delivered via _inject_tracking_updates (user message).
     task_svc, agents, mem = _TaskSvc(), _Agents(), _Mem()
     c1 = _child("c1", assigned="b1", output="oX", report="rX")
     c1.parent_tool_call_id = None
@@ -107,5 +108,5 @@ def test_tracked_not_submitted_child_uses_assistant_text():
     task_svc.add(parent)
 
     _tm(task_svc, agents, mem)._flush_tracking_tasks_to_memory("s1", parent)
-    assert [m.role for m in mem.msgs] == ["assistant"]
-    assert "oX" in str(mem.msgs[0].content)
+    assert mem.msgs == []                                          # no assistant text written
+    assert agents.get("s1", "a1")["tracking_tasks"] == ["c1"]      # left for user-message injection
