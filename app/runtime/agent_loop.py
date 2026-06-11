@@ -15,6 +15,8 @@ import logging
 
 from app.common.errors import AppError
 from app.common.interrupt import AgentInterruptedError, InterruptContext, InterruptRegistry
+from app.common.utils import now_iso
+from app.runtime.execution_rounds import make_round_record
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
@@ -108,6 +110,7 @@ class AgentLoop:
 
             verdict, task = self._run_observer(session, agent, ctx, task, result, session_id, agent_id, task_id)
 
+            self._append_execution_round(agent_id, task, result, verdict, session_id, task_id)
             self._write_execution_memory(agent_id, task, verdict, session_id, task_id)
 
             if task.status == "FAILED":
@@ -206,31 +209,42 @@ class AgentLoop:
             task_id=task_id,
         )
 
+    def _append_execution_round(self, agent_id: str, task: Task, result: ActorResult,
+                                verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
+        """把本次 act() 调用的逐轮记录追加进 task.execution_rounds 并持久化。"""
+        record = make_round_record(
+            result.conversation_turns,
+            process_report=verdict.summary or "",
+            output=task.outputs,
+            ts=now_iso(),
+        )
+        task.execution_rounds.append(record)
+        self._task_svc.save(task)
+
     def _write_execution_memory(self, agent_id: str, task: Task, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
-        """Write observer verdict summary to memory."""
-        if verdict.summary or task.outputs:
+        """把任务的最终 output 写入 agent memory（不含 process report）。"""
+        if task.outputs:
             if isinstance(task.outputs, list):
                 output_images = [p for p in task.outputs if p.get("type") == "image"]
                 output_text = next((p.get("text", "") for p in task.outputs if p.get("type") == "text"), "")
+                if output_images:
+                    mem_content: str | list = list(output_images)
+                    if output_text:
+                        mem_content.append({"type": "text", "text": output_text})
+                else:
+                    mem_content = output_text
             else:
-                output_images = []
-                output_text = task.outputs or ""
-            if output_images:
-                mem_content: str | list = list(output_images)
-                text_part = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
-                if text_part:
-                    mem_content.append({"type": "text", "text": text_part})
-            else:
-                mem_content = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
-            self._memory_svc.append_message(
-                agent_id=agent_id,
-                role="assistant",
-                content=mem_content,
-                session_id=session_id,
-                task_id=task_id,
-            )
+                mem_content = task.outputs
+            if mem_content:
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=mem_content,
+                    session_id=session_id,
+                    task_id=task_id,
+                )
 
-        # HITL 确认回答：先写完上面的 LLM 判断，再补一条 user 消息，保证时序为「判断 → 人类回答」。
+        # HITL 确认回答：先写完上面的输出，再补一条 user 消息，保证时序为「输出 → 人类回答」。
         if task.pending_user_answer:
             self._memory_svc.append_message(
                 agent_id=agent_id,
