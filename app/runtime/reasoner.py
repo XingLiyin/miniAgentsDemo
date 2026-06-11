@@ -283,6 +283,12 @@ class Reasoner:
 
     # ── 私有辅助 ──────────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _skill_executor_tool_names() -> set[str]:
+        """skill_executor 工具名集合（get_skill_files / load_skill_reference / exec_skill_script）。"""
+        from app.tools.skill_executor import get_skill_executor_tools
+        return {t.name for t in get_skill_executor_tools()}
+
     def _resolve_act_tool_names(self, agent: Agent) -> set[str]:
         """展开 act 阶段的有效工具名集合：显式列表 + 订阅 MCP server 的全部工具。"""
         tools = set(agent.actor.tools or [])
@@ -316,6 +322,10 @@ class Reasoner:
         )
         ctx = CallContext(session_id=session_id, agent_id=agent.id, task=task, working_dir=_wd)
         allowed = self._resolve_act_tool_names(agent)
+        # 未分配 skill 的 task：剔除 skill_executor 工具（它们都依赖 task 的 skill_name，
+        # 否则调用即抛 MISSING_SKILL_NAME，平白占用上下文）。
+        if not (task.settings or {}).get("skill_name"):
+            allowed -= self._skill_executor_tool_names()
         skills = self._retrieve_skills(goal, agent, ctx)               # list[(name, desc)]
         tools = self._tool_registry.to_llm_tools(list(allowed))        # list[LLMTool]
         agent_metas = self._collect_agent_metas(agent)                 # list[(name, desc)]
