@@ -199,15 +199,39 @@ class AgentLoop:
         task = self._task_svc.get(task_id, session_id)
         return verdict, task
 
-    def _write_suspension_memory(self, agent_id: str, task, result: ActorResult, session_id: str, task_id: str) -> None:
-        """Write spawn summary to memory when task is suspended."""
+    def _write_suspension_memory(self, agent_id: str, task: Task, result: ActorResult, session_id: str, task_id: str) -> None:
+        """挂起时把 submit_task/submit_plan 调用写成 assistant tool_call，并回填子任务的 parent_tool_call_id。"""
+        from app.runtime.execution_rounds import DELEGATION_TOOLS
+        submit_call = next(
+            (tc for tc in result.tool_calls_made if tc.tool_name in DELEGATION_TOOLS),
+            None,
+        )
+        if submit_call is None:
+            # 理论上挂起必有 submit_* 调用；防御性兜底：至少保留本轮文本。
+            if result.output:
+                self._memory_svc.append_message(
+                    agent_id=agent_id, role="assistant", content=result.output,
+                    session_id=session_id, task_id=task_id,
+                )
+            return
+
         self._memory_svc.append_message(
             agent_id=agent_id,
             role="assistant",
-            content=_summarize_spawn(result),
+            content=result.output or "",
             session_id=session_id,
             task_id=task_id,
+            tool_calls=[{"id": submit_call.tool_call_id, "name": submit_call.tool_name,
+                         "input": submit_call.arguments}],
         )
+        # 回填本批新建子任务的 parent_tool_call_id（已链接的不覆盖，兼容多次提交）。
+        try:
+            for child in self._task_svc.list_children(task.id, session_id):
+                if not child.parent_tool_call_id:
+                    child.parent_tool_call_id = submit_call.tool_call_id
+                    self._task_svc.save(child)
+        except Exception:
+            logger.warning("AgentLoop: failed to backfill parent_tool_call_id for children of %s", task.id)
 
     def _append_execution_round(self, agent_id: str, task: Task, result: ActorResult,
                                 verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
@@ -382,26 +406,3 @@ class AgentLoop:
         if data is None:
             raise AppError("AGENT_NOT_FOUND", f"Agent {agent_id} not found")
         return Agent.from_dict(data)
-
-
-def _summarize_spawn(result: "ActorResult") -> str:
-    """从 actor result 的 tool_calls_made 里提取 submit_task / submit_plan 调用，生成挂起摘要。"""
-    from app.runtime.types import ActorResult  # noqa: F401  (TYPE_CHECKING 外的运行时引用)
-    titles: list[str] = []
-    for tc in result.tool_calls_made:
-        if not isinstance(tc.arguments, dict):
-            continue
-        if tc.tool_name == "submit_task":
-            title = tc.arguments.get("title", "")
-            if title:
-                titles.append(title)
-        elif tc.tool_name == "submit_plan":
-            for spec in tc.arguments.get("tasks", []):
-                if isinstance(spec, dict):
-                    title = spec.get("title", "")
-                    if title:
-                        titles.append(title)
-    if titles:
-        listed = ", ".join(f"'{t}'" for t in titles)
-        return f"Delegated to sub-task(s): {listed}. Awaiting completion."
-    return "Delegated to sub-task(s). Awaiting completion."
