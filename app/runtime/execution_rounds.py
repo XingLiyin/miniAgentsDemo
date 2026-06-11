@@ -1,8 +1,10 @@
 """逐轮执行记录（Task.execution_rounds）的序列化与还原纯函数。
 
 - make_round_record: 把一次 act() 调用的 ConversationTurn 列表 + process_report + output
-  序列化成可持久化的 round dict。委派工具（submit_task/submit_plan）的调用不写入——它们
-  提升到 agent memory 作为 tool_call/tool_result pair。
+  序列化成可持久化的 round dict。委派工具（submit_task/submit_plan）的调用被剔除——它们
+  提升到 agent memory 作为 tool_call/tool_result pair；含委派调用的那一回合的 llm_text 也被
+  清空，因为该文本已由 submit_task 的 assistant tool_call（result.output）承载，避免重复。
+  mem_index 锚定该 round 在「当前 task 自身 memory 消息」序列中的插入位置（见 prompt_builder）。
 - round_to_actor_messages: 把一条 round dict 还原成 actor 视图的 LLMMessage 列表
   （assistant 回复+tool_calls、tool 结果、末尾 process_report 的 user review note）。
 """
@@ -23,10 +25,12 @@ def make_round_record(
     process_report: str,
     output: "str | list",
     ts: str,
+    mem_index: int = 0,
 ) -> dict[str, Any]:
-    """序列化一次 act() 调用为 round 记录；委派工具调用被剔除。"""
+    """序列化一次 act() 调用为 round 记录；委派工具调用被剔除，委派回合的 llm_text 被清空。"""
     serialized_turns: list[dict] = []
     for t in turns:
+        had_delegation = any(tc.tool_name in DELEGATION_TOOLS for tc in t.tool_calls)
         tcs = [
             {
                 "tool_name": tc.tool_name,
@@ -38,12 +42,15 @@ def make_round_record(
             for tc in t.tool_calls
             if tc.tool_name not in DELEGATION_TOOLS
         ]
-        serialized_turns.append({"llm_text": t.llm_text, "tool_calls": tcs})
+        # 委派回合的文本已由 submit_task 的 assistant tool_call 承载，这里清空避免重复。
+        llm_text = "" if had_delegation else t.llm_text
+        serialized_turns.append({"llm_text": llm_text, "tool_calls": tcs})
     return {
         "turns": serialized_turns,
         "process_report": process_report or "",
         "output": output if output is not None else "",
         "ts": ts or "",
+        "mem_index": mem_index,
     }
 
 

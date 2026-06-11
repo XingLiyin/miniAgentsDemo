@@ -133,30 +133,45 @@ class ActorPromptBuilder(BasePromptBuilder):
         ] if p]
         return "\n\n---\n\n".join(parts)
 
-    def _merge_timeline(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
-        """把 agent memory 与当前 task 的 execution_rounds 按时间戳归并成基础消息列表。
+    @staticmethod
+    def _mem_to_llm(m: dict) -> LLMMessage:
+        return LLMMessage(
+            role=m.get("role", "user"),
+            content=m.get("content", ""),
+            tool_calls=m.get("tool_calls"),
+            tool_call_id=m.get("tool_call_id", ""),
+            reasoning_content=m.get("reasoning_content"),
+        )
 
-        排序键: (timestamp, source_order)——source_order memory=0、round=1，保证同刻 memory 在前。
+    def _merge_timeline(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
+        """把 agent memory 与当前 task 的 execution_rounds 用「索引锚」归并成基础消息列表。
+
+        前提（由 reasoner 的 delegated-child 过滤保证）：当前 task 自身的 memory 消息在过滤后是
+        memory 末尾的连续一段；其余（前序跨任务结果、summary、当前 task 的 submit pair 之外的
+        上下文）都在它之前。因此：
+          1) 非当前 task 的消息按原序排在最前；
+          2) 当前 task 的消息与各 round 按 mem_index 交错——round.mem_index = k 表示该 round 在
+             「第 k 条当前-task 消息之前」插入。不依赖墙钟，跨平台确定。
         """
-        entries: list[tuple[str, int, LLMMessage]] = []
+        current: list[dict] = []
+        out: list[LLMMessage] = []
         for m in ctx.recent_messages:
-            entries.append((
-                m.get("created_at", "") or "",
-                0,
-                LLMMessage(
-                    role=m.get("role", "user"),
-                    content=m.get("content", ""),
-                    tool_calls=m.get("tool_calls"),
-                    tool_call_id=m.get("tool_call_id", ""),
-                    reasoning_content=m.get("reasoning_content"),
-                ),
-            ))
+            if m.get("task_id") == task.id:
+                current.append(m)
+            else:
+                out.append(self._mem_to_llm(m))
+
+        rounds_by_idx: dict[int, list[dict]] = {}
         for rec in task.execution_rounds:
-            ts = rec.get("ts", "") or ""
-            for msg in round_to_actor_messages(rec):
-                entries.append((ts, 1, msg))
-        entries.sort(key=lambda e: (e[0], e[1]))
-        return [e[2] for e in entries]
+            idx = max(0, min(int(rec.get("mem_index", len(current))), len(current)))
+            rounds_by_idx.setdefault(idx, []).append(rec)
+
+        for k in range(len(current) + 1):
+            for rec in rounds_by_idx.get(k, []):
+                out.extend(round_to_actor_messages(rec))
+            if k < len(current):
+                out.append(self._mem_to_llm(current[k]))
+        return out
 
     def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
         if task.user_prompt_in_memory:

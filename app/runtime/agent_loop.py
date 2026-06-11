@@ -110,12 +110,15 @@ class AgentLoop:
                                            interrupt_flag=interrupt_flag)
 
             if task.status == "SUSPENDED":
+                # 先记录本回合（含 submit 前的真实工具调用），再写 submit tool_call；
+                # 顺序保证 round 的 mem_index 锚在 submit memory 之前。
+                self._append_execution_round(agent_id, task, result, "", session_id, task_id)
                 self._write_suspension_memory(agent_id, task, result, session_id, task_id)
                 return
 
             verdict, task = self._run_observer(session, agent, ctx, task, result, session_id, agent_id, task_id)
 
-            self._append_execution_round(agent_id, task, result, verdict, session_id, task_id)
+            self._append_execution_round(agent_id, task, result, verdict.summary or "", session_id, task_id)
             self._write_execution_memory(agent_id, task, verdict, session_id, task_id)
 
             if task.status == "FAILED":
@@ -238,13 +241,22 @@ class AgentLoop:
             logger.warning("AgentLoop: failed to backfill parent_tool_call_id for children of %s", task.id)
 
     def _append_execution_round(self, agent_id: str, task: Task, result: ActorResult,
-                                verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
-        """把本次 act() 调用的逐轮记录追加进 task.execution_rounds 并持久化。"""
+                                process_report: str, session_id: str, task_id: str) -> None:
+        """把本次 act() 调用的逐轮记录追加进 task.execution_rounds 并持久化。
+
+        mem_index = 此刻 agent memory 中属于当前 task 的消息数——即该 round 应插入在第
+        mem_index 条当前-task 消息之前（紧接其后写入的 output/submit memory 就是第 mem_index 条）。
+        """
+        mem_index = sum(
+            1 for m in self._memory_svc.get_all_messages(agent_id)
+            if m.get("task_id") == task_id
+        )
         record = make_round_record(
             result.conversation_turns,
-            process_report=verdict.summary or "",
+            process_report=process_report,
             output=task.outputs,
             ts=now_iso(),
+            mem_index=mem_index,
         )
         task.execution_rounds.append(record)
         self._task_svc.save(task)

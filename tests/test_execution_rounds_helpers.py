@@ -19,6 +19,18 @@ def test_make_round_record_serializes_turns_and_skips_delegation():
     names = [tc["tool_name"] for t in rec["turns"] for tc in t["tool_calls"]]
     assert "read" in names
     assert "submit_task" not in names  # delegation excluded
+    # the delegating turn's text is blanked (it is carried by the submit_task tool_call memory)
+    assert rec["turns"][0]["llm_text"] == ""
+
+
+def test_make_round_record_keeps_text_when_no_delegation():
+    turns = [ConversationTurn(
+        round=0, messages_sent=[], llm_text="just thinking",
+        tool_calls=[ToolCallRecord(tool_name="read", arguments={}, result="b", tool_call_id="tc1")],
+    )]
+    rec = make_round_record(turns, process_report="", output="", ts="", mem_index=2)
+    assert rec["turns"][0]["llm_text"] == "just thinking"
+    assert rec["mem_index"] == 2
 
 
 def test_round_to_actor_messages_shape():
