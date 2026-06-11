@@ -17,6 +17,7 @@ from app.common.errors import AppError
 from app.common.interrupt import AgentInterruptedError, InterruptContext, InterruptRegistry
 from app.common.utils import now_iso
 from app.runtime.execution_rounds import DELEGATION_TOOLS, make_round_record
+from app.runtime.task_result import task_result_content
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
@@ -250,7 +251,6 @@ class AgentLoop:
 
         自己提交的（有 parent_tool_call_id）走 tool_result，自己执行的已在自身 memory，均跳过。
         """
-        from app.orchestrator.task_manager import _task_result_content
         data = self._agent_store.get(session_id, agent_id) or {}
         updates: list[str] = []
         for tid in list(data.get("tracking_tasks", [])):
@@ -265,7 +265,7 @@ class AgentLoop:
             if t.assigned_agent_id == agent_id:   # 自己执行的已在自身 memory
                 continue
             outcome = "completed" if t.status == "FINISHED" else "failed"
-            content = _task_result_content(
+            content = task_result_content(
                 f"Tracked task「{t.title}」{outcome}.", t.outputs, t.process_report, t.error,
             )
             updates.append(content if isinstance(content, str) else f"Tracked task「{t.title}」{outcome}.")

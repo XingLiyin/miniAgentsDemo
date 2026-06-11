@@ -24,6 +24,7 @@ from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.orchestrator.task_queue import TaskQueue  # noqa: F401 – kept for external callers
+from app.runtime.task_result import task_result_content
 
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
@@ -33,25 +34,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _task_result_content(prefix: str, outputs: "str | list", process_report: "str | None", error: "str | None") -> "str | list":
-    """Build memory content for a finished/failed task, preserving images when outputs is multimodal."""
-    if isinstance(outputs, list):
-        images = [p for p in outputs if p.get("type") == "image"]
-        output_text = next((p.get("text", "") for p in outputs if p.get("type") == "text"), "")
-    else:
-        images = []
-        output_text = outputs or ""
-    text_parts = [prefix]
-    if output_text:
-        text_parts.append(f"# Output\n\n{output_text}")
-    if process_report:
-        text_parts.append(f"# Process Report\n\n{process_report}")
-    if error:
-        text_parts.append(f"Error: {error}")
-    text = "\n".join(text_parts)
-    if images:
-        return [*images, {"type": "text", "text": text}]
-    return text
+# 任务结果渲染已抽到共享模块（task_manager / agent_loop 共用），此处保留别名不改调用点。
+_task_result_content = task_result_content
 
 
 class TaskManager:
