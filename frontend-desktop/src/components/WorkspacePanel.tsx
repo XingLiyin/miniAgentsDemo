@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   FolderIcon, FileIcon, FileCodeIcon, FileTextIcon, FileImageIcon,
+  FileTypeIcon, FileSpreadsheetIcon, PresentationIcon,
   ChevronRightIcon, RefreshCwIcon, FolderOpenIcon, ArrowLeftIcon, FolderInputIcon, XIcon,
 } from 'lucide-react'
+import { fileType, getExt, type PreviewType } from '@/preview/fileType'
 
 import { workspaceApi } from '@/api/workspace'
 import { Spinner } from '@/components/ui/spinner'
@@ -279,13 +281,22 @@ function IconBtn({ onClick, title, children }: { onClick: () => void; title?: st
   )
 }
 
-function getFileStyle(name: string): { Icon: React.FC<{ size?: number; className?: string; style?: React.CSSProperties }>, color: string } {
-  const ext = name.includes('.') ? name.split('.').pop()?.toLowerCase() ?? '' : ''
-  if (['py', 'js', 'ts', 'tsx', 'jsx', 'rs', 'go', 'java', 'cpp', 'c', 'sh', 'bash', 'json', 'yaml', 'yml', 'toml', 'css'].includes(ext))
-    return { Icon: FileCodeIcon, color: 'var(--blue)' }
-  if (['md', 'txt', 'rst', 'log'].includes(ext))
-    return { Icon: FileTextIcon, color: 'var(--teal)' }
-  if (['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'ico', 'svg'].includes(ext))
-    return { Icon: FileImageIcon, color: 'var(--green)' }
-  return { Icon: FileIcon, color: 'var(--t3)' }
+// Workspace file-icon mapping. Keyed by the same PreviewType the preview
+// platform uses (see src/preview/fileType.ts), so any new format added there
+// (Phase 2/3 etc.) just needs a row here — the ext lists stay in one place.
+type FileIconComponent = React.FC<{ size?: number; className?: string; style?: React.CSSProperties }>
+const FILE_ICONS: Record<PreviewType, { Icon: FileIconComponent; color: string }> = {
+  pdf:      { Icon: FileTypeIcon,        color: 'var(--red)' },
+  docx:     { Icon: FileTextIcon,        color: 'var(--blue)' },
+  excel:    { Icon: FileSpreadsheetIcon, color: 'var(--green)' },
+  pptx:     { Icon: PresentationIcon,    color: 'var(--amber)' },
+  image:    { Icon: FileImageIcon,       color: 'var(--green)' },
+  code:     { Icon: FileCodeIcon,        color: 'var(--blue)' },
+  markdown: { Icon: FileTextIcon,        color: 'var(--teal)' },
+  text:     { Icon: FileTextIcon,        color: 'var(--teal)' },
+  binary:   { Icon: FileIcon,            color: 'var(--t3)' },
+}
+
+function getFileStyle(name: string): { Icon: FileIconComponent; color: string } {
+  return FILE_ICONS[fileType(getExt(name))]
 }

@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterator
 import httpx
 
 from app.llm.base import Transport, StreamTransport
+from app.common.ssl_verify import make_ssl_verify
 
 
 class HttpxTransport(Transport, StreamTransport):
@@ -17,11 +18,16 @@ class HttpxTransport(Transport, StreamTransport):
 
     def post(self, url: str, headers: Dict[str, str], json: Dict[str, Any], timeout: int) -> Dict[str, Any]:
         """发送 POST 请求并返回 JSON 响应（非流式）。"""
-        try:
-            with httpx.Client(timeout=timeout or self._timeout, trust_env=False) as client:
+        from app.common.ssl_verify import with_ssl_retry
+
+        def _do(verify):
+            with httpx.Client(timeout=timeout or self._timeout, trust_env=False, verify=verify) as client:
                 resp = client.post(url, headers=headers, json=json)
                 resp.raise_for_status()
                 return resp.json()
+
+        try:
+            return with_ssl_retry(_do, url)
         except httpx.HTTPStatusError as exc:
             raise RuntimeError(f'HTTP 状态错误: {exc.response.status_code} {exc.response.text}') from exc
         except httpx.TimeoutException as exc:
@@ -41,7 +47,7 @@ class HttpxTransport(Transport, StreamTransport):
         调用方负责在 for 循环中消费，本方法在整个迭代完成前保持连接开启。
         """
         try:
-            with httpx.Client(timeout=timeout or self._timeout, trust_env=False) as client:
+            with httpx.Client(timeout=timeout or self._timeout, trust_env=False, verify=make_ssl_verify()) as client:
                 with client.stream('POST', url, headers=headers, json=json) as resp:
                     if resp.status_code >= 400:
                         resp.read()   # 必须先读 body，否则流式上下文下 text 为空

@@ -52,8 +52,12 @@ class Settings(BaseSettings):
     default_llm_base_url: str = ""
     default_llm_context_limit: int = 200_000
     default_llm_max_output_tokens: int = 8192
-    # TLS — 内网中间人代理场景：用操作系统证书库（含公司根 CA）替代 certifi
-    use_system_truststore: bool = True
+    # TLS — 内网中间人代理场景：用操作系统证书库（含公司根 CA）替代 certifi。
+    # 默认关闭：truststore.inject_into_ssl() 会全局替换 ssl.SSLContext，走 Windows
+    # Schannel 校验，在企业代理 CA 缺少 EKU 标志时报 CERT_E_UNTRUSTED_ROOT，且会
+    # 覆盖 app/common/ssl_verify.py 的 pyOpenSSL 方案（抓链 + AIA + 自动放宽主机名，
+    # 已在真实企业 SSL 检测代理环境验证通过）。如需 truststore 可经环境变量显式开启。
+    use_system_truststore: bool = False
 
     # Agent 默认配置
     default_agent_template_name: str = "default"
@@ -87,6 +91,16 @@ class Settings(BaseSettings):
     http_request_timeout_ms: int = 10_000
     http_response_limit_bytes: int = 524_288
     enable_builtin_tools: bool = True  # 是否注册内置工具（skill_executor 和 control tools 始终注册）
+
+    # SSL / TLS — httpx 客户端证书验证
+    # http_ssl_verify=false 跳过证书验证（仅供开发调试，生产不推荐）
+    # http_ca_bundle 指定自定义 CA 证书包路径（优先于 OS 证书库）
+    # 两者均为默认值时，自动通过 truststore 使用 OS 系统证书库（含企业内网 CA）
+    # http_check_hostname=false 仍验证 CA 证书链，但跳过主机名/IP 匹配
+    #   （用于通过 IP 访问内网网关、证书 SAN 不含该 IP 的场景）
+    http_ssl_verify: bool = True
+    http_ca_bundle: str = ""
+    http_check_hostname: bool = True
 
     # 远端 Skill 拉取服务器
     skill_pull_server_url: str = "http://10.25.228.203:8080/api"  # 远端 skill 服务器 base URL，如 https://example.com/api

@@ -22,6 +22,7 @@ import httpx
 from mcp.client.streamable_http import streamable_http_client
 
 from app.tools.mcp_base import _MCPProviderBase
+from app.common.ssl_verify import make_ssl_verify
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class MCPStreamableHTTPProvider(_MCPProviderBase):
         self._url = url
 
     def get_mcp_client(self) -> Any:
-        http_client = httpx.AsyncClient(trust_env=False, timeout=self._request_timeout)
+        http_client = httpx.AsyncClient(trust_env=False, timeout=self._request_timeout, verify=make_ssl_verify())
         return streamable_http_client(url=self._url, terminate_on_close=True, http_client=http_client)
 
     def start(self) -> None:
