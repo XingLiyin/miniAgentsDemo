@@ -232,7 +232,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
           Current task / Task description
           Sub-task results
           User requirements
-          Prior progress：当前 task 前序轮次（process_report 摘要 + 用户答复），来自 memory
+          Prior progress：当前 task 前序轮次（agent 回复 + process_report），来自 task.execution_rounds
           Current turns：本轮执行 transcript
           [Session task list]（仅当存在可复核 sibling 时）
         """
