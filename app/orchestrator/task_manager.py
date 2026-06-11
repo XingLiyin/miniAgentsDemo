@@ -605,25 +605,22 @@ class TaskManager:
 
     @staticmethod
     def _aggregate_children_result(children: list[Task]) -> "str | list":
-        """把同一 submit_* 调用的多个子任务聚合成一条 tool_result 内容。"""
-        parts: list[str] = []
+        """把同一 submit_* 调用的多个子任务聚合成一条 tool_result 内容。
+
+        每个子任务复用 _task_result_content 构造段落（含 Output / Process Report / Error），
+        多个段落以 --- 分隔；任一子任务含图片时合并为 multimodal list。
+        """
+        texts: list[str] = []
         images: list = []
         for c in children:
             outcome = "completed" if c.status == "FINISHED" else "failed"
-            section = [f"Task「{c.title}」{outcome}."]
-            if isinstance(c.outputs, list):
-                images.extend(p for p in c.outputs if p.get("type") == "image")
-                out_text = next((p.get("text", "") for p in c.outputs if p.get("type") == "text"), "")
+            part = _task_result_content(f"Task「{c.title}」{outcome}.", c.outputs, c.process_report, c.error)
+            if isinstance(part, list):
+                images.extend(p for p in part if p.get("type") == "image")
+                texts.append(next((p.get("text", "") for p in part if p.get("type") == "text"), ""))
             else:
-                out_text = c.outputs or ""
-            if out_text:
-                section.append(f"# Output\n\n{out_text}")
-            if c.process_report:
-                section.append(f"# Process Report\n\n{c.process_report}")
-            if c.error:
-                section.append(f"Error: {c.error}")
-            parts.append("\n".join(section))
-        text = "\n\n---\n\n".join(parts)
+                texts.append(part)
+        text = "\n\n---\n\n".join(t for t in texts if t)
         if images:
             return [*images, {"type": "text", "text": text}]
         return text

@@ -60,6 +60,25 @@ def test_self_submitted_children_delivered_as_tool_result():
     assert agents.get("s1", "a1")["tracking_tasks"] == []
 
 
+def test_distinct_tool_calls_produce_separate_tool_results():
+    # two children under different submit calls -> two tool messages, each keyed to its id
+    task_svc, agents, mem = _TaskSvc(), _Agents(), _Mem()
+    c1 = _child("c1", tcid="tcA", output="oA")
+    c2 = _child("c2", tcid="tcB", output="oB")
+    task_svc.add(c1); task_svc.add(c2)
+    agents.add("a1", tracking=["c1", "c2"])
+    parent = Task(id="p1", session_id="s1", creator_agent_id="a1", assigned_agent_id="a1",
+                  status="SUSPENDED", user_prompt="", title="P", created_at="", updated_at="")
+    task_svc.add(parent)
+
+    _tm(task_svc, agents, mem)._flush_tracking_tasks_to_memory("s1", parent)
+
+    tool_msgs = {m.tool_call_id: str(m.content) for m in mem.msgs if m.role == "tool"}
+    assert set(tool_msgs) == {"tcA", "tcB"}
+    assert "oA" in tool_msgs["tcA"] and "oB" not in tool_msgs["tcA"]
+    assert "oB" in tool_msgs["tcB"] and "oA" not in tool_msgs["tcB"]
+
+
 def test_failed_child_includes_error_in_tool_result():
     task_svc, agents, mem = _TaskSvc(), _Agents(), _Mem()
     c1 = _child("c1", tcid="tc5", output="", report="tried", status="FAILED")
