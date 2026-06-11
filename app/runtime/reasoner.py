@@ -219,9 +219,41 @@ class Reasoner:
 
     # ── 私有：共享数据获取 ──────────────────────────────────────────────────
 
+    def _filter_delegated_child_messages(
+        self, messages: list[dict], current_task: Task, session_id: str
+    ) -> list[dict]:
+        """剔除「被委派子任务」的原始 transcript，让父视图里它们只以 submit_task 的 tool_result 呈现。
+
+        inline 子任务与父共享同一 agent memory；若不剔除，子任务的 user/assistant 消息会夹在
+        父的 submit tool_call 与 tool_result 之间，破坏 provider 的 tool 配对相邻性。
+
+        规则：task_id 既不是当前 task、且该 task 有 parent_tool_call_id（说明它是被某次 submit_*
+        委派出去、结果已由 tool_result 代表）→ 丢弃其消息。无 task_id、当前 task、以及非委派的
+        历史 task（普通跨任务结果）一律保留。
+        """
+        if not self._task_svc:
+            return messages
+        other_ids = {
+            m.get("task_id") for m in messages
+            if m.get("task_id") and m.get("task_id") != current_task.id
+        }
+        if not other_ids:
+            return messages
+        delegated: set[str] = set()
+        for tid in other_ids:
+            try:
+                if self._task_svc.get(tid, session_id).parent_tool_call_id:
+                    delegated.add(tid)
+            except Exception:
+                pass
+        if not delegated:
+            return messages
+        return [m for m in messages if m.get("task_id") not in delegated]
+
     def _fetch_base(self, session: Session, agent: Agent, task: Task) -> tuple:
         """获取 memory、blackboard、token 估算等共享数据，返回 tuple。"""
         messages = self._memory_svc.get_all_messages(agent.id)
+        messages = self._filter_delegated_child_messages(messages, task, session.id)
 
         bb_snippets = []
         for tracked_task_id in agent.tracking_tasks:

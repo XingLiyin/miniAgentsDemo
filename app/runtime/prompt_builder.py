@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.llm.types import ImagePart, LLMMessage, TextPart, ToolCallBlock, content_from_raw, content_to_text
+from app.runtime.execution_rounds import round_to_actor_messages
 
 if TYPE_CHECKING:
     from app.domain.models.session import Session
@@ -62,8 +63,34 @@ class BasePromptBuilder:
         messages.append(LLMMessage(role="tool", content=content, tool_call_id=tool_call_id))
         return messages
 
+    def _reconcile_tool_pairs(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """去掉无法配对的 tool_use / tool_result，避免 provider 400。
+
+        - assistant 的 tool_calls 里，id 没有对应 tool 结果的被剔除；剔空则降级为纯文本消息。
+        - tool 消息的 tool_call_id 不在任何存活 assistant tool_call 里的，整条丢弃。
+        """
+        tool_result_ids = {m.tool_call_id for m in messages if m.role == "tool" and m.tool_call_id}
+        reconciled: list[LLMMessage] = []
+        for m in messages:
+            if m.role == "assistant" and m.tool_calls:
+                kept = [tc for tc in m.tool_calls if tc.get("id") in tool_result_ids]
+                reconciled.append(LLMMessage(
+                    role=m.role, content=m.content,
+                    tool_call_id=m.tool_call_id,
+                    tool_calls=kept or None,
+                    reasoning_content=m.reasoning_content,
+                ))
+            else:
+                reconciled.append(m)
+        live_ids = {tc.get("id") for m in reconciled if m.role == "assistant" and m.tool_calls for tc in m.tool_calls}
+        return [
+            m for m in reconciled
+            if not (m.role == "tool" and m.tool_call_id not in live_ids)
+        ]
+
     def sanitize_messages(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         """过滤空白消息，合并连续同角色消息（tool/assistant 不合并）。"""
+        messages = self._reconcile_tool_pairs(messages)
         filtered = [
             m for m in messages
             if (m.content and content_to_text(m.content).strip()) or m.tool_calls or m.role == "tool"
@@ -106,19 +133,50 @@ class ActorPromptBuilder(BasePromptBuilder):
         ] if p]
         return "\n\n---\n\n".join(parts)
 
-    def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
-        messages: list[LLMMessage] = []
+    @staticmethod
+    def _mem_to_llm(m: dict) -> LLMMessage:
+        return LLMMessage(
+            role=m.get("role", "user"),
+            content=m.get("content", ""),
+            tool_calls=m.get("tool_calls"),
+            tool_call_id=m.get("tool_call_id", ""),
+            reasoning_content=m.get("reasoning_content"),
+        )
 
+    def _merge_timeline(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
+        """把 agent memory 与当前 task 的 execution_rounds 用「索引锚」归并成基础消息列表。
+
+        前提（由 reasoner 的 delegated-child 过滤保证）：当前 task 自身的 memory 消息在过滤后是
+        memory 末尾的连续一段；其余（前序跨任务结果、summary、当前 task 的 submit pair 之外的
+        上下文）都在它之前。因此：
+          1) 非当前 task 的消息按原序排在最前；
+          2) 当前 task 的消息与各 round 按 mem_index 交错——round.mem_index = k 表示该 round 在
+             「第 k 条当前-task 消息之前」插入。不依赖墙钟，跨平台确定。
+        """
+        current: list[dict] = []
+        out: list[LLMMessage] = []
+        for m in ctx.recent_messages:
+            if m.get("task_id") == task.id:
+                current.append(m)
+            else:
+                out.append(self._mem_to_llm(m))
+
+        rounds_by_idx: dict[int, list[dict]] = {}
+        for rec in task.execution_rounds:
+            idx = max(0, min(int(rec.get("mem_index", len(current))), len(current)))
+            rounds_by_idx.setdefault(idx, []).append(rec)
+
+        for k in range(len(current) + 1):
+            for rec in rounds_by_idx.get(k, []):
+                out.extend(round_to_actor_messages(rec))
+            if k < len(current):
+                out.append(self._mem_to_llm(current[k]))
+        return out
+
+    def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
         if task.user_prompt_in_memory:
-            # Resume 路径：user message 已以包装形式存在 memory，直接使用历史
-            for m in ctx.recent_messages:
-                messages.append(LLMMessage(
-                    role=m.get("role", "user"),
-                    content=m.get("content", ""),
-                    tool_calls=m.get("tool_calls"),
-                    tool_call_id=m.get("tool_call_id", ""),
-                    reasoning_content=m.get("reasoning_content"),
-                ))
+            # Resume 路径：merge agent memory 与 execution_rounds 重建当前 task 视图
+            messages = self._merge_timeline(task, ctx)
             # suspend 后 resume：末尾是 assistant，追加 blackboard 上下文
             if ctx.blackboard_snippets and messages and messages[-1].role != "user":
                 bb = "## Task Background\n" + "\n".join(
@@ -128,14 +186,7 @@ class ActorPromptBuilder(BasePromptBuilder):
             return messages
 
         # 非 resume 路径（daemon 或无 user_prompt）：构建完整 user message
-        for m in ctx.recent_messages:
-            messages.append(LLMMessage(
-                role=m.get("role", "user"),
-                content=m.get("content", ""),
-                tool_calls=m.get("tool_calls"),
-                tool_call_id=m.get("tool_call_id", ""),
-                reasoning_content=m.get("reasoning_content"),
-            ))
+        messages = self._merge_timeline(task, ctx)
         parts: list[str] = []
         if ctx.blackboard_snippets:
             parts.append("## Task Background\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
@@ -232,7 +283,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
           Current task / Task description
           Sub-task results
           User requirements
-          Prior progress：当前 task 前序轮次（process_report 摘要 + 用户答复），来自 memory
+          Prior progress：当前 task 前序轮次（agent 回复 + process_report），来自 task.execution_rounds
           Current turns：本轮执行 transcript
           [Session task list]（仅当存在可复核 sibling 时）
         """
@@ -243,7 +294,7 @@ class ObserverPromptBuilder(BasePromptBuilder):
             if has_pending else []
         )
 
-        prior_progress = self._build_prior_progress(ctx, task)
+        prior_progress = self._build_prior_progress(task)
         transcript = self._build_transcript(result)
 
         content_parts = [
@@ -262,48 +313,22 @@ class ObserverPromptBuilder(BasePromptBuilder):
             )
         return [LLMMessage(role="user", content="\n\n".join(content_parts))]
 
-    def _build_prior_progress(self, ctx: "ReasoningContext", task: "Task") -> str:
-        """渲染当前 task 前序轮次，按轮次分组、明确区分 agent 回复 / process report / user 回复。
+    def _build_prior_progress(self, task: "Task") -> str:
+        """从 task.execution_rounds 渲染前序轮：每轮 agent 回复 + process report。
 
-        memory 中 task_id == 当前 task 的消息：assistant = 该轮 agent 回复 + process_report，
-        user = 该轮之后的用户答复。每个 assistant 开启新一轮；丢弃首条包装 user_prompt。
-        本轮的 assistant 摘要此时尚未写入 memory，所以这里只含真正的前序轮次。
+        本轮（当前 act() 调用）尚未写入 execution_rounds，所以这里只含真正的前序轮次。
         """
-        msgs = [m for m in ctx.recent_messages if m.get("task_id") == task.id]
-        if msgs and msgs[0].get("role") == "user":
-            msgs = msgs[1:]
         blocks: list[str] = []
-        round_no = 0
-        for m in msgs:
-            content = m.get("content", "")
-            text = (content_to_text(content) if isinstance(content, list) else (content or "")).strip()
-            if not text:
-                continue
-            if m.get("role") == "assistant":
-                round_no += 1
-                reply, report = self._split_agent_summary(text)
-                section = [f"=== Round {round_no} ==="]
-                if reply:
-                    section.append(f"[Agent reply]\n{reply}")
-                if report:
-                    section.append(f"[Process report]\n{report}")
-                blocks.append("\n".join(section))
-            else:  # 用户答复
-                blocks.append(f"[User reply]\n{text}")
+        for i, rec in enumerate(task.execution_rounds, start=1):
+            reply = " ".join(t.get("llm_text", "") for t in rec.get("turns", []) if t.get("llm_text")).strip()
+            report = (rec.get("process_report") or "").strip()
+            section = [f"=== Round {i} ==="]
+            if reply:
+                section.append(f"[Agent reply]\n{reply}")
+            if report:
+                section.append(f"[Process report]\n{report}")
+            blocks.append("\n".join(section))
         return "\n\n".join(blocks)
-
-    @staticmethod
-    def _split_agent_summary(text: str) -> tuple[str, str]:
-        """把 memory 里的 assistant 摘要拆成 (agent 回复, process_report)。
-
-        _write_execution_memory 写入格式为 `{output}\\n\\n# Process Report\\n\\n{summary}`，
-        以 `# Process Report` 为界拆分；无该标记时整体视为 agent 回复。
-        """
-        marker = "# Process Report"
-        idx = text.find(marker)
-        if idx == -1:
-            return text.strip(), ""
-        return text[:idx].strip(), text[idx + len(marker):].strip()
 
     def _build_transcript(self, result: "ActorResult") -> str:
         """将本轮 conversation_turns 展开为可读文本，供 LLM 评估。"""
@@ -323,7 +348,6 @@ class ObserverPromptBuilder(BasePromptBuilder):
             if turn.llm_text:
                 lines.append(f"  Agent reply: {turn.llm_text}")
         return "\n".join(lines)
-        return msgs
 
     def _build_task_list_section(self, tasks: list["Task"]) -> str:
         """渲染任务列表为可读文本。"""

@@ -256,8 +256,9 @@ class TestWriteExecutionMemory:
 
         roles = [m.role for m in mem.messages]
         assert roles == ["assistant", "user"]
-        # assistant carries the LLM judgment, user carries the raw answer
-        assert "judgment" in mem.messages[0].content
+        # assistant carries the task output (process report no longer written to memory),
+        # user carries the raw human answer
+        assert mem.messages[0].content == "final output"
         assert mem.messages[1].content == "我确认完成"
 
     def test_field_cleared_and_persisted(self):

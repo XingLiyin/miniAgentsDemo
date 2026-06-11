@@ -15,6 +15,9 @@ import logging
 
 from app.common.errors import AppError
 from app.common.interrupt import AgentInterruptedError, InterruptContext, InterruptRegistry
+from app.common.utils import now_iso
+from app.runtime.execution_rounds import DELEGATION_TOOLS, make_round_record
+from app.runtime.task_result import full_process_report, task_label, task_result_content
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
@@ -97,17 +100,25 @@ class AgentLoop:
                 task.user_prompt_in_memory = True
                 self._task_svc.save(task)
 
+            # 交付被跟踪（非自己提交、非自己执行）的已终结 task 结果：每次 run 以 user 消息注入一次。
+            if not (task.settings or {}).get("_daemon"):
+                self._inject_tracking_updates(session_id, agent_id, task_id)
+
             ctx = self._reasoner.reason(session, agent, task)
 
             result, task = self._run_actor(session, agent, task, ctx, session_id, agent_id,
                                            interrupt_flag=interrupt_flag)
 
             if task.status == "SUSPENDED":
+                # 先记录本回合（含 submit 前的真实工具调用），再写 submit tool_call；
+                # 顺序保证 round 的 mem_index 锚在 submit memory 之前。
+                self._append_execution_round(agent_id, task, result, "", session_id, task_id)
                 self._write_suspension_memory(agent_id, task, result, session_id, task_id)
                 return
 
             verdict, task = self._run_observer(session, agent, ctx, task, result, session_id, agent_id, task_id)
 
+            self._append_execution_round(agent_id, task, result, verdict.summary or "", session_id, task_id)
             self._write_execution_memory(agent_id, task, verdict, session_id, task_id)
 
             if task.status == "FAILED":
@@ -196,41 +207,130 @@ class AgentLoop:
         task = self._task_svc.get(task_id, session_id)
         return verdict, task
 
-    def _write_suspension_memory(self, agent_id: str, task, result: ActorResult, session_id: str, task_id: str) -> None:
-        """Write spawn summary to memory when task is suspended."""
+    def _write_suspension_memory(self, agent_id: str, task: Task, result: ActorResult, session_id: str, task_id: str) -> None:
+        """挂起时把 submit_task/submit_plan 调用写成 assistant tool_call，并回填子任务的 parent_tool_call_id。"""
+        submit_call = next(
+            (tc for tc in result.tool_calls_made if tc.tool_name in DELEGATION_TOOLS),
+            None,
+        )
+        if submit_call is None:
+            # 理论上挂起必有 submit_* 调用；防御性兜底：至少保留本轮文本。
+            if result.output:
+                self._memory_svc.append_message(
+                    agent_id=agent_id, role="assistant", content=result.output,
+                    session_id=session_id, task_id=task_id,
+                )
+            return
+
         self._memory_svc.append_message(
             agent_id=agent_id,
             role="assistant",
-            content=_summarize_spawn(result),
+            content=result.output or "",
             session_id=session_id,
             task_id=task_id,
+            tool_calls=[{"id": submit_call.tool_call_id, "name": submit_call.tool_name,
+                         "input": submit_call.arguments}],
         )
+        # 回填本批新建子任务的 parent_tool_call_id（已链接的不覆盖，兼容多次提交）。
+        try:
+            for child in self._task_svc.list_children(task.id, session_id):
+                if not child.parent_tool_call_id:
+                    child.parent_tool_call_id = submit_call.tool_call_id
+                    self._task_svc.save(child)
+        except Exception:
+            logger.warning("AgentLoop: failed to backfill parent_tool_call_id for children of %s", task.id)
+
+    def _append_execution_round(self, agent_id: str, task: Task, result: ActorResult,
+                                process_report: str, session_id: str, task_id: str) -> None:
+        """把本次 act() 调用的逐轮记录追加进 task.execution_rounds 并持久化。
+
+        mem_index = 此刻 agent memory 中属于当前 task 的消息数——即该 round 应插入在第
+        mem_index 条当前-task 消息之前（紧接其后写入的 output/submit memory 就是第 mem_index 条）。
+        """
+        mem_index = sum(
+            1 for m in self._memory_svc.get_all_messages(agent_id)
+            if m.get("task_id") == task_id
+        )
+        record = make_round_record(
+            result.conversation_turns,
+            process_report=process_report,
+            output=task.outputs,
+            ts=now_iso(),
+            mem_index=mem_index,
+        )
+        task.execution_rounds.append(record)
+        self._task_svc.save(task)
+
+    def _inject_tracking_updates(self, session_id: str, agent_id: str, task_id: str) -> None:
+        """把被跟踪（非自己提交、非自己执行）的已终结 task 结果作为 user 消息注入 memory，
+        并从 tracking 中清除（恰好投递一次）。这是 tracker/sibling 结果的唯一交付路径。
+
+        自己提交的（有 parent_tool_call_id）走 submit_task 的 tool_result；
+        自己执行的已在自身 memory：均不写，但仍清理 tracking。
+        """
+        data = self._agent_store.get(session_id, agent_id) or {}
+        tracking = list(data.get("tracking_tasks", []))
+        if not tracking:
+            return
+        delivered: list[str] = []
+        for tid in tracking:
+            try:
+                t = self._task_svc.get(tid, session_id)
+            except Exception:
+                continue
+            if t.status not in ("FINISHED", "FAILED", "CANCELED"):
+                continue
+            if t.parent_tool_call_id:          # 自己提交的走 tool_result
+                continue
+            if t.assigned_agent_id == agent_id:  # 自己执行的已在自身 memory
+                delivered.append(tid)
+                continue
+            outcome = "completed" if t.status == "FINISHED" else "failed"
+            content = task_result_content(
+                f"Tracked {task_label(t, outcome)}", t.outputs, full_process_report(t), t.error,
+            )
+            self._memory_svc.append_message(
+                agent_id=agent_id, role="user", content=content,
+                session_id=session_id, task_id=task_id,
+            )
+            delivered.append(tid)
+        if not delivered:
+            return
+        data["tracking_tasks"] = [tid for tid in data.get("tracking_tasks", []) if tid not in delivered]
+        self._agent_store.save(data)
+        for tid in delivered:
+            try:
+                t = self._task_svc.get(tid, session_id)
+                if agent_id in t.trackers:
+                    t.trackers.remove(agent_id)
+                    self._task_svc.save(t)
+            except Exception:
+                pass
 
     def _write_execution_memory(self, agent_id: str, task: Task, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
-        """Write observer verdict summary to memory."""
-        if verdict.summary or task.outputs:
+        """把任务的最终 output 写入 agent memory（不含 process report）。"""
+        if task.outputs:
             if isinstance(task.outputs, list):
                 output_images = [p for p in task.outputs if p.get("type") == "image"]
                 output_text = next((p.get("text", "") for p in task.outputs if p.get("type") == "text"), "")
+                if output_images:
+                    mem_content: str | list = list(output_images)
+                    if output_text:
+                        mem_content.append({"type": "text", "text": output_text})
+                else:
+                    mem_content = output_text
             else:
-                output_images = []
-                output_text = task.outputs or ""
-            if output_images:
-                mem_content: str | list = list(output_images)
-                text_part = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
-                if text_part:
-                    mem_content.append({"type": "text", "text": text_part})
-            else:
-                mem_content = "\n\n# Process Report\n\n".join(filter(None, [output_text, verdict.summary]))
-            self._memory_svc.append_message(
-                agent_id=agent_id,
-                role="assistant",
-                content=mem_content,
-                session_id=session_id,
-                task_id=task_id,
-            )
+                mem_content = task.outputs
+            if mem_content:
+                self._memory_svc.append_message(
+                    agent_id=agent_id,
+                    role="assistant",
+                    content=mem_content,
+                    session_id=session_id,
+                    task_id=task_id,
+                )
 
-        # HITL 确认回答：先写完上面的 LLM 判断，再补一条 user 消息，保证时序为「判断 → 人类回答」。
+        # HITL 确认回答：先写完上面的输出，再补一条 user 消息，保证时序为「输出 → 人类回答」。
         if task.pending_user_answer:
             self._memory_svc.append_message(
                 agent_id=agent_id,
@@ -368,26 +468,3 @@ class AgentLoop:
         if data is None:
             raise AppError("AGENT_NOT_FOUND", f"Agent {agent_id} not found")
         return Agent.from_dict(data)
-
-
-def _summarize_spawn(result: "ActorResult") -> str:
-    """从 actor result 的 tool_calls_made 里提取 submit_task / submit_plan 调用，生成挂起摘要。"""
-    from app.runtime.types import ActorResult  # noqa: F401  (TYPE_CHECKING 外的运行时引用)
-    titles: list[str] = []
-    for tc in result.tool_calls_made:
-        if not isinstance(tc.arguments, dict):
-            continue
-        if tc.tool_name == "submit_task":
-            title = tc.arguments.get("title", "")
-            if title:
-                titles.append(title)
-        elif tc.tool_name == "submit_plan":
-            for spec in tc.arguments.get("tasks", []):
-                if isinstance(spec, dict):
-                    title = spec.get("title", "")
-                    if title:
-                        titles.append(title)
-    if titles:
-        listed = ", ".join(f"'{t}'" for t in titles)
-        return f"Delegated to sub-task(s): {listed}. Awaiting completion."
-    return "Delegated to sub-task(s). Awaiting completion."
