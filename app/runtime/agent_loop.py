@@ -88,7 +88,8 @@ class AgentLoop:
 
             # 立即持久化 user_prompt（包装格式），确保任务无论以何种方式结束都在 memory 里。
             if task.user_prompt and not task.user_prompt_in_memory and not (task.settings or {}).get("_daemon"):
-                wrapped = self._actor._prompt_builder.build_initial_user_content(task)
+                tracking_updates = self._collect_tracking_updates(session_id, agent_id)
+                wrapped = self._actor._prompt_builder.build_initial_user_content(task, tracking_updates=tracking_updates)
                 self._memory_svc.append_message(
                     agent_id=agent_id,
                     role="user",
@@ -243,6 +244,32 @@ class AgentLoop:
         )
         task.execution_rounds.append(record)
         self._task_svc.save(task)
+
+    def _collect_tracking_updates(self, session_id: str, agent_id: str) -> list[str]:
+        """收集该 agent tracking_tasks 中非自己提交、已终结的 task 结果文本。
+
+        自己提交的（有 parent_tool_call_id）走 tool_result，自己执行的已在自身 memory，均跳过。
+        """
+        from app.orchestrator.task_manager import _task_result_content
+        data = self._agent_store.get(session_id, agent_id) or {}
+        updates: list[str] = []
+        for tid in list(data.get("tracking_tasks", [])):
+            try:
+                t = self._task_svc.get(tid, session_id)
+            except Exception:
+                continue
+            if t.status not in ("FINISHED", "FAILED", "CANCELED"):
+                continue
+            if t.parent_tool_call_id:        # 自己提交的走 tool_result，不在此注入
+                continue
+            if t.assigned_agent_id == agent_id:   # 自己执行的已在自身 memory
+                continue
+            outcome = "completed" if t.status == "FINISHED" else "failed"
+            content = _task_result_content(
+                f"Tracked task「{t.title}」{outcome}.", t.outputs, t.process_report, t.error,
+            )
+            updates.append(content if isinstance(content, str) else f"Tracked task「{t.title}」{outcome}.")
+        return updates
 
     def _write_execution_memory(self, agent_id: str, task: Task, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
         """把任务的最终 output 写入 agent memory（不含 process report）。"""
