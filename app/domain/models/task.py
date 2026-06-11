@@ -36,6 +36,10 @@ class Task:
     dag_deps: list[str] = field(default_factory=list)   # 依赖的 task_id 列表
     parent_task_id: str | None = None                   # 所属 SUSPENDED 祖先 task
     retry_count: int = 0
+    # 逐轮细粒度执行记录（每项: {"turns": [...], "process_report": str, "output": str|list, "ts": str}）
+    execution_rounds: list[dict[str, Any]] = field(default_factory=list)
+    # 子任务专用：父 agent 中 submit_task/submit_plan 调用的 tool_call id（submit_plan 多子任务共享）
+    parent_tool_call_id: str | None = None
 
     created_at: str = ""
     updated_at: str = ""
@@ -63,6 +67,8 @@ class Task:
             "dag_deps": self.dag_deps,
             "parent_task_id": self.parent_task_id,
             "retry_count": self.retry_count,
+            "execution_rounds": self.execution_rounds,
+            "parent_tool_call_id": self.parent_tool_call_id,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -88,6 +94,8 @@ class Task:
             dag_deps=d.get("dag_deps", []),
             parent_task_id=d.get("parent_task_id"),
             retry_count=d.get("retry_count", 0),
+            execution_rounds=d.get("execution_rounds", []),
+            parent_tool_call_id=d.get("parent_tool_call_id"),
             created_at=d.get("created_at", ""),
             updated_at=d.get("updated_at", ""),
         )
