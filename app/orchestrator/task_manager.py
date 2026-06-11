@@ -534,7 +534,11 @@ class TaskManager:
             self._lm.release(session_id, finished_agent_id)
 
     def _flush_tracking_tasks_to_memory(self, session_id: str, parent: Task) -> None:
-        """将 parent agent 的 tracking_tasks 中已终结的 task 结果写入 memory，并双向清理关联。"""
+        """父恢复时把 tracking_tasks 中已终结的子任务结果写入父 memory。
+
+        自己提交的子任务（有 parent_tool_call_id）→ 聚合为 submit_* 的 tool_result。
+        其余已终结 tracked task → 维持 assistant 文本（兼容旧路径）。
+        """
         if not self._agent_store or not self._memory_svc or not parent.assigned_agent_id:
             return
         agent_data = self._agent_store.get(session_id, parent.assigned_agent_id)
@@ -543,30 +547,48 @@ class TaskManager:
         tracking: list[str] = list(agent_data.get("tracking_tasks", []))
         if not tracking:
             return
+
         flushed: list[str] = []
+        by_call: dict[str, list[Task]] = {}
+        leftovers: list[Task] = []
         for task_id in tracking:
             try:
                 t = self._task_svc.get(task_id, session_id)
-                if t.status not in ("FINISHED", "FAILED", "CANCELED"):
-                    continue
-                # Skip tasks the parent agent executed itself — it already holds the
-                # result via _write_execution_memory; re-flushing would duplicate it.
-                if t.assigned_agent_id != parent.assigned_agent_id:
-                    outcome = "completed" if t.status == "FINISHED" else "failed"
-                    content = _task_result_content(
-                        f"Tracked task「{t.title}」{outcome}.",
-                        t.outputs, t.process_report, t.error,
-                    )
-                    self._memory_svc.append_message(
-                        agent_id=parent.assigned_agent_id,
-                        role="assistant",
-                        content=content,
-                        session_id=session_id,
-                        task_id=parent.id,
-                    )
-                flushed.append(task_id)
             except Exception:
-                logger.exception("TM: failed to flush tracking task %s to parent %s memory", task_id, parent.id)
+                logger.exception("TM: failed to load tracking task %s", task_id)
+                continue
+            if t.status not in ("FINISHED", "FAILED", "CANCELED"):
+                continue
+            if t.parent_tool_call_id:
+                by_call.setdefault(t.parent_tool_call_id, []).append(t)
+            elif t.assigned_agent_id != parent.assigned_agent_id:
+                leftovers.append(t)
+            else:
+                flushed.append(task_id)  # 自己执行的、无需回写
+
+        for call_id, children in by_call.items():
+            content = self._aggregate_children_result(children)
+            self._memory_svc.append_message(
+                agent_id=parent.assigned_agent_id,
+                role="tool",
+                content=content,
+                session_id=session_id,
+                task_id=parent.id,
+                tool_call_id=call_id,
+            )
+            flushed.extend(c.id for c in children)
+
+        for t in leftovers:
+            outcome = "completed" if t.status == "FINISHED" else "failed"
+            content = _task_result_content(
+                f"Tracked task「{t.title}」{outcome}.", t.outputs, t.process_report, t.error,
+            )
+            self._memory_svc.append_message(
+                agent_id=parent.assigned_agent_id, role="assistant", content=content,
+                session_id=session_id, task_id=parent.id,
+            )
+            flushed.append(t.id)
+
         if not flushed:
             return
         new_tracking = [tid for tid in agent_data.get("tracking_tasks", []) if tid not in flushed]
@@ -580,6 +602,31 @@ class TaskManager:
                     self._task_svc.save(t)
             except Exception:
                 pass
+
+    @staticmethod
+    def _aggregate_children_result(children: list[Task]) -> "str | list":
+        """把同一 submit_* 调用的多个子任务聚合成一条 tool_result 内容。"""
+        parts: list[str] = []
+        images: list = []
+        for c in children:
+            outcome = "completed" if c.status == "FINISHED" else "failed"
+            section = [f"Task「{c.title}」{outcome}."]
+            if isinstance(c.outputs, list):
+                images.extend(p for p in c.outputs if p.get("type") == "image")
+                out_text = next((p.get("text", "") for p in c.outputs if p.get("type") == "text"), "")
+            else:
+                out_text = c.outputs or ""
+            if out_text:
+                section.append(f"# Output\n\n{out_text}")
+            if c.process_report:
+                section.append(f"# Process Report\n\n{c.process_report}")
+            if c.error:
+                section.append(f"Error: {c.error}")
+            parts.append("\n".join(section))
+        text = "\n\n---\n\n".join(parts)
+        if images:
+            return [*images, {"type": "text", "text": text}]
+        return text
 
     def _try_resume_parent(self, session_id: str, finished_task_id: str) -> None:
         """Conclude a SUSPENDED parent once all its children are terminal.
