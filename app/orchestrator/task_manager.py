@@ -629,6 +629,9 @@ class TaskManager:
             if not children or not all(t.status in _terminal for t in children):
                 return
             if any(t.status == "FAILED" for t in children):
+                # 关闭 submit 的 tool_call：把（含失败的）子任务结果作为 tool_result 回写父 memory，
+                # 避免悬空 tool_use；然后再 fail + 级联。
+                self._flush_tracking_tasks_to_memory(session_id, parent)
                 self._task_svc.fail(parent.id, error="cascade: child task failed", session_id=session_id)
                 self._q_remove(session_id, parent.id)
                 self._cascade_fail(session_id, parent.id)
