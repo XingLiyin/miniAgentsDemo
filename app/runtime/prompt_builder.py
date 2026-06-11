@@ -307,7 +307,6 @@ class ObserverPromptBuilder(BasePromptBuilder):
             if turn.llm_text:
                 lines.append(f"  Agent reply: {turn.llm_text}")
         return "\n".join(lines)
-        return msgs
 
     def _build_task_list_section(self, tasks: list["Task"]) -> str:
         """渲染任务列表为可读文本。"""
