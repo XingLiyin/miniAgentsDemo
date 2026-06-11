@@ -26,8 +26,13 @@ def make_round_record(
     output: "str | list",
     ts: str,
     mem_index: int = 0,
+    user_answer: str = "",
 ) -> dict[str, Any]:
-    """序列化一次 act() 调用为 round 记录；委派工具调用被剔除，委派回合的 llm_text 被清空。"""
+    """序列化一次 act() 调用为 round 记录；委派工具调用被剔除，委派回合的 llm_text 被清空。
+
+    user_answer: 本回合结束后人类（HITL）给出的回复，紧接本轮 agent 提问之后。供 observer 的
+    prior progress 还原「提问 → 人类回答」的完整时序（actor 视图已从 memory 拿到该回答）。
+    """
     serialized_turns: list[dict] = []
     for t in turns:
         had_delegation = any(tc.tool_name in DELEGATION_TOOLS for tc in t.tool_calls)
@@ -51,11 +56,20 @@ def make_round_record(
         "output": output if output is not None else "",
         "ts": ts or "",
         "mem_index": mem_index,
+        "user_answer": user_answer or "",
     }
 
 
 def round_to_actor_messages(record: dict[str, Any]) -> list[LLMMessage]:
-    """把 round 记录还原成 actor 视图的消息序列。"""
+    """把 round 记录还原成 actor 视图的消息序列。
+
+    continuing round（active / ask_human）的产出由 execution_rounds 唯一承载（不再双写进
+    agent memory），因此每条 round 自带一条 user 侧「续作信号」收尾，保证 prompt 不以 assistant
+    结尾、也不重复回放：
+      - HITL（有 user_answer）：人类回答作为 user 消息收尾；
+      - active（无 user_answer，有 process_report）：process_report 作为「## Last round review」收尾。
+    （记录本身保持完整，observer 的 prior_progress 仍从原始字段还原完整时序。）
+    """
     messages: list[LLMMessage] = []
     for t in record.get("turns", []):
         tool_calls = t.get("tool_calls", [])
@@ -74,7 +88,10 @@ def round_to_actor_messages(record: dict[str, Any]) -> list[LLMMessage]:
             messages.append(LLMMessage(
                 role="tool", content=result, tool_call_id=tc.get("tool_call_id", ""),
             ))
+    user_answer = (record.get("user_answer") or "").strip()
     report = (record.get("process_report") or "").strip()
-    if report:
+    if user_answer:                       # HITL：人类回答即续作信号
+        messages.append(LLMMessage(role="user", content=user_answer))
+    elif report:                          # active：observer 的 process report 即续作信号
         messages.append(LLMMessage(role="user", content=f"## Last round review\n{report}"))
     return messages

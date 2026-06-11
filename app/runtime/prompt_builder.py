@@ -302,7 +302,12 @@ class ObserverPromptBuilder(BasePromptBuilder):
                 f"Current task: {task.title}\n"
                 f"Task description: {task.description or task.title}"
             ),
-            f"Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets) if ctx.blackboard_snippets else "No sub-tasks.",
+        ]
+        if ctx.blackboard_snippets:
+            content_parts.append(
+                "Sub-task results:\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets)
+            )
+        content_parts += [
             f"User requirements: {task.user_prompt if task.user_prompt else session.user_prompt}",
             f"Prior progress (current task's earlier rounds):\n{prior_progress}" if prior_progress else "Prior progress: none (first round).",
             f"Current turns ({len(result.conversation_turns)} round(s)):\n{transcript}",
@@ -322,11 +327,14 @@ class ObserverPromptBuilder(BasePromptBuilder):
         for i, rec in enumerate(task.execution_rounds, start=1):
             reply = " ".join(t.get("llm_text", "") for t in rec.get("turns", []) if t.get("llm_text")).strip()
             report = (rec.get("process_report") or "").strip()
+            user_answer = (rec.get("user_answer") or "").strip()
             section = [f"=== Round {i} ==="]
             if reply:
                 section.append(f"[Agent reply]\n{reply}")
             if report:
                 section.append(f"[Process report]\n{report}")
+            if user_answer:
+                section.append(f"[User reply]\n{user_answer}")
             blocks.append("\n".join(section))
         return "\n\n".join(blocks)
 

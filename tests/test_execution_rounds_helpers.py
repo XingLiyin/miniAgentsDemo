@@ -61,5 +61,33 @@ def test_round_to_actor_messages_no_report_omits_review_note():
     assert [m.role for m in msgs] == ["assistant"]
 
 
+def test_round_to_actor_messages_hitl_trails_human_answer_not_report():
+    """HITL round (user_answer present): the human answer is the trailing user message;
+    the observer's process report is NOT injected into the actor view."""
+    rec = {
+        "turns": [{"llm_text": "Question to user?", "tool_calls": []}],
+        "process_report": "asked the user", "output": "Question to user?",
+        "user_answer": "这些都还没确定", "ts": "",
+    }
+    msgs = round_to_actor_messages(rec)
+    assert [m.role for m in msgs] == ["assistant", "user"]
+    assert msgs[0].content == "Question to user?"   # the question, rendered once
+    assert msgs[1].content == "这些都还没确定"          # human answer, not the report
+    assert "## Last round review" not in str(msgs[1].content)
+
+
+def test_round_to_actor_messages_active_trails_review_note():
+    """active round (no user_answer): the process report is the trailing user signal,
+    so the round ends on a user message rather than an assistant one."""
+    rec = {
+        "turns": [{"llm_text": "partial answer", "tool_calls": []}],
+        "process_report": "continue: refine Y", "output": "partial answer", "ts": "",
+    }
+    msgs = round_to_actor_messages(rec)
+    assert [m.role for m in msgs] == ["assistant", "user"]
+    assert "## Last round review" in str(msgs[1].content)
+    assert "continue: refine Y" in str(msgs[1].content)
+
+
 def test_delegation_tools_constant():
     assert DELEGATION_TOOLS == {"submit_task", "submit_plan"}

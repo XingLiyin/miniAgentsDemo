@@ -257,6 +257,7 @@ class AgentLoop:
             output=task.outputs,
             ts=now_iso(),
             mem_index=mem_index,
+            user_answer=task.pending_user_answer or "",
         )
         task.execution_rounds.append(record)
         self._task_svc.save(task)
@@ -308,8 +309,15 @@ class AgentLoop:
                 pass
 
     def _write_execution_memory(self, agent_id: str, task: Task, verdict: ObserverVerdict, session_id: str, task_id: str) -> None:
-        """把任务的最终 output 写入 agent memory（不含 process report）。"""
-        if task.outputs:
+        """把任务的最终 output 写入 agent memory（不含 process report）。
+
+        continuing（PENDING：active / ask_human）轮不写 memory——本轮的 output 与人类回答都已由
+        _append_execution_round 存进 execution_rounds，并在下一轮以「transcript → user 侧续作信号」
+        的形式渲染（见 round_to_actor_messages）。若此处再写一遍，会重复回放且让 prompt 以 assistant
+        结尾。只有 terminal（FINISHED 等）轮才把 output 落进 memory 供结果传播。
+        """
+        continuing = task.status == "PENDING"
+        if task.outputs and not continuing:
             if isinstance(task.outputs, list):
                 output_images = [p for p in task.outputs if p.get("type") == "image"]
                 output_text = next((p.get("text", "") for p in task.outputs if p.get("type") == "text"), "")
@@ -330,15 +338,9 @@ class AgentLoop:
                     task_id=task_id,
                 )
 
-        # HITL 确认回答：先写完上面的输出，再补一条 user 消息，保证时序为「输出 → 人类回答」。
+        # HITL 暂存的人类回答已由 _append_execution_round 捕获进 round.user_answer；这里只清理并持久化，
+        # 不再写进 memory（否则与 round 渲染重复）。
         if task.pending_user_answer:
-            self._memory_svc.append_message(
-                agent_id=agent_id,
-                role="user",
-                content=task.pending_user_answer,
-                session_id=session_id,
-                task_id=task_id,
-            )
             task.pending_user_answer = None
             self._task_svc.save(task)
 

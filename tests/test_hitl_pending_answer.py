@@ -6,8 +6,10 @@ Covers the full path of the `pending_user_answer` field:
   2. _ask_human            — pauses the session (WAITING_INPUT → RUNNING),
                              returns the raw user answer, and defaults a blank
                              prompt to a non-empty 'user_input' question.
-  3. _write_execution_memory — appends the human answer AFTER the LLM judgment
-                             (assistant summary), then clears + persists the field.
+  3. _write_execution_memory — for a continuing (PENDING) round writes NOTHING to memory
+                             (output + human answer are carried by execution_rounds and
+                             rendered next round); it only clears + persists the stashed
+                             field. Terminal rounds still land the output in memory.
   4. AgentLoop.run start    — a stale pending_user_answer from a prior cycle is
                              cleared when the task is restarted.
 
@@ -248,44 +250,50 @@ class TestWriteExecutionMemory:
         from app.runtime.types import ObserverVerdict
         return ObserverVerdict(summary=summary)
 
-    def test_user_answer_written_after_assistant_summary(self):
+    def test_continuing_hitl_round_writes_nothing_to_memory(self):
+        """A continuing (PENDING) ask_human round writes NOTHING to memory: the output
+        (the question) and the human answer are carried by execution_rounds and rendered
+        next round as 'transcript → human answer'. _write_execution_memory only clears the
+        stashed answer (already captured into the round by _append_execution_round)."""
         loop, mem, store = self._loop()
-        task = _make_task(outputs="final output", pending_user_answer="我确认完成")
+        task = _make_task(status="PENDING", outputs="the question",
+                          pending_user_answer="我确认完成")
         store.add(task)
         loop._write_execution_memory("a1", task, self._verdict("judgment"), "s1", "t1")
 
-        roles = [m.role for m in mem.messages]
-        assert roles == ["assistant", "user"]
-        # assistant carries the task output (process report no longer written to memory),
-        # user carries the raw human answer
-        assert mem.messages[0].content == "final output"
-        assert mem.messages[1].content == "我确认完成"
+        assert mem.messages == []          # nothing double-written into memory
+        assert task.pending_user_answer is None
 
     def test_field_cleared_and_persisted(self):
         loop, mem, store = self._loop()
-        task = _make_task(outputs="out", pending_user_answer="ans")
+        task = _make_task(status="PENDING", outputs="out", pending_user_answer="ans")
         store.add(task)
         loop._write_execution_memory("a1", task, self._verdict("s"), "s1", "t1")
         assert task.pending_user_answer is None
         assert store.save_calls == 1
         assert store.get("t1").pending_user_answer is None  # persisted
+        assert mem.messages == []          # continuing round writes nothing to memory
 
-    def test_no_user_message_when_field_empty(self):
+    def test_continuing_active_round_skips_output_write(self):
+        """A continuing (PENDING) active round (no human answer) also writes nothing to
+        memory — its output is carried by execution_rounds. No clear-save either."""
         loop, mem, store = self._loop()
-        task = _make_task(outputs="out")  # pending_user_answer defaults None
+        task = _make_task(status="PENDING", outputs="partial answer")
         store.add(task)
-        loop._write_execution_memory("a1", task, self._verdict("s"), "s1", "t1")
+        loop._write_execution_memory("a1", task, self._verdict("continue Y"), "s1", "t1")
+        assert mem.messages == []
+        assert store.save_calls == 0       # no clear-save when nothing to clear
+
+    def test_terminal_round_writes_output_to_memory(self):
+        """A terminal (FINISHED) round still lands the final output in memory so the
+        result propagates."""
+        loop, mem, store = self._loop()
+        task = _make_task(status="FINISHED", outputs="final answer")
+        store.add(task)
+        loop._write_execution_memory("a1", task, self._verdict("done"), "s1", "t1")
         assert [m.role for m in mem.messages] == ["assistant"]
-        assert store.save_calls == 0  # no clear-save when nothing to clear
-
-    def test_user_message_written_even_without_summary_or_outputs(self):
-        """Guard skips the assistant message, but the human answer must still land."""
-        loop, mem, store = self._loop()
-        task = _make_task(outputs="", pending_user_answer="只有人类回答")
-        store.add(task)
-        loop._write_execution_memory("a1", task, self._verdict(""), "s1", "t1")
-        assert [m.role for m in mem.messages] == ["user"]
-        assert mem.messages[0].content == "只有人类回答"
+        assert mem.messages[0].content == "final answer"
+        assert store.save_calls == 0       # no pending answer to clear
 
 
 # ══ 4. AgentLoop.run clears a stale field on restart ══════════════════════════
