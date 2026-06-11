@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     # 两者均为默认值时，自动通过 truststore 使用 OS 系统证书库（含企业内网 CA）
     # http_check_hostname=false 仍验证 CA 证书链，但跳过主机名/IP 匹配
     #   （用于通过 IP 访问内网网关、证书 SAN 不含该 IP 的场景）
-    http_ssl_verify: bool = True
+    http_ssl_verify: bool = False
     http_ca_bundle: str = ""
     http_check_hostname: bool = True
 

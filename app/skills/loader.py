@@ -108,14 +108,17 @@ def _parse_simple_yaml(text: str) -> dict:
         key = key.strip()
         raw_val = raw_val.strip()
 
-        if raw_val in (">", "|"):
-            # 折叠/字面量多行字符串
+        if raw_val and raw_val[0] in (">", "|") and all(
+            c in "-+0123456789" for c in raw_val[1:]
+        ):
+            # 块标量：folded(>) / literal(|)，可带 chomping/indent 指示符（如 >- |- >+）
+            folded = raw_val[0] == ">"
             parts: list[str] = []
             i += 1
             while i < len(lines) and lines[i].startswith("  "):
                 parts.append(lines[i].strip())
                 i += 1
-            result[key] = " ".join(parts)
+            result[key] = (" " if folded else "\n").join(parts)
             continue
 
         if not raw_val:
