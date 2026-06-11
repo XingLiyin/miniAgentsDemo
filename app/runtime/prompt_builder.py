@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.llm.types import ImagePart, LLMMessage, TextPart, ToolCallBlock, content_from_raw, content_to_text
+from app.runtime.execution_rounds import round_to_actor_messages
 
 if TYPE_CHECKING:
     from app.domain.models.session import Session
@@ -106,19 +107,35 @@ class ActorPromptBuilder(BasePromptBuilder):
         ] if p]
         return "\n\n---\n\n".join(parts)
 
-    def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
-        messages: list[LLMMessage] = []
+    def _merge_timeline(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
+        """把 agent memory 与当前 task 的 execution_rounds 按时间戳归并成基础消息列表。
 
-        if task.user_prompt_in_memory:
-            # Resume 路径：user message 已以包装形式存在 memory，直接使用历史
-            for m in ctx.recent_messages:
-                messages.append(LLMMessage(
+        排序键: (timestamp, source_order)——source_order memory=0、round=1，保证同刻 memory 在前。
+        """
+        entries: list[tuple[str, int, LLMMessage]] = []
+        for m in ctx.recent_messages:
+            entries.append((
+                m.get("created_at", "") or "",
+                0,
+                LLMMessage(
                     role=m.get("role", "user"),
                     content=m.get("content", ""),
                     tool_calls=m.get("tool_calls"),
                     tool_call_id=m.get("tool_call_id", ""),
                     reasoning_content=m.get("reasoning_content"),
-                ))
+                ),
+            ))
+        for rec in task.execution_rounds:
+            ts = rec.get("ts", "") or ""
+            for msg in round_to_actor_messages(rec):
+                entries.append((ts, 1, msg))
+        entries.sort(key=lambda e: (e[0], e[1]))
+        return [e[2] for e in entries]
+
+    def build_messages(self, task: "Task", ctx: "ReasoningContext") -> list[LLMMessage]:
+        if task.user_prompt_in_memory:
+            # Resume 路径：merge agent memory 与 execution_rounds 重建当前 task 视图
+            messages = self._merge_timeline(task, ctx)
             # suspend 后 resume：末尾是 assistant，追加 blackboard 上下文
             if ctx.blackboard_snippets and messages and messages[-1].role != "user":
                 bb = "## Task Background\n" + "\n".join(
@@ -128,14 +145,7 @@ class ActorPromptBuilder(BasePromptBuilder):
             return messages
 
         # 非 resume 路径（daemon 或无 user_prompt）：构建完整 user message
-        for m in ctx.recent_messages:
-            messages.append(LLMMessage(
-                role=m.get("role", "user"),
-                content=m.get("content", ""),
-                tool_calls=m.get("tool_calls"),
-                tool_call_id=m.get("tool_call_id", ""),
-                reasoning_content=m.get("reasoning_content"),
-            ))
+        messages = self._merge_timeline(task, ctx)
         parts: list[str] = []
         if ctx.blackboard_snippets:
             parts.append("## Task Background\n" + "\n".join(f"- {content_to_text(s)}" for s in ctx.blackboard_snippets))
