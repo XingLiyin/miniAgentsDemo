@@ -16,7 +16,7 @@ import logging
 from app.common.errors import AppError
 from app.common.interrupt import AgentInterruptedError, InterruptContext, InterruptRegistry
 from app.common.utils import now_iso
-from app.runtime.execution_rounds import make_round_record
+from app.runtime.execution_rounds import DELEGATION_TOOLS, make_round_record
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
@@ -201,7 +201,6 @@ class AgentLoop:
 
     def _write_suspension_memory(self, agent_id: str, task: Task, result: ActorResult, session_id: str, task_id: str) -> None:
         """挂起时把 submit_task/submit_plan 调用写成 assistant tool_call，并回填子任务的 parent_tool_call_id。"""
-        from app.runtime.execution_rounds import DELEGATION_TOOLS
         submit_call = next(
             (tc for tc in result.tool_calls_made if tc.tool_name in DELEGATION_TOOLS),
             None,
