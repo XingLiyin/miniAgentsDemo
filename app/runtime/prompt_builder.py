@@ -63,8 +63,34 @@ class BasePromptBuilder:
         messages.append(LLMMessage(role="tool", content=content, tool_call_id=tool_call_id))
         return messages
 
+    def _reconcile_tool_pairs(self, messages: list[LLMMessage]) -> list[LLMMessage]:
+        """去掉无法配对的 tool_use / tool_result，避免 provider 400。
+
+        - assistant 的 tool_calls 里，id 没有对应 tool 结果的被剔除；剔空则降级为纯文本消息。
+        - tool 消息的 tool_call_id 不在任何存活 assistant tool_call 里的，整条丢弃。
+        """
+        tool_result_ids = {m.tool_call_id for m in messages if m.role == "tool" and m.tool_call_id}
+        reconciled: list[LLMMessage] = []
+        for m in messages:
+            if m.role == "assistant" and m.tool_calls:
+                kept = [tc for tc in m.tool_calls if tc.get("id") in tool_result_ids]
+                reconciled.append(LLMMessage(
+                    role=m.role, content=m.content,
+                    tool_call_id=m.tool_call_id,
+                    tool_calls=kept or None,
+                    reasoning_content=m.reasoning_content,
+                ))
+            else:
+                reconciled.append(m)
+        live_ids = {tc.get("id") for m in reconciled if m.role == "assistant" and m.tool_calls for tc in m.tool_calls}
+        return [
+            m for m in reconciled
+            if not (m.role == "tool" and m.tool_call_id not in live_ids)
+        ]
+
     def sanitize_messages(self, messages: list[LLMMessage]) -> list[LLMMessage]:
         """过滤空白消息，合并连续同角色消息（tool/assistant 不合并）。"""
+        messages = self._reconcile_tool_pairs(messages)
         filtered = [
             m for m in messages
             if (m.content and content_to_text(m.content).strip()) or m.tool_calls or m.role == "tool"
