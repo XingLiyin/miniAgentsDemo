@@ -56,8 +56,28 @@ def test_self_submitted_children_delivered_as_tool_result():
     body = str(tool_msgs[0].content)
     assert "o1" in body and "o2" in body
     assert "r1" in body and "r2" in body  # process report allowed in tool_result
+    assert "id=c1" in body and "id=c2" in body  # which task the result belongs to
     # tracking cleared after flush
     assert agents.get("s1", "a1")["tracking_tasks"] == []
+
+
+def test_tool_result_includes_all_round_process_reports():
+    task_svc, agents, mem = _TaskSvc(), _Agents(), _Mem()
+    c1 = _child("c1", tcid="tc1", output="final", report="latest snapshot")
+    c1.execution_rounds = [
+        {"turns": [], "process_report": "round 1 progress", "output": "", "ts": "", "mem_index": 0},
+        {"turns": [], "process_report": "round 2 progress", "output": "", "ts": "", "mem_index": 1},
+    ]
+    task_svc.add(c1)
+    agents.add("a1", tracking=["c1"])
+    parent = Task(id="p1", session_id="s1", creator_agent_id="a1", assigned_agent_id="a1",
+                  status="SUSPENDED", user_prompt="", title="P", created_at="", updated_at="")
+    task_svc.add(parent)
+
+    _tm(task_svc, agents, mem)._flush_tracking_tasks_to_memory("s1", parent)
+    body = str([m for m in mem.msgs if m.role == "tool"][0].content)
+    assert "round 1 progress" in body and "round 2 progress" in body  # full history, not just last
+    assert "Round 1" in body and "Round 2" in body
 
 
 def test_distinct_tool_calls_produce_separate_tool_results():

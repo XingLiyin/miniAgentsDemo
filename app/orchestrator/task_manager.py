@@ -24,7 +24,7 @@ from app.domain.services.memory_service import MemoryService
 from app.domain.services.session_service import SessionService
 from app.domain.services.task_service import TaskService
 from app.orchestrator.task_queue import TaskQueue  # noqa: F401 – kept for external callers
-from app.runtime.task_result import task_result_content
+from app.runtime.task_result import full_process_report, task_label, task_result_content
 
 if TYPE_CHECKING:
     from app.domain.events.event_bus import EventBus
@@ -518,7 +518,9 @@ class TaskManager:
         images: list = []
         for c in children:
             outcome = "completed" if c.status == "FINISHED" else "failed"
-            part = _task_result_content(f"Task「{c.title}」{outcome}.", c.outputs, c.process_report, c.error)
+            part = _task_result_content(
+                task_label(c, outcome), c.outputs, full_process_report(c), c.error,
+            )
             if isinstance(part, list):
                 images.extend(p for p in part if p.get("type") == "image")
                 texts.append(next((p.get("text", "") for p in part if p.get("type") == "text"), ""))

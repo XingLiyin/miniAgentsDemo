@@ -17,7 +17,7 @@ from app.common.errors import AppError
 from app.common.interrupt import AgentInterruptedError, InterruptContext, InterruptRegistry
 from app.common.utils import now_iso
 from app.runtime.execution_rounds import DELEGATION_TOOLS, make_round_record
-from app.runtime.task_result import task_result_content
+from app.runtime.task_result import full_process_report, task_label, task_result_content
 from app.domain.models.agent import Agent
 from app.domain.models.task import Task
 from app.domain.services.blackboard_service import BlackboardService
@@ -287,7 +287,7 @@ class AgentLoop:
                 continue
             outcome = "completed" if t.status == "FINISHED" else "failed"
             content = task_result_content(
-                f"Tracked task「{t.title}」{outcome}.", t.outputs, t.process_report, t.error,
+                f"Tracked {task_label(t, outcome)}", t.outputs, full_process_report(t), t.error,
             )
             self._memory_svc.append_message(
                 agent_id=agent_id, role="user", content=content,
