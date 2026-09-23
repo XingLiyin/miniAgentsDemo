@@ -1,5 +1,5 @@
 classDiagram
-    direction TB
+    direction LR
 
     class Transport {
         <<Protocol>>
@@ -13,9 +13,9 @@ classDiagram
 
     class BaseAdapter {
         <<abstract>>
-        +complete(req) LLMResponse*
-        +parse_response(response) ParsedResponse*
-        +stream(req) Iterator~StreamChunk~
+        +complete(req)*
+        +parse_response(resp)*
+        +stream(req) 默认实现
     }
     class OpenAIAdapter
     class AnthropicAdapter
@@ -24,14 +24,14 @@ classDiagram
     class BaseChatClient {
         -BaseAdapter _adapter
         -str _model
-        +send_message(...) LLMResponse
-        +stream_message(...) Iterator
-        +parse_response(...) ParsedResponse
+        +send_message(...)
+        +stream_message(...)
+        +parse_response(...)
     }
 
     class ProviderRegistry {
-        +register_openai(name, api_key, base_url)
-        +register_anthropic(name, api_key, base_url)
+        +register_openai(name, key, url)
+        +register_anthropic(name, key, url)
         +get(name) BaseAdapter
     }
     class LLMRegistry {

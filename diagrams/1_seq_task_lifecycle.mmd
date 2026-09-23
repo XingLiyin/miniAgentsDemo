@@ -1,44 +1,30 @@
 sequenceDiagram
-    autonumber
-    participant SM as SessionManager
     participant TM as TaskManager
     participant Q as TaskQueue
     participant LM as LifecycleManager
     participant AL as AgentLoop
     participant Act as Actor
-    participant GW as ToolGateway
     participant Obs as Observer
-    participant TS as TaskService + 状态机
+    participant TS as TaskService
 
-    SM->>TM: start_session(session_id, root_agent)
     TS--)TM: TASK_CREATED 事件
-    TM->>Q: push(task_id)
-    Note over Q: dag_deps 满足 → _ready 栈<br/>未满足 → _blocked 集合
-
-    TM->>Q: pop() 取栈顶（LIFO，深度优先）
-    TM->>TS: transition(task, ACTIVE)
-    TM->>LM: prepare_executor(use_subagent, template, inherit_memory)
-    LM->>AL: run(session_id, agent_id, task_id)
-
+    TM->>Q: push(task_id)　dag_deps 满足入 _ready，否则 _blocked
+    TM->>Q: pop()　LIFO，深度优先
+    TM->>TS: transition(ACTIVE)
+    TM->>LM: prepare_executor(复用 / 按模板新建)
+    LM->>AL: run(session, agent, task)
     AL->>AL: Reasoner.reason() → ReasoningContext
-    AL->>Act: act(ctx) 
-    loop 每轮，上限 actor_max_tool_rounds
-        Act->>GW: call(tool_name, args, capability)
-        GW-->>Act: ToolResult
+    AL->>Act: act(ctx)
+    loop 上限 actor_max_tool_rounds
+        Act->>Act: 调模型 → ToolGateway.call() → 结果回填
     end
-    Act-->>AL: ActorResult(output, exit_reason)
-
-    alt task.status == SUSPENDED（等待人工回答）
-        AL->>AL: 写挂起 memory 后 return
-        Note over AL: 用户回答后 task 重新入队，<br/>下一轮从 run() 重新开始
+    Act-->>AL: ActorResult(exit_reason)
+    alt task.status == SUSPENDED
+        AL->>AL: 写挂起 memory 后 return（回答后重新入队，从 run() 重来）
     else 正常路径
         AL->>Obs: observe(result, ctx, task)
-        Obs->>TS: submit_task_assessment(status, process_report)
-        Note over TS: success / failed / active / ask_human<br/>转换须通过 _TASK_TRANSITIONS 校验
+        Obs->>TS: submit_task_assessment(status)　经 _TASK_TRANSITIONS 校验
     end
-
-    AL-->>LM: 返回，agent 置 WAITING 或 FINISHED
+    AL-->>LM: agent 置 WAITING / FINISHED
     TS--)TM: TASK_EXECUTION_FINISHED 事件
-    TM->>Q: notify_completed(task_id)
-    Note over TM,Q: _blocked 中依赖已满足的移入 _ready
-    TM->>Q: pop() 继续下一个；队列空则结束 session
+    TM->>Q: notify_completed() → pop() 下一个；空则结束 session
