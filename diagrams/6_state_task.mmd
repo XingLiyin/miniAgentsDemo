@@ -1,0 +1,25 @@
+stateDiagram-v2
+    direction TB
+    [*] --> PENDING : 创建后入队
+
+    PENDING --> ACTIVE : TaskManager 调度激活
+    ACTIVE --> TO_BE_OBSERVED : 待 Observer 评估
+    ACTIVE --> SUSPENDED : ask_human，等待人工回答
+
+    TO_BE_OBSERVED --> FINISHED : 评估 success
+    TO_BE_OBSERVED --> FAILED : 评估 failed
+    TO_BE_OBSERVED --> PENDING : 评估 active，重新入队
+
+    SUSPENDED --> ACTIVE : 用户已回答
+    SUSPENDED --> PENDING : 重新入队
+
+    FINISHED --> PENDING : Observer 复核不通过，reopen
+    FAILED --> PENDING : retry_count < max_task_retries
+
+    FINISHED --> [*]
+
+    note right of FINISHED
+        完整转换表见 app/domain/state_machine.py
+        非法转换抛 INVALID_STATE_TRANSITION
+        CANCELED 为终态，多数状态可直接进入（图中略）
+    end note

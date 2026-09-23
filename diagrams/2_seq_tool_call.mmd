@@ -1,0 +1,24 @@
+sequenceDiagram
+    autonumber
+    participant Act as Actor
+    participant GW as ToolGateway
+    participant PE as PolicyEngine
+    participant RG as ToolRegistry
+    participant T as Tool handler
+    participant ST as ToolCallStore
+    participant SSE as SSE Bus
+
+    Act->>GW: call(tool_name, arguments, capability, task_id, ctx)
+    GW->>PE: authorize(capability, tool_name, args)
+    Note over PE: WhitelistRule：工具已注册 + agent 有权限<br/>BashExecGuardRule：按工具生效的规则
+    PE-->>GW: 通过，否则抛 TOOL_NOT_AUTHORIZED
+    GW->>ST: append(status=RUNNING, arguments=_redact(args))
+    Note over ST: authorization / x-api-key / cookie 脱敏
+    GW->>RG: get_from_capability(tool_name, capability)
+    RG-->>GW: ToolDefinition
+    GW->>T: handler(arguments, call_ctx)
+    T-->>GW: ToolResult（异常转为 is_error=True）
+    GW->>ST: append(status=SUCCEEDED / FAILED)
+    GW->>SSE: push(tool_call 事件)
+    GW->>GW: 超过 http_response_limit_bytes 则截断
+    GW-->>Act: ToolResult

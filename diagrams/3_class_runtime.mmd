@@ -1,0 +1,58 @@
+classDiagram
+    direction LR
+
+    class AgentLoop {
+        -SessionService _session_svc
+        -TaskService _task_svc
+        -MemoryService _memory_svc
+        -BlackboardService _bb_svc
+        -AgentStore _agent_store
+        -Reasoner _reasoner
+        -Actor _actor
+        -Observer _observer
+        +run(session_id, agent_id, task_id) None
+    }
+
+    class Reasoner {
+        +reason(session, agent, task) ReasoningContext
+        -_maybe_compact(...) bool
+        -_build_actor_resources(...) list
+    }
+    class Actor {
+        +act(task, ctx, agent, session, interrupt_flag) ActorResult
+        -_stream_llm(...)
+        -_execute_tools(...)
+    }
+    class Observer {
+        +observe(session, result, ctx, task, task_list, agent) ObserverVerdict
+        -_llm_observe(...)
+        -_rule_observe(...) 降级路径
+    }
+
+    class ReasoningContext {
+        <<dataclass>>
+        goal, recent_messages
+        soul, role, skill_instructions
+        actor_resources, observer_resources
+        current_task, token_estimate
+    }
+    class ActorResult {
+        <<dataclass>>
+        output, tool_calls_made
+        conversation_turns, actor_mode
+        context_tokens
+        exit_reason: normal / context_limit / max_rounds
+    }
+    class ObserverVerdict {
+        <<dataclass>>
+        summary, context_tokens
+    }
+
+    AgentLoop *-- Reasoner
+    AgentLoop *-- Actor
+    AgentLoop *-- Observer
+    Reasoner ..> ReasoningContext : 产出
+    Actor ..> ActorResult : 产出
+    Actor ..> ReasoningContext : 输入
+    Observer ..> ObserverVerdict : 产出
+    Observer ..> ActorResult : 输入

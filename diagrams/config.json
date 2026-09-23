@@ -1,0 +1,32 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontFamily": "Noto Sans CJK SC, Microsoft YaHei, sans-serif",
+    "fontSize": "15px",
+    "primaryColor": "#F1F3F5",
+    "primaryTextColor": "#16202A",
+    "primaryBorderColor": "#B9C4CC",
+    "lineColor": "#6B7A88",
+    "secondaryColor": "#E7ECF0",
+    "tertiaryColor": "#FFFFFF",
+    "actorBkg": "#16202A",
+    "actorTextColor": "#FFFFFF",
+    "actorBorder": "#16202A",
+    "actorLineColor": "#B9C4CC",
+    "signalColor": "#16202A",
+    "signalTextColor": "#16202A",
+    "labelBoxBkgColor": "#C75B2C",
+    "labelBoxBorderColor": "#C75B2C",
+    "labelTextColor": "#FFFFFF",
+    "loopTextColor": "#16202A",
+    "noteBkgColor": "#FBEFE7",
+    "noteTextColor": "#16202A",
+    "noteBorderColor": "#E0B79E",
+    "activationBkgColor": "#C75B2C",
+    "activationBorderColor": "#C75B2C",
+    "altSectionBkgColor": "#FAFBFC",
+    "classText": "#16202A"
+  },
+  "sequence": { "actorMargin": 42, "boxMargin": 8, "messageFontSize": 14, "noteFontSize": 13, "width": 150 },
+  "class": { "useMaxWidth": false }
+}

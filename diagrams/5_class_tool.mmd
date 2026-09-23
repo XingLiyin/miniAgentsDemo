@@ -1,0 +1,56 @@
+classDiagram
+    direction TB
+
+    class ToolGateway {
+        -PolicyEngine _policy
+        -ToolRegistry _registry
+        -ToolCallStore _store
+        +call(tool_name, arguments, capability, task_id, ctx) ToolResult
+    }
+    class PolicyEngine {
+        -list _global_rules
+        -dict _tool_rules
+        +default(tool_registry) PolicyEngine
+        +authorize(capability, tool_name, args, ctx)
+    }
+    class PolicyRule {
+        <<abstract>>
+        +check(capability, tool_name, arguments, ctx)*
+    }
+    class GlobalRule {
+        <<abstract>>
+        作用于所有工具
+    }
+    class ToolRule {
+        <<abstract>>
+        作用于指定工具集合
+    }
+    class WhitelistRule {
+        +check() 已注册 + agent 有权限
+    }
+    class BashExecGuardRule {
+        +check() bash_exec 参数校验
+    }
+
+    class ToolRegistry {
+        +register_tools(definitions, name)
+        +register_control_tools(...)
+        +register_mcp_stdio(...) / register_mcp_http(...)
+        +get(name) ToolDefinition
+        +to_llm_tools(names) list~LLMTool~
+    }
+    class ToolDefinition {
+        name, description, input_schema
+        handler, is_control
+    }
+
+    ToolGateway --> PolicyEngine
+    ToolGateway --> ToolRegistry
+    ToolGateway --> ToolCallStore : 审计（脱敏后）
+    PolicyEngine o-- PolicyRule
+    PolicyRule <|-- GlobalRule
+    PolicyRule <|-- ToolRule
+    GlobalRule <|-- WhitelistRule
+    ToolRule <|-- BashExecGuardRule
+    ToolRegistry o-- ToolDefinition
+    note for ToolGateway "六步：授权 → 审计 RUNNING → 执行 → 审计完成 → 推 SSE → 截断输出"

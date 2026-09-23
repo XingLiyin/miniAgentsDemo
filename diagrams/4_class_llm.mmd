@@ -1,0 +1,52 @@
+classDiagram
+    direction TB
+
+    class Transport {
+        <<Protocol>>
+        +post(url, headers, json, timeout) dict
+    }
+    class StreamTransport {
+        <<Protocol>>
+        +stream_post(url, headers, json, timeout) Iterator~str~
+    }
+    class HttpxTransport
+
+    class BaseAdapter {
+        <<abstract>>
+        +complete(req) LLMResponse*
+        +parse_response(response) ParsedResponse*
+        +stream(req) Iterator~StreamChunk~
+    }
+    class OpenAIAdapter
+    class AnthropicAdapter
+    class MockAdapter
+
+    class BaseChatClient {
+        -BaseAdapter _adapter
+        -str _model
+        +send_message(...) LLMResponse
+        +stream_message(...) Iterator
+        +parse_response(...) ParsedResponse
+    }
+
+    class ProviderRegistry {
+        +register_openai(name, api_key, base_url)
+        +register_anthropic(name, api_key, base_url)
+        +get(name) BaseAdapter
+    }
+    class LLMRegistry {
+        +providers / models 配置
+        +文件持久化
+    }
+
+    Transport <|.. HttpxTransport
+    StreamTransport <|.. HttpxTransport
+    BaseAdapter <|-- OpenAIAdapter
+    BaseAdapter <|-- AnthropicAdapter
+    BaseAdapter <|-- MockAdapter
+    BaseChatClient o-- BaseAdapter
+    OpenAIAdapter ..> Transport : 注入
+    AnthropicAdapter ..> Transport : 注入
+    ProviderRegistry --> BaseAdapter : 按名称返回
+    LLMRegistry --> ProviderRegistry
+    note for BaseAdapter "stream() 有默认实现：调 complete() 包成单块返回；子类可覆写为 token 级流式"
