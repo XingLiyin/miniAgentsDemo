@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob as _glob
 import logging
+import platform
 import re
 import subprocess
 from pathlib import Path
@@ -44,6 +45,38 @@ def builtin_tool(fn):
 
 
 # ── bash_exec ─────────────────────────────────────────────────────────────────
+
+def _bash_exec_description() -> str:
+    """根据当前操作系统生成 bash_exec 的工具描述。
+
+    命令通过 ``subprocess.run(..., shell=True)`` 执行：Windows 走 cmd.exe，
+    其它平台走 /bin/sh。描述会说明当前系统、对应的 shell 语法及可用命令示例，
+    并列出被安全黑名单拦截的命令。
+    """
+    system = platform.system()
+    if system == "Windows":
+        env_desc = (
+            f"The current system is Windows ({platform.platform()}); commands run "
+            "through cmd.exe. Use Windows shell syntax and built-ins such as `dir`, "
+            "`type`, `copy`, `move`, `del`, `cd`, `echo`, `where`, `findstr`. "
+            "Unix-only commands (ls, cat, grep, rm) are unavailable unless an "
+            "equivalent tool (e.g. git-bash, busybox) is installed and on PATH."
+        )
+    else:
+        os_name = "macOS" if system == "Darwin" else system
+        env_desc = (
+            f"The current system is {os_name} ({platform.platform()}); commands run "
+            "through /bin/sh. Use POSIX shell syntax and common commands such as "
+            "`ls`, `cat`, `grep`, `find`, `cp`, `mv`, `rm`, `cd`, `echo`, `which`."
+        )
+    return (
+        "Execute a shell command in a restricted environment. "
+        f"{env_desc} "
+        "Returns stdout+stderr; a non-zero exit code sets is_error=true. "
+        "Blocked for safety: rm -rf, mkfs, dd of=/dev/*, shutdown, reboot, sudo, "
+        "su, chmod 777, curl|bash, wget|bash."
+    )
+
 
 @builtin_tool
 def bash_exec(
@@ -82,6 +115,10 @@ def bash_exec(
         raise AppError("TOOL_TIMEOUT", f"bash_exec timed out after {timeout_sec}s")
     except FileNotFoundError as e:
         raise AppError("BASH_CWD_NOT_FOUND", f"Working directory not found: {cwd}") from e
+
+
+# @builtin_tool 在装饰时已从 docstring 取了静态描述；这里按当前系统覆盖为动态描述。
+bash_exec.description = _bash_exec_description()
 
 
 # ── read ──────────────────────────────────────────────────────────────────────

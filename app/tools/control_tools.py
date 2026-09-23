@@ -325,13 +325,14 @@ def update_task_metadata(
 def submit_task_assessment(
     task_status: Annotated[
         str,
-        "Outcome of the current task: "
-        "'success' if completed successfully; "
+        "Outcome of the current task. Decide in this order: "
+        "FIRST, 'ask_human' if the actor's turn is addressed to the user (a question, a request for a decision/confirmation, or blocked waiting on input) — if so, this is the answer and nothing else matters; the user is asked, the task stays active, and their reply is fed back in as a new user message. "
+        "Otherwise judge completeness: "
+        "'success' if the goal was achieved; "
         "'failed' if it could not be completed (system decides whether to retry); "
-        "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn); "
-        "'ask_human' if the task cannot proceed without an answer from the user; the user is asked, the task stays active, and their reply is fed back in as a new user message.",
+        "'active' if this turn made progress but the task is not yet complete (task re-queued for another actor turn).",
     ],
-    task_process_report: Annotated[str, "Execution process summary: describe what was accomplished, what was modified or produced, and what progress was made this turn. Include which tools were called and whether any failed. If the task is incomplete, explain what remains and why. Written to memory and read by the next actor turn — be thorough."],
+    task_process_report: Annotated[str, "Execution process summary written to memory and read by the next actor turn. State only evidence-backed facts; do not turn 'attempted' into 'done'. Emphasis depends on task_status: for 'success', emphasize what was done plus the key steps and experience that led to success (reusable approach); for 'active', emphasize this turn's lessons and what still has to be done, not what is already finished; for 'failed', emphasize why it could not be done and any capability gap; for 'ask_human', keep it short — what was done so far and what is being asked."],
     task_failure_reason: Annotated[
         str,
         "Required when task_status is 'failed'. "

@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "tech-kb-mcp": {
+      "url": "http://10.25.228.203:8050/mcp",
+      "headers": {},
+      "default_purposes": [
+        "act"
+      ],
+      "capability_purpose_override": {},
+      "timeout_per_call_sec": 60,
+      "connect_timeout_sec": 10
+    }
+  }
+}
