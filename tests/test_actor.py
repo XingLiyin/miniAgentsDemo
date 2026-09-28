@@ -56,8 +56,10 @@ def _tool_resource(name="read") -> ContextResource:
 
 
 def _ctx(**kw) -> ReasoningContext:
+    # current_task must be set: PromptBuilder.build_messages reads it unconditionally
     base = dict(goal="g", recent_messages=[], blackboard_snippets=[],
-                soul="SOUL", actor_resources=[_tool_resource()])
+                soul="SOUL", actor_resources=[_tool_resource()],
+                current_task=_task())
     base.update(kw)
     return ReasoningContext(**base)
 
@@ -105,8 +107,10 @@ def _tool_turn(tool="read", tc_id="tc1", text="calling", usage=None):
 
 
 def _actor(turns, gateway=None, task_svc=None, session_svc=None, sse=None):
-    gw = gateway or MagicMock()
-    gw.call.return_value = ToolResult(content="tool ok")
+    gw = gateway
+    if gw is None:                       # only default a gateway the caller didn't configure
+        gw = MagicMock()
+        gw.call.return_value = ToolResult(content="tool ok")
     llm = _FakeLLM(turns)
     ac = Actor(gw, task_svc or MagicMock(), session_svc)
     ac._resolve_llm_client = lambda session: llm
@@ -351,11 +355,13 @@ class TestSSEEvents:
         assert prompt_ev["task_id"] == "t1" and prompt_ev["agent_id"] == "a1"
         assert prompt_ev["tool_names"] == ["read"]
 
-    def test_prompt_event_without_current_task(self):
+    def test_prompt_event_defaults_when_current_task_missing(self):
+        # _push_prompt_event tolerates a None current_task even though
+        # build_messages does not, so exercise it directly.
         ac, _, _, bus = _actor([_text_turn()])
-        ac.act(_task(), _ctx(current_task=None), _agent(), _session())
-        prompt_ev = [e for e in _events(bus) if e["type"] == "llm_prompt"][0]
-        assert prompt_ev["task_id"] == "" and prompt_ev["agent_id"] == ""
+        ac._push_prompt_event(bus, "s1", 0, "sys", [], _ctx(current_task=None), False)
+        ev = _events(bus)[0]
+        assert ev["task_id"] == "" and ev["agent_id"] == ""
 
     def test_reasoning_events(self):
         turn = {"chunks": [StreamChunk(reasoning_delta="thinking"),
@@ -485,25 +491,34 @@ class TestInterrupts:
             ac.act(_task(), _ctx(), _agent(), _session(), interrupt_flag=flag)
         assert e.value.context.partial_text == "partial"
 
-    def test_before_a_tool_call(self):
+    def test_before_a_tool_call_keeps_completed_records(self):
+        """Flag set between two tools of one round: the completed one is carried."""
         flag = threading.Event()
         gw = MagicMock()
-        gw.call.return_value = ToolResult(content="")
+        gw.call.return_value = ToolResult(content="r")
+        two_calls = {"chunks": [
+            StreamChunk(text_delta="two"),
+            StreamChunk(tool_call_delta={"index": 0, "id": "tc1", "name": "read"}),
+            StreamChunk(tool_call_delta={"index": 1, "id": "tc2", "name": "write"}),
+            StreamChunk(is_done=True, finish_reason="tool_calls"),
+        ]}
+        ac, _, _, _ = _actor([two_calls], gateway=gw)
+        real_append = ac._prompt_builder.append_tool_result
 
-        def chunks():
-            yield StreamChunk(text_delta="calling")
-            yield StreamChunk(tool_call_delta={"index": 0, "id": "tc", "name": "read"})
-            flag.set()
-            yield StreamChunk(is_done=True, finish_reason="tool_calls")
+        def append_then_interrupt(*a, **k):
+            out = real_append(*a, **k)
+            flag.set()                     # set after tool 1 is fully recorded
+            return out
 
-        ac, llm, _, _ = _actor([], gateway=gw)
-        llm.stream_message = lambda **kw: chunks()
+        ac._prompt_builder.append_tool_result = append_then_interrupt
         with pytest.raises(AgentInterruptedError) as e:
             ac.act(_task(), _ctx(), _agent(), _session(), interrupt_flag=flag)
         assert "before tool call" in str(e.value)
-        assert not gw.call.called
+        assert [tc.tool_name for tc in e.value.context.tool_calls] == ["read"]
+        assert gw.call.call_count == 1      # the second tool never ran
 
-    def test_after_a_tool_result_keeps_the_record(self):
+    def test_after_a_tool_result_drops_the_in_flight_record(self):
+        """The post-result check fires before the record is appended, so it is lost."""
         flag = threading.Event()
         gw = MagicMock()
 
@@ -516,16 +531,16 @@ class TestInterrupts:
         with pytest.raises(AgentInterruptedError) as e:
             ac.act(_task(), _ctx(), _agent(), _session(), interrupt_flag=flag)
         assert "after tool result" in str(e.value)
-        assert [tc.tool_name for tc in e.value.context.tool_calls] == ["read"]
+        assert e.value.context.tool_calls == []
 
-    def test_partial_calls_from_earlier_rounds_are_carried(self):
+    def test_earlier_rounds_records_are_carried(self):
         flag = threading.Event()
         gw = MagicMock()
         state = {"n": 0}
 
         def run_tool(**kw):
             state["n"] += 1
-            if state["n"] == 2:
+            if state["n"] == 2:            # interrupt during round 2's tool
                 flag.set()
             return ToolResult(content="r")
 
@@ -533,7 +548,9 @@ class TestInterrupts:
         ac, _, _, _ = _actor([_tool_turn(tc_id="tc1"), _tool_turn(tc_id="tc2")], gateway=gw)
         with pytest.raises(AgentInterruptedError) as e:
             ac.act(_task(), _ctx(), _agent(max_rounds=4), _session(), interrupt_flag=flag)
-        assert len(e.value.context.tool_calls) == 2
+        # round 1's record survives; round 2's in-flight one does not
+        assert [tc.tool_call_id for tc in e.value.context.tool_calls] == ["tc1"]
+        assert e.value.context.partial_text == "calling"
 
     def test_gateway_interrupt_propagates(self):
         gw = MagicMock()

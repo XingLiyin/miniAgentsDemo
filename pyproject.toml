@@ -21,8 +21,26 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
+    "pytest-cov>=7.0",
     "pyinstaller>=6.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+# 覆盖率只统计后端源码；报告形式由命令行/VSCode 决定，这里只定配置。
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/observability/*"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
