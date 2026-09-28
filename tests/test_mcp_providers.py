@@ -110,9 +110,12 @@ class TestMCPStdioProvider:
         assert provider._loop is None
         assert provider._thread is None
 
-    def test_is_tool_provider_protocol(self, provider):
-        from app.tools.provider import ToolProvider
-        assert isinstance(provider, ToolProvider)
+    def test_exposes_tool_provider_surface(self, provider):
+        # app.tools.provider.ToolProvider was removed; the registry duck-types
+        # providers, so assert the surface it actually calls.
+        for name in ("list_definitions", "reload_tools", "call", "stop", "start",
+                     "get_mcp_client"):
+            assert callable(getattr(provider, name))
 
 
 # ── MCPStreamableHTTPProvider ─────────────────────────────────────────────────
@@ -165,9 +168,10 @@ class TestMCPStreamableHTTPProvider:
         assert not provider._initialized
         assert provider._loop is None
 
-    def test_is_tool_provider_protocol(self, provider):
-        from app.tools.provider import ToolProvider
-        assert isinstance(provider, ToolProvider)
+    def test_exposes_tool_provider_surface(self, provider):
+        for name in ("list_definitions", "reload_tools", "call", "stop", "start",
+                     "get_mcp_client"):
+            assert callable(getattr(provider, name))
 
 
 # ── _MCPProviderBase shared behavior ──────────────────────────────────────────
@@ -189,12 +193,13 @@ class TestMCPProviderBaseShared:
         assert MCPStdioProvider._run_sync is _MCPProviderBase._run_sync
         assert MCPStreamableHTTPProvider._run_sync is _MCPProviderBase._run_sync
 
-    def test_map_function_tool_is_inherited_from_base(self):
+    def test_map_tool_is_inherited_from_base(self):
+        # _map_function_tool was renamed to _map_tool
         from app.tools.mcp_provider import MCPStdioProvider
         from app.tools.mcp_http_provider import MCPStreamableHTTPProvider
 
-        assert MCPStdioProvider._map_function_tool is _MCPProviderBase._map_function_tool
-        assert MCPStreamableHTTPProvider._map_function_tool is _MCPProviderBase._map_function_tool
+        assert MCPStdioProvider._map_tool is _MCPProviderBase._map_tool
+        assert MCPStreamableHTTPProvider._map_tool is _MCPProviderBase._map_tool
 
     def test_stdio_own_methods_only_start_and_client(self):
         from app.tools.mcp_provider import MCPStdioProvider
