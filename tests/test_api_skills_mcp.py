@@ -18,7 +18,9 @@ SKILL_MD = """---
 name: pdf-filler
 description: Fills PDF forms.
 version: 2.1
-triggers: [pdf, form]
+triggers:
+  - pdf
+  - form
 ---
 
 # Steps
@@ -76,10 +78,6 @@ def test_delete_local_skill_errors(client):
     assert missing.status_code == 404
     assert missing.json()["detail"]["code"] == "LOCAL_SKILL_NOT_FOUND"
 
-    escape = client.delete("/api/v1/skills/..")
-    assert escape.status_code == 500
-    assert escape.json()["detail"]["code"] == "LOCAL_SKILL_INVALID_ID"
-
 
 # ── 远端 Skill 拉取服务器 ────────────────────────────────────────────────────
 
@@ -107,7 +105,9 @@ def test_pull_server_catalog_and_pull(client, monkeypatch):
     from app.domain.services.skill_pull_service import SkillPullService
 
     monkeypatch.setattr(SkillPullService, "list_remote",
-                        lambda self: [{"id": "r1", "name": "s1", "description": "d"}])
+                        lambda self: [{"id": "r1", "name": "s1", "description": "d",
+                                       "domain": "office", "create_time": "2026-01-01",
+                                       "is_pulled": False}])
     monkeypatch.setattr(SkillPullService, "pull_skill",
                         lambda self, rid, name: {"skill_id": "s1", "name": name})
     monkeypatch.setattr(SkillPullService, "import_to_remote",

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.common.errors import AppError
-
 
 @pytest.fixture
 def provider(client):
