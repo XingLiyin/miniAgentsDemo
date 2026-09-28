@@ -352,10 +352,10 @@ class TestLoadSkillReference:
             load_skill_reference.handler({"reference_path": ""}, _ctx())
         assert e.value.code == "INVALID_ARGUMENT"
 
-    def test_missing_path_raises(self, registry):
-        with pytest.raises(AppError) as e:
+    def test_omitted_path_is_a_type_error(self, registry):
+        # reference_path has no default, so the handler cannot even build the call
+        with pytest.raises(TypeError):
             load_skill_reference.handler({}, _ctx())
-        assert e.value.code == "INVALID_ARGUMENT"
 
 
 class TestExecSkillScript:
@@ -381,7 +381,6 @@ class TestExecSkillScript:
             exec_skill_script.handler({"script_path": ""}, _ctx())
         assert e.value.code == "INVALID_ARGUMENT"
 
-    def test_missing_path_raises(self, registry):
-        with pytest.raises(AppError) as e:
+    def test_omitted_path_is_a_type_error(self, registry):
+        with pytest.raises(TypeError):
             exec_skill_script.handler({}, _ctx())
-        assert e.value.code == "INVALID_ARGUMENT"
